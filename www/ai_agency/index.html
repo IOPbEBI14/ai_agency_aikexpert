@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agency OS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <!-- ⭐ НОВОЕ: marked.js для рендеринга markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --color-paper: #ffffff;
+            --color-ink: #000000;
+            --color-graphite: #858585;
+            --color-stone: #8e8e90;
+            --font-inter: 'Inter', system-ui, -apple-system, sans-serif;
+            --text-caption: 12px;
+            --leading-caption: 1.2;
+            --tracking-caption: -0.0170em;
+            --text-subheading: 24px;
+            --leading-subheading: 1.23;
+            --tracking-subheading: -0.4px;
+            --spacing-4: 4px;
+            --spacing-6: 6px;
+            --spacing-8: 8px;
+            --spacing-10: 10px;
+            --spacing-16: 16px;
+            --spacing-28: 28px;
+            --spacing-40: 40px;
+            --spacing-120: 120px;
+            --page-max-width: 1440px;
+            --card-padding: 16px;
+            --element-gap: 10px;
+            --radius-cards: 8px;
+            --radius-tags: 40px;
+            --radius-buttons: 9999px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--color-paper);
+            color: var(--color-ink);
+            font-family: var(--font-inter);
+            font-weight: 400;
+            -webkit-font-smoothing: antialiased;
+            line-height: var(--leading-caption);
+        }
+
+        .container {
+            max-width: var(--page-max-width);
+            margin: 0 auto;
+            padding: 0 var(--spacing-16);
+        }
+
+        .header {
+            padding: var(--spacing-16) 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-item {
+            font-size: var(--text-caption);
+            letter-spacing: var(--tracking-caption);
+            color: var(--color-ink);
+            text-decoration: none;
+            line-height: var(--leading-caption);
+        }
+
+        .header-item.muted { color: var(--color-graphite); }
+
+        .intro {
+            padding-top: var(--spacing-40);
+            padding-bottom: var(--spacing-40);
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: var(--spacing-40);
+        }
+
+        .intro-email {
+            font-size: var(--text-caption);
+            color: var(--color-ink);
+            text-decoration: none;
+            letter-spacing: var(--tracking-caption);
+        }
+
+        .intro-text {
+            font-size: var(--text-subheading);
+            color: var(--color-graphite);
+            line-height: var(--leading-subheading);
+            letter-spacing: var(--tracking-subheading);
+        }
+
+        .metrics {
+            display: flex;
+            gap: var(--spacing-40);
+            margin-bottom: var(--spacing-40);
+            padding-bottom: var(--spacing-40);
+            border-bottom: 1px solid var(--color-stone);
+            flex-wrap: wrap;
+        }
+
+        .metric-item {
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-6);
+        }
+
+        .metric-label, .metric-value {
+            font-size: var(--text-caption);
+            letter-spacing: var(--tracking-caption);
+            line-height: var(--leading-caption);
+        }
+        .metric-label { color: var(--color-graphite); }
+        .metric-value { color: var(--color-ink); }
+
+        .token-bar-bg {
+            width: 200px;
+            height: 4px;
+            background-color: var(--color-stone);
+            border-radius: 2px;
+            margin-top: var(--spacing-4);
+        }
+
+        .token-bar-fill {
+            height: 100%;
+            background-color: var(--color-ink);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .controls {
+            display: flex;
+            gap: var(--spacing-16);
+            margin-bottom: var(--spacing-40);
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            padding: var(--spacing-6) var(--spacing-16);
+            border-radius: var(--radius-buttons);
+            border: 1px solid var(--color-ink);
+            background: var(--color-paper);
+            color: var(--color-ink);
+            font-family: var(--font-inter);
+            font-size: var(--text-caption);
+            font-weight: 400;
+            letter-spacing: var(--tracking-caption);
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .control-btn:hover:not(:disabled) {
+            background: var(--color-ink);
+            color: var(--color-paper);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: var(--spacing-16);
+            padding-bottom: var(--spacing-120);
+        }
+
+        .card {
+            background-color: var(--color-paper);
+            border-radius: var(--radius-cards);
+            padding: var(--card-padding);
+            display: flex;
+            flex-direction: column;
+            gap: var(--element-gap);
+            min-height: 220px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .card:hover { background-color: #fafafa; }
+
+        .card.expanded {
+            grid-column: span 2;
+            grid-row: span 2;
+            min-height: 440px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: var(--spacing-8);
+        }
+
+        .pill-label {
+            border-radius: var(--radius-tags);
+            border: 1px solid var(--color-ink);
+            padding: var(--spacing-6) var(--spacing-8);
+            font-size: var(--text-caption);
+            color: var(--color-ink);
+            letter-spacing: var(--tracking-caption);
+            white-space: nowrap;
+        }
+
+        .pill-label.status-review {
+            border-color: var(--color-graphite);
+            color: var(--color-graphite);
+        }
+
+        .pill-label.status-completed {
+            border-color: var(--color-stone);
+            color: var(--color-graphite);
+        }
+
+        .arrow-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-buttons);
+            border: 1px solid var(--color-ink);
+            background: var(--color-paper);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .arrow-btn:hover { background: var(--color-ink); }
+        .arrow-btn:hover svg { stroke: var(--color-paper); }
+
+        .arrow-btn svg {
+            width: 16px;
+            height: 16px;
+            stroke: var(--color-ink);
+            stroke-width: 1.5;
+            fill: none;
+        }
+
+        .card-content {
+            flex-grow: 1;
+            font-size: var(--text-caption);
+            color: var(--color-ink);
+            letter-spacing: var(--tracking-caption);
+            line-height: 1.4;
+            overflow: hidden;
+        }
+
+        .card-summary {
+            display: -webkit-box;
+            -webkit-line-clamp: 5;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .card.expanded .card-summary {
+            -webkit-line-clamp: unset;
+            overflow-y: auto;
+            max-height: 320px;
+        }
+
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: auto;
+            padding-top: var(--spacing-8);
+            border-top: 1px solid var(--color-stone);
+        }
+
+        .card-meta {
+            font-size: var(--text-caption);
+            color: var(--color-graphite);
+            letter-spacing: var(--tracking-caption);
+        }
+
+        .json-content {
+            font-family: 'SF Mono', 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            background: #fafafa;
+            padding: var(--spacing-8);
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .leads-list { list-style: none; padding: 0; }
+        .leads-list li {
+            padding: var(--spacing-6) 0;
+            border-bottom: 1px solid var(--color-stone);
+        }
+        .leads-list li:last-child { border-bottom: none; }
+
+        .roi-table {
+            width: 100%;
+            font-size: var(--text-caption);
+            border-collapse: collapse;
+        }
+        .roi-table td {
+            padding: var(--spacing-4) 0;
+            border-bottom: 1px solid var(--color-stone);
+        }
+        .roi-table tr:last-child td { border-bottom: none; }
+        .roi-table td:first-child { color: var(--color-graphite); }
+        .roi-table td:last-child { text-align: right; color: var(--color-ink); }
+
+        .message-preview {
+            font-size: var(--text-caption);
+            line-height: 1.4;
+            padding: var(--spacing-8);
+            border-left: 1px solid var(--color-ink);
+            margin-top: var(--spacing-4);
+        }
+
+        .section-title {
+            font-size: var(--text-caption);
+            color: var(--color-graphite);
+            letter-spacing: var(--tracking-caption);
+            margin-bottom: var(--spacing-16);
+            text-transform: uppercase;
+        }
+
+        /* ⭐ НОВОЕ: Стили для финального отчета */
+        .final-report-card {
+            grid-column: span 5;
+            background-color: var(--color-paper);
+            border: 2px solid var(--color-ink);
+            border-radius: var(--radius-cards);
+            padding: var(--spacing-16);
+            margin-bottom: var(--spacing-16);
+        }
+
+        .final-report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--spacing-16);
+            padding-bottom: var(--spacing-16);
+            border-bottom: 1px solid var(--color-stone);
+        }
+
+        .final-report-title {
+            font-size: var(--text-subheading);
+            font-weight: 500;
+            letter-spacing: var(--tracking-subheading);
+        }
+
+        .final-report-actions {
+            display: flex;
+            gap: var(--spacing-8);
+        }
+
+        .final-report-content {
+            max-height: 600px;
+            overflow-y: auto;
+            padding: var(--spacing-16);
+            background: #fafafa;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .final-report-content.collapsed {
+            max-height: 200px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .final-report-content.collapsed::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: linear-gradient(transparent, #fafafa);
+        }
+
+        /* Markdown стили внутри отчета */
+        .final-report-content h1 {
+            font-size: 20px;
+            font-weight: 500;
+            margin: 16px 0 8px 0;
+            border-bottom: 1px solid var(--color-stone);
+            padding-bottom: 4px;
+        }
+
+        .final-report-content h2 {
+            font-size: 16px;
+            font-weight: 500;
+            margin: 14px 0 6px 0;
+        }
+
+        .final-report-content h3 {
+            font-size: 14px;
+            font-weight: 500;
+            margin: 12px 0 4px 0;
+        }
+
+        .final-report-content p {
+            margin: 8px 0;
+        }
+
+        .final-report-content ul, .final-report-content ol {
+            margin: 8px 0;
+            padding-left: 24px;
+        }
+
+        .final-report-content li {
+            margin: 4px 0;
+        }
+
+        .final-report-content code {
+            background: #f0f0f0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'SF Mono', monospace;
+            font-size: 11px;
+        }
+
+        .final-report-content pre {
+            background: #f0f0f0;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .final-report-content pre code {
+            background: transparent;
+            padding: 0;
+        }
+
+        .final-report-content table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            width: 100%;
+            font-size: 12px;
+        }
+
+        .final-report-content th, .final-report-content td {
+            border: 1px solid var(--color-stone);
+            padding: 6px 8px;
+            text-align: left;
+        }
+
+        .final-report-content th {
+            background: #f0f0f0;
+            font-weight: 500;
+        }
+
+        .final-report-content blockquote {
+            border-left: 3px solid var(--color-graphite);
+            padding-left: 12px;
+            margin: 8px 0;
+            color: var(--color-graphite);
+        }
+
+        .final-report-content strong {
+            font-weight: 500;
+        }
+
+        .final-report-content hr {
+            border: none;
+            border-top: 1px solid var(--color-stone);
+            margin: 16px 0;
+        }
+
+        /* ⭐ Метрики проекта */
+        .project-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: var(--spacing-16);
+            margin-bottom: var(--spacing-16);
+            padding: var(--spacing-16);
+            background: #fafafa;
+            border-radius: var(--radius-cards);
+        }
+
+        .project-metric {
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-4);
+        }
+
+        .project-metric-label {
+            font-size: 11px;
+            color: var(--color-graphite);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .project-metric-value {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--color-ink);
+        }
+
+        .project-metric-sub {
+            font-size: 11px;
+            color: var(--color-graphite);
+        }
+
+        @media (max-width: 1200px) {
+            .grid { grid-template-columns: repeat(3, 1fr); }
+            .card.expanded { grid-column: span 2; grid-row: span 2; }
+            .final-report-card { grid-column: span 3; }
+        }
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: repeat(2, 1fr); }
+            .card.expanded { grid-column: span 2; grid-row: auto; }
+            .intro {
+                grid-template-columns: 1fr;
+                gap: var(--spacing-16);
+                padding-top: var(--spacing-40);
+                padding-bottom: var(--spacing-40);
+            }
+            .header {
+                flex-direction: column;
+                gap: var(--spacing-16);
+                align-items: flex-start;
+            }
+            .metrics { flex-wrap: wrap; gap: var(--spacing-28); }
+            .final-report-card { grid-column: span 2; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <a href="#" class="header-item">AI Agency OS</a>
+            <a href="#" class="header-item muted">n8n Workflows</a>
+            <a href="#" class="header-item muted">NocoDB Base</a>
+            <a href="#" class="header-item muted">System Logs</a>
+        </header>
+
+        <section class="intro">
+            <a href="mailto:admin@agency.local" class="intro-email">admin@agency.local</a>
+            <p class="intro-text">
+                Оркестрация 9 ИИ-агентов для автоматизации e-commerce.
+                Интеграции через n8n, Albato и Bpium.
+                Мониторинг состояния задач и расхода токенов YandexGPT в реальном времени.
+            </p>
+        </section>
+
+        <section class="metrics">
+            <div class="metric-item">
+                <span class="metric-label">Статус системы</span>
+                <span class="metric-value" id="system-status">—</span>
+            </div>
+            <div class="metric-item">
+                <span class="metric-label">Расход токенов</span>
+                <span class="metric-value" id="token-text">0 / 0</span>
+                <div class="token-bar-bg">
+                    <div class="token-bar-fill" id="token-bar" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="metric-item">
+                <span class="metric-label">Активных агентов</span>
+                <span class="metric-value" id="active-agents">0</span>
+            </div>
+            <div class="metric-item">
+                <span class="metric-label">Клиент</span>
+                <span class="metric-value" id="client-name">—</span>
+            </div>
+        </section>
+
+        <section class="controls">
+            <button class="control-btn" id="btn-start" onclick="startAgency()">▶ Запустить агентство</button>
+            <button class="control-btn" id="btn-stop" onclick="stopAgency()" disabled>⏹ Остановить</button>
+            <button class="control-btn" id="btn-resume" onclick="resumeAgency()" disabled>↻ Продолжить анализ</button>
+            <button class="control-btn" id="btn-increase-tokens" onclick="increaseTokens()">+ Увеличить токены</button>
+            <button class="control-btn" onclick="refreshData()">↻ Обновить</button>
+        </section>
+
+        <!-- ⭐ НОВОЕ: Контейнер для финального отчета -->
+        <div id="final-report-container"></div>
+
+        <div class="section-title">Результаты работы агентов</div>
+
+        <section class="grid" id="agent-grid">
+            <div class="card" style="grid-column: span 5;">
+                <div class="card-header">
+                    <span class="pill-label">Система</span>
+                </div>
+                <div class="card-content">
+                    <div class="card-summary">Ожидание данных. Нажмите «Запустить агентство».</div>
+                </div>
+                <div class="card-footer">
+                    <span class="card-meta">Ожидание</span>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+const NOCODB_PROXY_URL = '/api/nocodb';
+const AGENCY_API_URL = '/api/agency';
+
+// Глобальное состояние
+let currentProjectData = {
+    final_report: '',
+    metrics: {},
+    completed_at: '',
+    status: ''
+};
+
+async function fetchAgencyStatus() {
+    try {
+        const response = await fetch(`${AGENCY_API_URL}/status`);
+        if (!response.ok) return;
+        const data = await response.json();
+
+        console.log('🔍 Получены данные от API:', data);
+
+        // Обновляем кнопки
+        document.getElementById('btn-start').disabled = data.running;
+        document.getElementById('btn-stop').disabled = !data.running;
+        document.getElementById('btn-resume').disabled = data.running || 
+            (data.status !== 'stopped' && data.status !== 'needs_human_review');
+
+        // Метрики токенов
+        const percentage = Math.min((data.tokens_used / data.token_budget) * 100, 100);
+        document.getElementById('token-text').textContent =
+            `${data.tokens_used.toLocaleString('ru-RU')} / ${data.token_budget.toLocaleString('ru-RU')}`;
+        document.getElementById('token-bar').style.width = `${percentage}%`;
+
+        // Статус системы
+        const statusEl = document.getElementById('system-status');
+        if (data.status === 'completed') {
+            statusEl.textContent = '✅ Завершен';
+            statusEl.style.color = 'var(--color-ink)';
+        } else if (data.running) {
+            statusEl.textContent = 'Работает';
+            statusEl.style.color = 'var(--color-ink)';
+        } else if (data.status === 'needs_human_review') {
+            statusEl.textContent = 'Требует внимания';
+            statusEl.style.color = 'var(--color-graphite)';
+        } else {
+            statusEl.textContent = 'Ожидание';
+            statusEl.style.color = 'var(--color-graphite)';
+        }
+
+        document.getElementById('client-name').textContent = data.client || '—';
+
+        // ⭐ СОХРАНЯЕМ ДАННЫЕ ПРОЕКТА
+        currentProjectData = {
+            final_report: data.final_report || '',
+            metrics: data.metrics || {},
+            completed_at: data.completed_at || '',
+            status: data.status || ''
+        };
+
+        console.log('💾 Сохранены данные проекта:', currentProjectData);
+        console.log('📄 Final report есть?', !!currentProjectData.final_report);
+        console.log('📄 Final report длина:', currentProjectData.final_report.length);
+
+        // ⭐ ВЫЗЫВАЕМ РЕНДЕРИНГ ФИНАЛЬНОГО ОТЧЕТА
+        renderFinalReport();
+
+    } catch (error) {
+        console.error('❌ Ошибка получения статуса:', error);
+    }
+}
+
+// ⭐ ФУНКЦИЯ РЕНДЕРИНГА ФИНАЛЬНОГО ОТЧЕТА
+function renderFinalReport() {
+    const container = document.getElementById('final-report-container');
+    
+    console.log('🎨 Вызвана renderFinalReport()');
+    console.log('🎨 Контейнер:', container);
+    console.log('🎨 Статус:', currentProjectData.status);
+    console.log('🎨 Final report длина:', currentProjectData.final_report?.length);
+
+    // Проверяем условия отображения
+    if (currentProjectData.status !== 'completed') {
+        console.log('⚠️ Статус не completed, скрываем отчет');
+        container.innerHTML = '';
+        return;
+    }
+
+    if (!currentProjectData.final_report || currentProjectData.final_report.trim() === '') {
+        console.log('⚠️ Final report пустой, скрываем отчет');
+        container.innerHTML = '';
+        return;
+    }
+
+    console.log('✅ Рендерим финальный отчет...');
+
+    const metrics = currentProjectData.metrics;
+    const completedAt = currentProjectData.completed_at 
+        ? formatTimestamp(currentProjectData.completed_at) 
+        : '—';
+
+    // Рендерим markdown в HTML (простая версия без marked.js)
+    const reportHtml = simpleMarkdownToHtml(currentProjectData.final_report);
+
+    container.innerHTML = `
+        <div class="final-report-card">
+            <div class="final-report-header">
+                <div>
+                    <div class="final-report-title">📋 Финальный отчет проекта</div>
+                    <div style="font-size: 11px; color: var(--color-graphite); margin-top: 4px;">
+                        Завершен: ${completedAt}
+                    </div>
+                </div>
+                <div class="final-report-actions">
+                    <button class="control-btn" onclick="toggleReportCollapse()">
+                        <span id="collapse-btn-text">Свернуть</span>
+                    </button>
+                    <button class="control-btn" onclick="downloadReport()">
+                        ⬇ Скачать .md
+                    </button>
+                </div>
+            </div>
+            
+            ${renderProjectMetrics(metrics)}
+            
+            <div class="final-report-content" id="report-content">
+                ${reportHtml}
+            </div>
+        </div>
+    `;
+
+    console.log('✅ Отчет отрендерен');
+}
+
+// Простая функция конвертации markdown в HTML (без marked.js)
+function simpleMarkdownToHtml(markdown) {
+    if (!markdown) return '';
+    
+    let html = markdown
+        // Заголовки
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        // Жирный текст
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        // Курсив
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        // Списки
+        .replace(/^\- (.*$)/gim, '<li>$1</li>')
+        .replace(/^\* (.*$)/gim, '<li>$1</li>')
+        // Параграфы
+        .replace(/\n\n/g, '</p><p>')
+        // Переносы строк
+        .replace(/\n/g, '<br>');
+    
+    // Оборачиваем списки
+    html = html.replace(/(<li>.*<\/li>)/gis, '<ul>$1</ul>');
+    
+    return `<p>${html}</p>`;
+}
+
+// Рендеринг метрик
+function renderProjectMetrics(metrics) {
+    if (!metrics || Object.keys(metrics).length === 0) {
+        return '';
+    }
+
+    const items = [];
+
+    if (metrics.total_tokens_used) {
+        items.push({
+            label: 'Всего токенов',
+            value: metrics.total_tokens_used.toLocaleString('ru-RU'),
+            sub: 'использовано'
+        });
+    }
+
+    if (metrics.tasks_completed) {
+        items.push({
+            label: 'Задач выполнено',
+            value: metrics.tasks_completed,
+            sub: 'успешно'
+        });
+    }
+
+    if (metrics.total_duration_minutes) {
+        items.push({
+            label: 'Время выполнения',
+            value: `${metrics.total_duration_minutes} мин`,
+            sub: 'общее'
+        });
+    }
+
+    // Токены по агентам
+    if (metrics.tokens_per_agent && Object.keys(metrics.tokens_per_agent).length > 0) {
+        const agentEntries = Object.entries(metrics.tokens_per_agent)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4);
+        
+        agentEntries.forEach(([agent, tokens]) => {
+            items.push({
+                label: agent,
+                value: tokens.toLocaleString('ru-RU'),
+                sub: 'токенов'
+            });
+        });
+    }
+
+    if (items.length === 0) return '';
+
+    return `
+        <div class="project-metrics">
+            ${items.map(item => `
+                <div class="project-metric">
+                    <span class="project-metric-label">${escapeHtml(item.label)}</span>
+                    <span class="project-metric-value">${escapeHtml(item.value)}</span>
+                    ${item.sub ? `<span class="project-metric-sub">${escapeHtml(item.sub)}</span>` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Управление сворачиванием
+function toggleReportCollapse() {
+    const content = document.getElementById('report-content');
+    const btnText = document.getElementById('collapse-btn-text');
+    
+    if (content.classList.contains('collapsed')) {
+        content.classList.remove('collapsed');
+        btnText.textContent = 'Свернуть';
+    } else {
+        content.classList.add('collapsed');
+        btnText.textContent = 'Развернуть';
+    }
+}
+
+// Скачивание отчета
+function downloadReport() {
+    if (!currentProjectData.final_report) return;
+    
+    const blob = new Blob([currentProjectData.final_report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project-report-${new Date().toISOString().split('T')[0]}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+        async function fetchAgentData() {
+            try {
+                const response = await fetch(`${NOCODB_PROXY_URL}?limit=50`);
+                if (!response.ok) {
+                    if (response.status === 502) throw new Error('NocoDB недоступен');
+                    throw new Error(`Ошибка: ${response.status}`);
+                }
+
+                const data = await response.json();
+                let records = data.records || [];
+                records = records.map(r => r.fields || r);
+
+                records.sort((a, b) => {
+                    const timeA = new Date(a.timestamp || 0).getTime();
+                    const timeB = new Date(b.timestamp || 0).getTime();
+                    return timeB - timeA;
+                });
+
+                updateDashboard(records);
+            } catch (error) {
+                console.error('Ошибка загрузки данных:', error);
+                showFallbackData(error.message);
+            }
+        }
+
+        function updateDashboard(records) {
+            const grid = document.getElementById('agent-grid');
+            grid.innerHTML = '';
+
+            let activeCount = 0;
+
+            const agentMap = new Map();
+            records.forEach(record => {
+                const agentName = record.agent_name;
+                if (!agentMap.has(agentName)) {
+                    agentMap.set(agentName, record);
+                }
+            });
+
+            const agents = Array.from(agentMap.values());
+
+            if (agents.length === 0) {
+                grid.innerHTML = `
+                    <div class="card" style="grid-column: span 5;">
+                        <div class="card-header">
+                            <span class="pill-label">Система</span>
+                        </div>
+                        <div class="card-content">
+                            <div class="card-summary">Пока нет записей. Нажмите «Запустить агентство» для начала работы.</div>
+                        </div>
+                        <div class="card-footer">
+                            <span class="card-meta">Ожидание</span>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            agents.forEach(record => {
+                if (record.status === 'in_progress') activeCount++;
+
+                let statusClass = '';
+                let statusText = '';
+
+                if (record.status === 'in_progress') {
+                    statusText = 'В работе';
+                } else if (record.status === 'completed') {
+                    statusClass = 'status-completed';
+                    statusText = 'Завершено';
+                } else if (record.status === 'needs_review' || record.status === 'needs_human_review') {
+                    statusClass = 'status-review';
+                    statusText = 'Требует внимания';
+                } else {
+                    statusText = record.status || '—';
+                }
+
+                const agentName = record.agent_name || 'Unknown';
+                const taskDesc = record.task_description || 'Нет описания';
+                const fullResponse = record.full_response || '';
+                const tokens = record.tokens_used || 0;
+                const timestamp = record.timestamp ? formatTimestamp(record.timestamp) : '';
+
+                const contentHtml = renderAgentContent(agentName, fullResponse, taskDesc);
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.onclick = () => card.classList.toggle('expanded');
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="pill-label ${statusClass}">${escapeHtml(agentName)}</span>
+                        <button class="arrow-btn" title="Подробнее" onclick="event.stopPropagation()">
+                            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+                    ${contentHtml}
+                    <div class="card-footer">
+                        <span class="card-meta">${statusText}</span>
+                        <span class="card-meta">${tokens} tok</span>
+                        <span class="card-meta">${timestamp}</span>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+
+            document.getElementById('active-agents').textContent = activeCount;
+        }
+
+        function renderAgentContent(agentName, fullResponse, taskDesc) {
+            let jsonData = null;
+            if (fullResponse && typeof fullResponse === 'string' && fullResponse.trim().startsWith('{')) {
+                try {
+                    jsonData = JSON.parse(fullResponse);
+                } catch (e) {
+                    jsonData = null;
+                }
+            }
+
+            if (jsonData) {
+                switch (agentName) {
+                    case 'lead_hunter': return renderLeads(jsonData);
+                    case 'analyst': return renderROI(jsonData);
+                    case 'sales': return renderMessages(jsonData);
+                    case 'architect':
+                    case 'developer':
+                    case 'qa':
+                    case 'tech_writer':
+                    case 'crm_customizer':
+                        return renderJSON(jsonData);
+                    default:
+                        return renderJSON(jsonData);
+                }
+            }
+
+            return `<div class="card-content"><div class="card-summary">${escapeHtml(taskDesc)}</div></div>`;
+        }
+
+        function renderLeads(data) {
+            const leads = data.leads_found || [];
+            if (leads.length === 0) {
+                return `<div class="card-content"><div class="card-summary">Лиды не найдены</div></div>`;
+            }
+            const leadsHtml = leads.slice(0, 5).map(lead => `
+                <li>
+                    <div class="lead-name">${escapeHtml(lead.company_name || 'N/A')}</div>
+                    <div class="lead-meta">
+                        ${escapeHtml(lead.marketplace || '')}${lead.category ? ' • ' + escapeHtml(lead.category) : ''}
+                    </div>
+                </li>
+            `).join('');
+            return `
+                <div class="card-content">
+                    <div class="card-summary">
+                        <div style="color: var(--color-graphite); margin-bottom: var(--spacing-8);">
+                            Найдено лидов: ${data.total_found || leads.length}
+                        </div>
+                        <ul class="leads-list">${leadsHtml}</ul>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderROI(data) {
+            const roi = data.roi_calculation || {};
+            const rows = [
+                ['Экономия времени (ч/мес)', roi.total_time_saved_hours_per_month || 0],
+                ['Экономия (₽/мес)', formatMoney(roi.cost_saved_per_month_rub || 0)],
+                ['Стоимость внедрения', formatMoney(roi.implementation_cost_rub || 0)],
+                ['Окупаемость (мес)', roi.payback_period_months || 0]
+            ];
+            const rowsHtml = rows.map(([label, value]) => `
+                <tr><td>${label}</td><td>${value}</td></tr>
+            `).join('');
+            return `
+                <div class="card-content">
+                    <div class="card-summary">
+                        <table class="roi-table">${rowsHtml}</table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderMessages(data) {
+            const messages = data.messages || [];
+            if (messages.length === 0) {
+                return `<div class="card-content"><div class="card-summary">Сообщения не сгенерированы</div></div>`;
+            }
+            const msg = messages[0];
+            const messageText = msg.message_text || '';
+            const preview = messageText.length > 200 ? messageText.substring(0, 200) + '...' : messageText;
+            return `
+                <div class="card-content">
+                    <div class="card-summary">
+                        <div style="color: var(--color-graphite); margin-bottom: var(--spacing-4);">
+                            ${escapeHtml(msg.lead_name || 'N/A')} • ${escapeHtml(msg.channel || '')}
+                        </div>
+                        <div class="message-preview">${escapeHtml(preview)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderJSON(data) {
+            const summary = data.summary || data.pm_comment || data.approach || 'Результат готов';
+            return `
+                <div class="card-content">
+                    <div class="card-summary">
+                        <div style="margin-bottom: var(--spacing-8);">${escapeHtml(summary)}</div>
+                        <div class="json-content">${escapeHtml(JSON.stringify(data, null, 2))}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        function formatTimestamp(ts) {
+            try {
+                const date = new Date(ts);
+                return date.toLocaleString('ru-RU', {
+                    day: '2-digit', month: '2-digit',
+                    hour: '2-digit', minute: '2-digit'
+                });
+            } catch (e) { return ''; }
+        }
+
+        function formatMoney(value) {
+            if (!value) return '0 ₽';
+            return Number(value).toLocaleString('ru-RU') + ' ₽';
+        }
+
+        function showFallbackData(errorMsg) {
+            const grid = document.getElementById('agent-grid');
+            grid.innerHTML = `
+                <div class="card" style="grid-column: span 5;">
+                    <div class="card-header">
+                        <span class="pill-label status-review">Ошибка</span>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-summary">${escapeHtml(errorMsg || 'Нет подключения к API.')}</div>
+                    </div>
+                    <div class="card-footer">
+                        <span class="card-meta">Проверьте логи</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function startAgency() {
+            try {
+                const response = await fetch(`${AGENCY_API_URL}/start`, { method: 'POST' });
+                if (response.ok) {
+                    document.getElementById('btn-start').disabled = true;
+                    document.getElementById('btn-stop').disabled = false;
+                    setTimeout(refreshData, 2000);
+                } else {
+                    const err = await response.json();
+                    alert('Ошибка: ' + (err.error || 'неизвестно'));
+                }
+            } catch (error) {
+                alert('Не удалось связаться с API.');
+            }
+        }
+
+        async function stopAgency() {
+            try {
+                const response = await fetch(`${AGENCY_API_URL}/stop`, { method: 'POST' });
+                if (response.ok) {
+                    document.getElementById('btn-start').disabled = false;
+                    document.getElementById('btn-stop').disabled = true;
+                    setTimeout(refreshData, 1000);
+                }
+            } catch (error) {
+                alert('Не удалось остановить агентство');
+            }
+        }
+
+        async function resumeAgency() {
+            try {
+                const response = await fetch(`${AGENCY_API_URL}/resume`, { method: 'POST' });
+                if (response.ok) {
+                    document.getElementById('btn-start').disabled = true;
+                    document.getElementById('btn-stop').disabled = false;
+                    document.getElementById('btn-resume').disabled = true;
+                    setTimeout(refreshData, 2000);
+                } else {
+                    const err = await response.json();
+                    alert('Ошибка: ' + (err.error || 'неизвестно'));
+                }
+            } catch (error) {
+                alert('Не удалось возобновить агентство');
+            }
+        }
+
+        async function increaseTokens() {
+            try {
+                const response = await fetch(`${AGENCY_API_URL}/increase-tokens`, { method: 'POST' });
+                if (response.ok) {
+                    const data = await response.json();
+                    alert(`Бюджет увеличен на ${data.added.toLocaleString('ru-RU')} токенов. Новый бюджет: ${data.new_budget.toLocaleString('ru-RU')}`);
+                    setTimeout(refreshData, 1000);
+                }
+            } catch (error) {
+                alert('Не удалось увеличить бюджет');
+            }
+        }
+
+        function refreshData() {
+            fetchAgencyStatus();
+            fetchAgentData();
+        }
+
+        refreshData();
+        setInterval(refreshData, 10000);
+    </script>
+</body>
+</html>
