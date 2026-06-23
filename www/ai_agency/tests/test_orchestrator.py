@@ -111,10 +111,10 @@ class TestOrchestratorRun:
 class TestOrchestratorExecuteTask:
     """Тесты метода execute_task()."""
     
-    @patch('main.load_prompt')
-    @patch('main.call_llm')
-    @patch('main.log_to_agent_logs')
-    @patch('main.update_last_agent_log')
+    @patch('core.utils.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.log_to_agent_logs')
+    @patch('core.utils.update_last_agent_log')
     def test_execute_analyst_task(self, mock_update_log, mock_log, mock_call_llm, mock_load_prompt,
                                   mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест выполнения задачи аналитика."""

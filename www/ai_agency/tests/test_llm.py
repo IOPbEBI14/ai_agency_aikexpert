@@ -3,6 +3,7 @@
 """
 import pytest
 import json
+import requests
 from unittest.mock import patch, MagicMock
 from core.utils import call_llm, try_fix_truncated_json, validate_with_qa
 

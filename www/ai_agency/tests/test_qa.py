@@ -20,7 +20,7 @@ class TestValidateWithQA:
             100
         )
         
-        from main import validate_with_qa
+        from core.utils import validate_with_qa
         result = validate_with_qa("analyst", '{"data": "value"}', "Описание задачи")
         
         assert result["approved"] is True
