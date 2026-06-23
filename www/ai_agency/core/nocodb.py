@@ -294,7 +294,24 @@ class ProjectsClient:
         except requests.exceptions.RequestException as e:
             logger.error(f" Ошибка чтения записей проекта {project_id}: {e}")
             return []
-
+    def find_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
+        """Ищет проект по ID."""
+        try:
+            url = f"{self.projects_url}/{project_id}"
+            response = requests.get(url, headers=self.headers, timeout=30)
+            
+            if response.status_code != 200:
+                logger.error(f" NocoDB вернул {response.status_code}: {response.text[:200]}")
+                return None
+            
+            data = response.json()
+            project = self._unpack_record(data)
+            logger.info(f"📂 Найден проект по ID: {project.get('project_name')} (ID: {project.get('Id')})")
+            return project
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка поиска проекта: {e}")
+            return None            
+            
 class TasksClient:
     """Клиент для работы с таблицей tasks"""
 
@@ -471,20 +488,3 @@ class TasksClient:
             logger.error(f"Ошибка проверки подзадач: {e}")
             return False
             
-    def find_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
-        """Ищет проект по ID."""
-        try:
-            url = f"{self.projects_url}/{project_id}"
-            response = requests.get(url, headers=self.headers, timeout=30)
-            
-            if response.status_code != 200:
-                logger.error(f" NocoDB вернул {response.status_code}: {response.text[:200]}")
-                return None
-            
-            data = response.json()
-            project = self._unpack_record(data)
-            logger.info(f"📂 Найден проект по ID: {project.get('project_name')} (ID: {project.get('Id')})")
-            return project
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Ошибка поиска проекта: {e}")
-            return None            

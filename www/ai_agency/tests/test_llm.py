@@ -10,7 +10,7 @@ from core.utils import call_llm, try_fix_truncated_json, validate_with_qa
 class TestCallLLM:
     """Тесты функции call_llm()."""
     
-    @patch('main.requests.post')
+    @patch('core.utils.requests.post')
     def test_successful_call(self, mock_post, mock_llm_response):
         """Тест успешного вызова LLM."""
         mock_response = MagicMock()
@@ -24,7 +24,7 @@ class TestCallLLM:
         assert tokens == 100
         mock_post.assert_called_once()
     
-    @patch('main.requests.post')
+    @patch('core.utils.requests.post')
     def test_call_with_timeout_retry(self, mock_post, mock_llm_response):
         """Тест повторной попытки при таймауте."""
         import requests
@@ -40,7 +40,7 @@ class TestCallLLM:
         assert content == mock_llm_response["output_text"]
         assert mock_post.call_count == 2
     
-    @patch('main.requests.post')
+    @patch('core.utils.requests.post')
     def test_call_with_api_error(self, mock_post):
         """Тест обработки ошибки API."""
         mock_response = MagicMock()
@@ -52,7 +52,7 @@ class TestCallLLM:
         with pytest.raises(RuntimeError, match="LLM вернул статус 500"):
             call_llm("test_agent", "system", "task", max_retries=0)    
             
-    @patch('main.requests.post')
+    @patch('core.utils.requests.post')
     def test_call_with_truncated_response(self, mock_post):
         """Тест обработки обрезанного ответа."""
         # Ответ без закрывающей скобки
@@ -71,7 +71,7 @@ class TestCallLLM:
         
         assert '{"key": "value"}' in content
     
-    @patch('main.requests.post')
+    @patch('core.utils.requests.post')
     def test_call_increases_max_tokens_on_truncation(self, mock_post, mock_llm_response):
         """Тест увеличения max_tokens при обрезанном ответе."""
         truncated_response = {

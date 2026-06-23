@@ -42,8 +42,8 @@ class TestValidateWithQA:
         assert result["approved"] is False
         assert result["feedback"] == "Найдены ошибки"
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     def test_qa_with_llm_error(self, mock_load_prompt, mock_call_llm):
         """Тест ошибки LLM при QA."""
         mock_load_prompt.return_value = "QA промпт"
@@ -55,8 +55,8 @@ class TestValidateWithQA:
         assert result["approved"] is True
         assert "QA ошибка" in result["feedback"]
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     def test_qa_with_invalid_json(self, mock_load_prompt, mock_call_llm):
         """Тест невалидного JSON от QA."""
         mock_load_prompt.return_value = "QA промпт"
@@ -67,8 +67,8 @@ class TestValidateWithQA:
         # При невалидном JSON должен вернуть approved=True
         assert result["approved"] is True
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     def test_qa_passes_long_response(self, mock_load_prompt, mock_call_llm):
         """Тест QA с длинным ответом агента."""
         mock_load_prompt.return_value = "QA промпт"
@@ -87,8 +87,8 @@ class TestValidateWithQA:
         call_args = mock_call_llm.call_args
         assert len(call_args[0][2]) < 7000  # user_task должен быть обрезан
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     def test_qa_with_complex_issues(self, mock_load_prompt, mock_call_llm):
         """Тест QA со сложными проблемами."""
         mock_load_prompt.return_value = "QA промпт"

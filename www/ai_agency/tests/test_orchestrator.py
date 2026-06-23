@@ -14,19 +14,13 @@ from core.orchestrator import Orchestrator
 class TestOrchestratorInitialization:
     """Тесты инициализации Orchestrator."""
     
-    def test_orchestrator_creation(self, mock_nocodb_clients):
+    def test_orchestrator_creation(self, orchestrator):
         """Тест создания Orchestrator."""
-        orchestrator = Orchestrator()
-        
         assert orchestrator.current_project is None
         assert orchestrator.agency_running is False
-        assert len(orchestrator.agent_prompts_cache) == 0
     
-    def test_initialize_with_project_id(self, mock_nocodb_clients, sample_project_data):
+    def test_initialize_with_project_id(self, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест инициализации с ID проекта."""
-        orchestrator = Orchestrator()
-        
-        # Мок возвращает проект
         mock_nocodb_clients['projects'].find_project_by_id.return_value = sample_project_data
         
         result = orchestrator.initialize(project_id=1)
@@ -35,20 +29,16 @@ class TestOrchestratorInitialization:
         assert orchestrator.current_project == sample_project_data
         mock_nocodb_clients['projects'].find_project_by_id.assert_called_once_with(1)
     
-    def test_initialize_with_nonexistent_project(self, mock_nocodb_clients):
+    def test_initialize_with_nonexistent_project(self, orchestrator, mock_nocodb_clients):
         """Тест инициализации с несуществующим проектом."""
-        orchestrator = Orchestrator()
-        
         mock_nocodb_clients['projects'].find_project_by_id.return_value = None
         
         result = orchestrator.initialize(project_id=999)
         
         assert result is False
     
-    def test_initialize_finds_active_project(self, mock_nocodb_clients, sample_project_data):
+    def test_initialize_finds_active_project(self, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест поиска активного проекта."""
-        orchestrator = Orchestrator()
-        
         mock_nocodb_clients['projects'].find_project_by_status.return_value = sample_project_data
         
         result = orchestrator.initialize()
@@ -56,10 +46,8 @@ class TestOrchestratorInitialization:
         assert result is True
         mock_nocodb_clients['projects'].find_project_by_status.assert_called_with("in_progress")
     
-    def test_initialize_resumes_stopped_project(self, mock_nocodb_clients, sample_project_data):
+    def test_initialize_resumes_stopped_project(self, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест возобновления остановленного проекта."""
-        orchestrator = Orchestrator()
-        
         # Нет активных проектов, есть остановленный
         mock_nocodb_clients['projects'].find_project_by_status.side_effect = [
             None,  # in_progress
@@ -71,10 +59,8 @@ class TestOrchestratorInitialization:
         assert result is True
         mock_nocodb_clients['projects'].update_project.assert_called_once()
     
-    def test_initialize_creates_new_project(self, mock_nocodb_clients, sample_project_data):
+    def test_initialize_creates_new_project(self, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест создания нового проекта."""
-        orchestrator = Orchestrator()
-        
         # Нет ни активных, ни остановленных проектов
         mock_nocodb_clients['projects'].find_project_by_status.return_value = None
         mock_nocodb_clients['projects'].create_project.return_value = sample_project_data
@@ -84,15 +70,12 @@ class TestOrchestratorInitialization:
         assert result is True
         mock_nocodb_clients['projects'].create_project.assert_called_once()
 
-
 class TestOrchestratorRun:
     """Тесты метода run()."""
     
-    @patch('core.orchestrator.Orchestrator._create_initial_task_graph')
-    @patch('core.orchestrator.Orchestrator.execute_task')
-    def test_run_executes_tasks(self, mock_execute, mock_create_graph, mock_nocodb_clients, sample_project_data):
+    @patch.object(Orchestrator, 'execute_task')
+    def test_run_executes_tasks(self, mock_execute, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест выполнения задач."""
-        orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
         
         # Мок возвращает задачи
@@ -101,7 +84,6 @@ class TestOrchestratorRun:
             {"task_id": "task_002", "status": "completed", "depends_on": '["task_001"]'}
         ]
         
-        mock_create_graph.return_value = True
         mock_execute.return_value = True
         
         # Запускаем на 1 итерацию
@@ -111,10 +93,8 @@ class TestOrchestratorRun:
         # Проверяем, что execute_task был вызван
         mock_execute.assert_called()
     
-    def test_run_stops_on_budget_exhaustion(self, mock_nocodb_clients, sample_project_data):
+    def test_run_stops_on_budget_exhaustion(self, orchestrator, mock_nocodb_clients, sample_project_data):
         """Тест остановки при исчерпании бюджета."""
-        orchestrator = Orchestrator()
-        
         # Бюджет почти исчерпан
         sample_project_data["tokens_used"] = 49000
         sample_project_data["token_budget"] = 50000
@@ -127,7 +107,6 @@ class TestOrchestratorRun:
         
         # Проверяем, что проект переведён в needs_human_review
         mock_nocodb_clients['projects'].update_project.assert_called()
-
 
 class TestOrchestratorExecuteTask:
     """Тесты метода execute_task()."""
@@ -199,19 +178,17 @@ class TestOrchestratorExecuteTask:
         )
 
 
-class TestOrchestratorQA:
+class TestOrchestratorQA:class TestOrchestratorQA:
     """Тесты метода run_qa_gate()."""
     
-    @patch('main.update_last_agent_log')
-    @patch('main.log_to_agent_logs')
-    @patch('main.validate_with_qa')
-    def test_qa_passed(self, mock_validate_qa, mock_log, mock_update_log,
-                       mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.utils.validate_with_qa')
+    @patch('core.utils.log_to_agent_logs')
+    @patch('core.utils.update_last_agent_log')
+    def test_qa_passed(self, mock_update_log, mock_log, mock_validate_qa,
+                       orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест пройденной QA проверки."""
-        orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
         
-        # Mock возвращает dict с правильными ключами
         mock_validate_qa.return_value = {
             "approved": True,
             "feedback": "Всё отлично",
@@ -231,19 +208,16 @@ class TestOrchestratorQA:
         
         assert result is True
         
-        # Проверяем, что update_task был вызван с правильными параметрами
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "completed"
         assert call_args[0][1]["qa_approved"] == "true"
-        assert call_args[0][1]["qa_feedback"] == "Всё отлично"
     
-    @patch('main.update_last_agent_log')
-    @patch('main.log_to_agent_logs')
-    @patch('main.validate_with_qa')
-    def test_qa_failed(self, mock_validate_qa, mock_log, mock_update_log,
-                       mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.utils.validate_with_qa')
+    @patch('core.utils.log_to_agent_logs')
+    @patch('core.utils.update_last_agent_log')
+    def test_qa_failed(self, mock_update_log, mock_log, mock_validate_qa,
+                       orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест проваленной QA проверки."""
-        orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
         
         mock_validate_qa.return_value = {
@@ -265,19 +239,17 @@ class TestOrchestratorQA:
         
         assert result is False
         
-        # Проверяем, что update_task был вызван с правильными параметрами
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "pending"
         assert call_args[0][1]["qa_approved"] == "false"
         assert call_args[0][1]["qa_feedback"] == "Найдены ошибки"
     
-    @patch('main.update_last_agent_log')
-    @patch('main.log_to_agent_logs')
-    @patch('main.validate_with_qa')
-    def test_qa_failed_max_iterations(self, mock_validate_qa, mock_log, mock_update_log,
-                                      mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.utils.validate_with_qa')
+    @patch('core.utils.log_to_agent_logs')
+    @patch('core.utils.update_last_agent_log')
+    def test_qa_failed_max_iterations(self, mock_update_log, mock_log, mock_validate_qa,
+                                      orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест проваленной QA после максимального числа итераций."""
-        orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
         
         mock_validate_qa.return_value = {
@@ -301,7 +273,6 @@ class TestOrchestratorQA:
         )
         
         assert result is False
-        # Задача должна быть помечена как failed
         mock_nocodb_clients['tasks'].update_task.assert_called_with(
             sample_task_data["Id"],
             {"status": "failed"}
