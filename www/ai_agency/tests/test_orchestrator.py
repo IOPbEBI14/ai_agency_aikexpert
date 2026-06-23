@@ -227,10 +227,10 @@ class TestOrchestratorQA:
         assert result is True
         
         # Проверяем, что update_task был вызван с правильными параметрами
-        mock_nocodb_clients['tasks'].update_task.assert_called()
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "completed"
         assert call_args[0][1]["qa_approved"] == "true"
+        assert call_args[0][1]["qa_feedback"] == "Всё отлично"
     
     @patch('main.update_last_agent_log')
     @patch('main.log_to_agent_logs')
@@ -261,7 +261,6 @@ class TestOrchestratorQA:
         assert result is False
         
         # Проверяем, что update_task был вызван с правильными параметрами
-        mock_nocodb_clients['tasks'].update_task.assert_called()
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "pending"
         assert call_args[0][1]["qa_approved"] == "false"
