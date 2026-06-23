@@ -79,14 +79,23 @@ def call_llm(agent_name: str, system_prompt: str, user_task: str, max_retries: i
         "max_tokens": 16000
     }
 
+    last_exception = None
+    
     for attempt in range(max_retries + 1):
         try:
             logger.info(f"🤖 Вызов агента: {agent_name} (попытка {attempt + 1}/{max_retries + 1})")
             response = requests.post(url, json=payload, headers=headers, timeout=180)
 
             if response.status_code != 200:
-                logger.error(f"❌ LLM вернул статус {response.status_code}: {response.text[:300]}")
-                response.raise_for_status()
+                error_msg = f"❌ LLM вернул статус {response.status_code}: {response.text[:300]}"
+                logger.error(error_msg)
+                
+                # Если это последняя попытка — выбрасываем исключение
+                if attempt == max_retries:
+                    raise RuntimeError(error_msg)
+                
+                # Иначе продолжаем retry
+                continue
 
             data = response.json()
             content = ""
@@ -121,19 +130,23 @@ def call_llm(agent_name: str, system_prompt: str, user_task: str, max_retries: i
             logger.info(f"✅ Агент {agent_name} ответил. Токенов: {tokens}")
             return content, tokens
 
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            last_exception = e
             logger.error(f"⏱️ Таймаут вызова LLM для {agent_name}")
             if attempt < max_retries:
                 continue
             raise
+        except (RuntimeError, ValueError) as e:
+            # Эти исключения пробрасываем дальше
+            raise
         except Exception as e:
+            last_exception = e
             logger.error(f"❌ Ошибка вызова LLM: {e}")
             if attempt < max_retries:
                 continue
             raise
 
-    raise RuntimeError(f"Не удалось получить ответ от {agent_name}")
-
+    raise RuntimeError(f"Не удалось получить ответ от {agent_name}") from last_exception
 
 def try_fix_truncated_json(content: str) -> str:
     """Пытается восстановить обрезанный JSON."""

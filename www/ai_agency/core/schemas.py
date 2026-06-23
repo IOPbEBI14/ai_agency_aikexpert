@@ -484,17 +484,50 @@ def get_model_example(model_class: type) -> str:
 def extract_json_from_text(text: str) -> str:
     """
     Извлекает JSON из текста ответа LLM.
-    Обрабатывает случаи, когда LLM добавляет комментарии до/после JSON.
+    Поддерживает как объекты {...}, так и массивы [...].
     """
-    # Ищем первый { и последний }
-    start = text.find('{')
-    end = text.rfind('}')
+    text = text.strip()
+    
+    # Определяем тип JSON
+    if text.startswith('{'):
+        start = 0
+        end_char = '}'
+        end = text.rfind('}')
+    elif text.startswith('['):
+        start = 0
+        end_char = ']'
+        end = text.rfind(']')
+    else:
+        # Ищем первый { или [
+        start_obj = text.find('{')
+        start_arr = text.find('[')
+        
+        if start_obj == -1 and start_arr == -1:
+            raise ValueError("JSON не найден в ответе")
+        
+        if start_obj == -1:
+            start = start_arr
+            end_char = ']'
+            end = text.rfind(']')
+        elif start_arr == -1:
+            start = start_obj
+            end_char = '}'
+            end = text.rfind('}')
+        else:
+            # Берём тот, который раньше
+            if start_obj < start_arr:
+                start = start_obj
+                end_char = '}'
+                end = text.rfind('}')
+            else:
+                start = start_arr
+                end_char = ']'
+                end = text.rfind(']')
     
     if start == -1 or end == -1 or end <= start:
         raise ValueError("JSON не найден в ответе")
     
     return text[start:end+1]
-
 
 def call_and_parse_llm(
     call_llm_func,
