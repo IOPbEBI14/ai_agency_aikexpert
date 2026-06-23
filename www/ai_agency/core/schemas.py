@@ -3,7 +3,7 @@ Pydantic-модели для строгой валидации ответов LL
 Каждый агент должен возвращать JSON, соответствующий своей модели.
 """
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError, ConfigDict
 from typing import List, Dict, Any, Optional, Literal, Type, TypeVar
 from datetime import datetime
 import json
@@ -19,10 +19,7 @@ logger = logging.getLogger(__name__)
 
 class BaseAgentResponse(BaseModel):
     """Базовая модель для всех ответов агентов."""
-    
-    class Config:
-        extra = "allow"  # Разрешаем дополнительные поля для гибкости
-
+    model_config = ConfigDict(extra="allow")  # Разрешаем дополнительные поля для гибкости
 
 # ==================== PM MODELS ====================
 
@@ -189,17 +186,14 @@ class SystemInfo(BaseModel):
 
 class DataFlowStep(BaseModel):
     """Шаг потока данных."""
-    
     step: int = Field(description="Номер шага")
     from_system: str = Field(alias="from", description="Система-источник")
     to_system: str = Field(alias="to", description="Система-приёмник")
     trigger: str = Field(description="Триггер")
     data: str = Field(description="Передаваемые данные")
     transformation: str = Field(description="Трансформация данных")
-    
-    class Config:
-        populate_by_name = True
 
+    model_config = ConfigDict(populate_by_name=True)
 
 class ArchitectResponse(BaseModel):
     """Ответ архитектора."""
