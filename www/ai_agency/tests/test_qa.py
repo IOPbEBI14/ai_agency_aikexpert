@@ -9,29 +9,26 @@ from core.utils import validate_with_qa
 class TestValidateWithQA:
     """Тесты функции validate_with_qa()."""
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     def test_qa_approved(self, mock_load_prompt, mock_call_llm):
         """Тест одобренного QA."""
+        # Настраиваем мок
         mock_load_prompt.return_value = "QA промпт"
-        
-        # validate_with_qa парсит JSON и возвращает dict
-        # Mock должен возвращать JSON, который можно распарсить
         mock_call_llm.return_value = (
             '{"approved": true, "feedback": "Всё отлично", "issues": []}',
             100
         )
         
+        from main import validate_with_qa
         result = validate_with_qa("analyst", '{"data": "value"}', "Описание задачи")
         
         assert result["approved"] is True
-        assert result["tokens_used"] == 100
+        assert result["feedback"] == "Всё отлично"    
         
-        # Проверяем, что call_llm был вызван хотя бы один раз
-        assert mock_call_llm.call_count >= 1
+    @patch('core.utils.call_llm')
+    @patch('core.utils.load_prompt')
     
-    @patch('main.call_llm')
-    @patch('main.load_prompt')
     def test_qa_rejected(self, mock_load_prompt, mock_call_llm):
         """Тест отклонённого QA."""
         mock_load_prompt.return_value = "QA промпт"

@@ -6,15 +6,15 @@ import json
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_nocodb_clients():
-    """Моки для клиентов NocoDB."""
-    with patch('core.orchestrator.NocoDBClient') as mock_nocodb, \
-         patch('core.orchestrator.ProjectsClient') as mock_projects, \
-         patch('core.orchestrator.TasksClient') as mock_tasks:
+    """Автоматически мокает клиенты NocoDB для всех тестов."""
+    with patch('core.nocodb.NocoDBClient') as mock_nocodb, \
+         patch('core.nocodb.ProjectsClient') as mock_projects, \
+         patch('core.nocodb.TasksClient') as mock_tasks:
         
-        # Настройка моков
         mock_nocodb_instance = MagicMock()
         mock_projects_instance = MagicMock()
         mock_tasks_instance = MagicMock()
@@ -29,6 +29,12 @@ def mock_nocodb_clients():
             'tasks': mock_tasks_instance
         }
 
+@pytest.fixture
+def mock_llm():
+    """Мокает вызовы LLM."""
+    with patch('core.orchestrator.call_llm') as mock_call:
+        mock_call.return_value = ('{"status": "ok"}', 100)
+        yield mock_call
 
 @pytest.fixture
 def sample_project_data():

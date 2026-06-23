@@ -4,6 +4,11 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from core.utils import call_llm, try_fix_truncated_json, validate_with_qa
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from core.orchestrator import Orchestrator
 
 
 class TestOrchestratorInitialization:
