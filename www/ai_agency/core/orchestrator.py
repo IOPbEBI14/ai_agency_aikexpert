@@ -148,6 +148,7 @@ class Orchestrator:
         Raises:
             ValueError: Если LLM не смог вернуть валидный JSON
         """
+        from main import call_llm
         
         model_class = self.AGENT_MODELS.get(model_key)
         if not model_class:
@@ -254,6 +255,7 @@ class Orchestrator:
         Главный цикл оркестратора.
         Выполняет задачи до их завершения или исчерпания бюджета.
         """
+        from main import load_prompt, log_to_agent_logs
         
         self.agency_running = True
         pm_prompt = load_prompt("pm")
@@ -369,6 +371,7 @@ class Orchestrator:
         """
         Создаёт начальный Task Graph через PM с Pydantic-валидацией.
         """
+        from main import load_prompt, log_to_agent_logs
         
         project_id = self.current_project.get("Id")
         tasks = self.tasks_db.get_tasks_by_project(project_id)
@@ -441,6 +444,7 @@ class Orchestrator:
         """
         Выполняет одну задачу с Pydantic-валидацией.
         """
+        from main import load_prompt, build_agent_task, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         task_db_id = task.get("Id")
@@ -543,6 +547,7 @@ class Orchestrator:
         """
         Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer.
         """
+        from main import log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         
@@ -558,6 +563,7 @@ class Orchestrator:
         logger.info("✅ Architect прошёл QA. PM декомпозирует архитектуру на подзадачи...")
         
         # Загружаем промпт PM
+        from main import load_prompt
         pm_prompt_text = load_prompt("pm")
         
         # Добавляем JSON Schema для декомпозиции
@@ -643,6 +649,7 @@ class Orchestrator:
         """
         Проверяет результат задачи через QA-агента с Pydantic-валидацией.
         """
+        from main import load_prompt, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         
@@ -739,6 +746,7 @@ class Orchestrator:
         """
         Финализирует проект: PM формирует финальный отчёт с Pydantic-валидацией.
         """
+        from main import load_prompt, log_to_agent_logs
         
         project_id = self.current_project.get("Id")
         
@@ -853,6 +861,7 @@ class Orchestrator:
         """
         Вызывает PM для разрешения тупика с Pydantic-валидацией.
         """
+        from main import load_prompt
         
         project_id = self.current_project.get("Id")
         
