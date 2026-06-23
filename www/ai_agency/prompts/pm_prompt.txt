@@ -113,60 +113,6 @@
 6. task_id должен быть уникальным (task_001, task_002, ...)
 7. depends_on — массив task_id зависимых задач (пустой массив, если нет зависимостей)
 
-ПРИМЕР TASK GRAPH:
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "agent_name": "analyst",
-      "task_description": "Провести анализ потребностей клиента и рассчитать ROI автоматизации",
-      "depends_on": [],
-      "input_data": {},
-      "max_iterations": 3
-    },
-    {
-      "task_id": "task_002",
-      "agent_name": "architect",
-      "task_description": "Спроектировать архитектуру интеграции на основе анализа",
-      "depends_on": ["task_001"],
-      "input_data": {"roi_data": "результат analyst"},
-      "max_iterations": 3
-    },
-    {
-      "task_id": "task_003",
-      "agent_name": "developer",
-      "task_description": "Реализовать архитектуру, разработанную architect",
-      "depends_on": ["task_002"],
-      "input_data": {"architecture": "результат architect"},
-      "max_iterations": 3
-    },
-    {
-      "task_id": "task_004",
-      "agent_name": "crm_customizer",
-      "task_description": "Настроить CRM под требования проекта",
-      "depends_on": ["task_003"],
-      "input_data": {},
-      "max_iterations": 3
-    },
-    {
-      "task_id": "task_005",
-      "agent_name": "qa",
-      "task_description": "Протестировать все интеграции и автоматизации",
-      "depends_on": ["task_004"],
-      "input_data": {},
-      "max_iterations": 3
-    },
-    {
-      "task_id": "task_006",
-      "agent_name": "tech_writer",
-      "task_description": "Создать документацию для клиента",
-      "depends_on": ["task_005"],
-      "input_data": {},
-      "max_iterations": 3
-    }
-  ]
-}
-
 ═══════════════════════════════════════════════════════════
 🎯 ТИП 3: ДЕКОМПОЗИЦИЯ ПОСЛЕ ARCHITECT
 ═══════════════════════════════════════════════════════════

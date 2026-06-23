@@ -369,9 +369,9 @@ class Orchestrator:
     
     def _create_initial_task_graph(self) -> bool:
         """
-        Создаёт начальный Task Graph через PM с Pydantic-валидацией.
+        Создаёт начальный Task Graph через PM, если задач ещё нет.
         """
-        #from main import load_prompt, log_to_agent_logs
+        from main import load_prompt, call_llm, log_to_agent_logs
         
         project_id = self.current_project.get("Id")
         tasks = self.tasks_db.get_tasks_by_project(project_id)
@@ -382,36 +382,64 @@ class Orchestrator:
         logger.info("🧠 PM строит Task Graph...")
         
         pm_prompt = load_prompt("pm")
-        
-        # Добавляем JSON Schema к промпту
-        schema_prompt = self.build_prompt_with_schema(pm_prompt, "pm_task_graph")
-        
-        user_task = f"""
-ПРОЕКТ:
-Клиент: {self.current_project.get('client_name')}
-Цель: {self.current_project.get('goal')}
+        task_graph_prompt = f"""
+    Ты — Project Manager. Декомпозируй проект на задачи и построй граф зависимостей.
 
-ПОСТРОЙ Task Graph в формате JSON согласно схеме выше.
+    ПРОЕКТ:
+    Клиент: {self.current_project.get('client_name')}
+    Цель: {self.current_project.get('goal')}
 
-ПРАВИЛА:
-- analyst и architect — это ОДНА задача каждый
-- developer — это ОДНА задача (после её выполнения PM декомпозирует на подзадачи)
-- crm_customizer, qa, tech_writer — по одной задаче
-- Указывай зависимости между задачами (depends_on)
-"""
-        
+    ДОСТУПНЫЕ АГЕНТЫ:
+    - analyst: анализ потребностей и ROI
+    - architect: проектирование архитектуры (после analyst)
+    - developer: разработка автоматизаций (после architect, будет декомпозирован на подзадачи)
+    - crm_customizer: настройка CRM (после developer)
+    - qa: тестирование и валидация (после crm_customizer)
+    - tech_writer: документация (после qa)
+
+    ВАЖНО:
+    - analyst и architect — это ОДНА задача каждый
+    - developer — это ОДНА задача (после её выполнения PM декомпозирует на подзадачи)
+    - crm_customizer, qa, tech_writer — по одной задаче
+
+    ⚠️ КРИТИЧНО: Используй поле "task_id" (НЕ "id"!) для идентификации задач!
+
+    ПОСТРОЙ Task Graph в формате JSON:
+    {{
+        "tasks": [
+            {{
+                "task_id": "task_001",
+                "agent_name": "analyst",
+                "task_description": "Провести анализ...",
+                "depends_on": [],
+                "input_data": {{}},
+                "max_iterations": 3
+            }},
+            {{
+                "task_id": "task_002",
+                "agent_name": "architect",
+                "task_description": "Спроектировать архитектуру...",
+                "depends_on": ["task_001"],
+                "input_data": {{"roi_data": "результат analyst"}},
+                "max_iterations": 3
+            }}
+        ]
+    }}
+
+    Верни ТОЛЬКО валидный JSON.
+    """
         try:
-            # Вызываем PM с валидацией
-            pm_task_graph, pm_tokens = self.call_agent_with_validation(
-                "PM", schema_prompt, user_task, "pm_task_graph"
-            )
+            pm_response, pm_tokens = call_llm("PM", pm_prompt, task_graph_prompt)
             
-            # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            # Создаём задачи в NocoDB
-            tasks_list = pm_task_graph.tasks
+            task_graph = json.loads(pm_response)
+            tasks_list = task_graph.get("tasks", [])
+            
+            if not tasks_list:
+                logger.error("❌ PM не вернул задачи")
+                return False
             
             for task_data in tasks_list:
                 task_data["project_id"] = project_id
@@ -428,16 +456,15 @@ class Orchestrator:
                 agent_name="PM",
                 status="completed",
                 task_description=f"Построен Task Graph из {len(tasks_list)} задач",
-                full_response=pm_task_graph.model_dump_json(indent=2),
-                tokens_used=pm_tokens
+                full_response=json.dumps(task_graph, ensure_ascii=False),
+                tokens_used=0
             )
             
             return True
             
         except Exception as e:
-            logger.error(f" Ошибка построения Task Graph: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка построения Task Graph: {e}", exc_info=True)
             return False
-    
     # ==================== ВЫПОЛНЕНИЕ ЗАДАЧИ ====================
     
     def execute_task(self, task: Dict[str, Any], pm_prompt: str) -> bool:

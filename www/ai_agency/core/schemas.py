@@ -57,7 +57,8 @@ class PMDecision(BaseModel):
 class PMTaskGraph(BaseModel):
     """Task Graph, созданный PM."""
     tasks: List[Dict[str, Any]] = Field(description="Список задач")
-    
+
+    # ⭐ НОВОЕ: Нормализация id → task_id
     @model_validator(mode="before")
     @classmethod
     def normalize_task_ids(cls, data):
@@ -69,7 +70,7 @@ class PMTaskGraph(BaseModel):
                     if "id" in task and "task_id" not in task:
                         task["task_id"] = task["id"]
         return data
-    
+
     @model_validator(mode="after")
     def validate_task_graph(self):
         """Проверка на циклические зависимости."""
@@ -91,7 +92,7 @@ class PMTaskGraph(BaseModel):
                 raise ValueError(f"Задача {task_id} зависит от самой себя")
         
         return self
-
+        
 class PMDecomposition(BaseModel):
     """Декомпозиция архитектуры на подзадачи."""
     
