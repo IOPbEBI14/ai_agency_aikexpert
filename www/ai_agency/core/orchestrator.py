@@ -448,7 +448,13 @@ class Orchestrator:
                 task_data["qa_approved"] = "pending"
                 task_data["created_at"] = datetime.now().isoformat()
                 self.tasks_db.create_task(task_data)
-            
+
+            # Сохраняем Task Graph в поле plan проекта
+            if self.current_project.get("Id"):
+                self.projects_db.update_project(
+                    self.current_project["Id"],
+                    {"plan": json.dumps(task_graph, ensure_ascii=False)}
+                )            
             logger.info(f"✅ Task Graph создан: {len(tasks_list)} задач")
             
             log_to_agent_logs(
@@ -732,15 +738,21 @@ class Orchestrator:
                 return qa_approved
             
             if qa_approved:
-                self.tasks_db.update_task(task_db_id, {
-                    "status": "completed",
-                    "qa_approved": "true",
-                    "qa_feedback": qa_feedback_text
-                })
-                update_last_agent_log(project_id, agent_name, "completed")
-                logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
-                return True
-            else:
+                    logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
+                    
+                    # ⭐ ВАЖНО: Обновляем статус задачи
+                    if update_status and task_db_id:
+                        self.tasks_db.update_task(task_db_id, {
+                            "status": "completed",
+                            "qa_approved": "true",
+                            "qa_feedback": qa_feedback_text
+                        })
+                        logger.info(f"📝 Задача {task_name} обновлена: status=completed")
+                        logger.info(f"🔍 QA результат: approved={qa_approved}, feedback={qa_feedback_text[:100]}")
+                        logger.info(f"📋 update_status={update_status}, task_db_id={task_db_id}")
+                    
+                    return True
+        else:
                 logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
                 self.tasks_db.update_task(task_db_id, {
                     "status": "pending",
