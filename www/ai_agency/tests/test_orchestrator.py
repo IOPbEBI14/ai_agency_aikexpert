@@ -178,7 +178,7 @@ class TestOrchestratorExecuteTask:
         )
 
 
-class TestOrchestratorQA:class TestOrchestratorQA:
+class TestOrchestratorQA:
     """Тесты метода run_qa_gate()."""
     
     @patch('core.utils.validate_with_qa')
