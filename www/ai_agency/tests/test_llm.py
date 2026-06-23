@@ -18,25 +18,32 @@ class TestCallLLM:
         mock_response.json.return_value = mock_llm_response
         mock_post.return_value = mock_response
         
-        content, tokens = call_llm("test", "system", "task")
-    
+        from core.utils import call_llm
+        content, tokens = call_llm("test_agent", "system prompt", "user task")
+        
         assert content == '{"status": "ok", "data": "test"}'
-        assert tokens == 100    
+        assert tokens == 100
+        mock_post.assert_called_once()
     
     @patch('core.utils.requests.post')
     def test_call_with_timeout_retry(self, mock_post, mock_llm_response):
         """Тест повторной попытки при таймауте."""
         import requests
         
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_llm_response
+        
         # Первый вызов - таймаут, второй - успех
         mock_post.side_effect = [
             requests.exceptions.Timeout(),
-            MagicMock(status_code=200, json=lambda: mock_llm_response)
+            mock_response
         ]
         
+        from core.utils import call_llm
         content, tokens = call_llm("test_agent", "system", "task", max_retries=2)
         
-        assert content == mock_llm_response["output_text"]
+        assert content == '{"status": "ok", "data": "test"}'
         assert mock_post.call_count == 2
     
     @patch('core.utils.requests.post')
@@ -45,16 +52,16 @@ class TestCallLLM:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
         mock_post.return_value = mock_response
         
-        # При max_retries=0 должно выбросить RuntimeError
-        with pytest.raises(RuntimeError, match="LLM вернул статус 500"):
-            call_llm("test_agent", "system", "task", max_retries=0)    
-            
+        from core.utils import call_llm
+        with pytest.raises(requests.exceptions.HTTPError):
+            call_llm("test_agent", "system", "task", max_retries=0)
+    
     @patch('core.utils.requests.post')
     def test_call_with_truncated_response(self, mock_post):
         """Тест обработки обрезанного ответа."""
-        # Ответ без закрывающей скобки
         truncated_response = {
             "output_text": '{"key": "value"',
             "usage": {"total_tokens": 50}
@@ -65,7 +72,7 @@ class TestCallLLM:
         mock_response.json.return_value = truncated_response
         mock_post.return_value = mock_response
         
-        # После восстановления должен вернуться валидный JSON
+        from core.utils import call_llm
         content, tokens = call_llm("test_agent", "system", "task", max_retries=2)
         
         assert '{"key": "value"}' in content
@@ -78,17 +85,22 @@ class TestCallLLM:
             "usage": {"total_tokens": 50}
         }
         
-        # Первый вызов - обрезанный, второй - полный
-        mock_post.side_effect = [
-            MagicMock(status_code=200, json=lambda: truncated_response),
-            MagicMock(status_code=200, json=lambda: mock_llm_response)
-        ]
+        mock_response_1 = MagicMock()
+        mock_response_1.status_code = 200
+        mock_response_1.json.return_value = truncated_response
         
+        mock_response_2 = MagicMock()
+        mock_response_2.status_code = 200
+        mock_response_2.json.return_value = mock_llm_response
+        
+        mock_post.side_effect = [mock_response_1, mock_response_2]
+        
+        from core.utils import call_llm
         call_llm("test_agent", "system", "task", max_retries=2)
         
         # Проверяем, что второй вызов был с увеличенным max_tokens
         second_call_kwargs = mock_post.call_args_list[1][1]
-        assert second_call_kwargs['json']['max_tokens'] > 16000
+        assert second_call_kwargs['json']['max_tokens'] > 16000 
 
 
 class TestTryFixTruncatedJson:

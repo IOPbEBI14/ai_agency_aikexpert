@@ -74,12 +74,13 @@ class TestPMDecisionModel:
     
     def test_valid_pm_decision(self, sample_pydantic_responses):
         """Тест валидного решения PM."""
-        decision = sample_pydantic_responses["pm_decision"]
+        # ✅ ИСПРАВЛЕНО: используем готовый объект напрямую
+        model = sample_pydantic_responses["pm_decision"]
         
-        assert decision.project_status == "in_progress"
-        assert decision.current_phase == "analysis"
-        assert decision.next_agent == "analyst"
-        assert decision.pm_comment == "Начинаем с анализа"
+        assert model.project_status == "in_progress"
+        assert model.current_phase == "analysis"
+        assert model.next_agent == "analyst"
+        assert model.pm_comment == "Начинаем работу"
     
     def test_pm_decision_with_null_agent(self):
         """Тест решения PM без следующего агента."""
@@ -128,7 +129,6 @@ class TestPMDecisionModel:
         """Тест отсутствия обязательного поля."""
         data = {
             "project_status": "in_progress",
-            # Отсутствует current_phase
             "pm_comment": "Тест"
         }
         with pytest.raises(ValidationError):
@@ -219,12 +219,13 @@ class TestAnalystResponseModel:
     
     def test_valid_analyst_response(self, sample_pydantic_responses):
         """Тест валидного ответа аналитика."""
-        data = sample_pydantic_responses["analyst_response"]
-        model = AnalystResponse(**data)
+        # ✅ ИСПРАВЛЕНО: используем готовый объект
+        model = sample_pydantic_responses["analyst_response"]
         
         assert model.client_name == "ООО Тест"
         assert len(model.current_pain_points) == 1
         assert model.roi_calculation.cost_saved_per_month_rub == 30000.0
+        assert model.current_pain_points[0].process == "Ручной перенос данных"
     
     def test_invalid_roi_calculation(self):
         """Тест невалидного расчёта ROI."""
@@ -233,8 +234,8 @@ class TestAnalystResponseModel:
             "current_pain_points": [],
             "proposed_automation": [],
             "roi_calculation": {
-                # Отсутствует обязательное поле
                 "total_time_saved_hours_per_month": 10.0
+                # Отсутствуют обязательные поля
             },
             "proposal_structure": []
         }
@@ -271,13 +272,14 @@ class TestQAResponseModel:
     
     def test_valid_qa_response(self, sample_pydantic_responses):
         """Тест валидного ответа QA."""
-        data = sample_pydantic_responses["qa_response"]
-        model = QAResponse(**data)
+        # ✅ ИСПРАВЛЕНО: используем готовый объект
+        model = sample_pydantic_responses["qa_response"]
         
         assert model.tests_total == 5
         assert model.tests_passed == 5
         assert model.tests_failed == 0
         assert len(model.issues) == 0
+        assert model.summary == "Проверка пройдена"
     
     def test_qa_with_issues(self):
         """Тест QA с найденными проблемами."""
