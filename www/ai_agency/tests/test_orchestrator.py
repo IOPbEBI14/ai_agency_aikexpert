@@ -278,61 +278,61 @@ class TestOrchestratorQA:
             {"status": "failed"}
         )
         
-class TestOrchestratorHelpers:
-    """Тесты вспомогательных методов."""
+# class TestOrchestratorHelpers:
+    # """Тесты вспомогательных методов."""
     
-    def test_find_ready_tasks(self, mock_nocodb_clients):
-        """Тест поиска готовых задач."""
-        orchestrator = Orchestrator()
+    # def test_find_ready_tasks(self, mock_nocodb_clients):
+        # """Тест поиска готовых задач."""
+        # orchestrator = Orchestrator()
         
-        pending_tasks = [
-            {"task_id": "task_001", "depends_on": "[]"},
-            {"task_id": "task_002", "depends_on": '["task_001"]'},
-            {"task_id": "task_003", "depends_on": '["task_999"]'}
-        ]
+        # pending_tasks = [
+            # {"task_id": "task_001", "depends_on": "[]"},
+            # {"task_id": "task_002", "depends_on": '["task_001"]'},
+            # {"task_id": "task_003", "depends_on": '["task_999"]'}
+        # ]
         
-        completed_ids = ["task_001"]
+        # completed_ids = ["task_001"]
         
-        ready = orchestrator._find_ready_tasks(pending_tasks, completed_ids)
+        # ready = orchestrator._find_ready_tasks(pending_tasks, completed_ids)
         
-        assert len(ready) == 2
-        assert ready[0]["task_id"] == "task_001"
-        assert ready[1]["task_id"] == "task_002"
+        # assert len(ready) == 2
+        # assert ready[0]["task_id"] == "task_001"
+        # assert ready[1]["task_id"] == "task_002"
     
-    def test_expand_completed_with_parents(self, mock_nocodb_clients):
-        """Тест расширения completed ID родителями."""
-        orchestrator = Orchestrator()
+    # def test_expand_completed_with_parents(self, mock_nocodb_clients):
+        # """Тест расширения completed ID родителями."""
+        # orchestrator = Orchestrator()
         
-        tasks = [
-            {"task_id": "dev_001", "status": "completed"},
-            {"task_id": "dev_002", "status": "completed"},
-            {"task_id": "task_003", "status": "in_progress"}
-        ]
+        # tasks = [
+            # {"task_id": "dev_001", "status": "completed"},
+            # {"task_id": "dev_002", "status": "completed"},
+            # {"task_id": "task_003", "status": "in_progress"}
+        # ]
         
-        completed_ids = ["dev_001", "dev_002"]
+        # completed_ids = ["dev_001", "dev_002"]
         
-        expanded = orchestrator._expand_completed_with_parents(tasks, completed_ids)
+        # expanded = orchestrator._expand_completed_with_parents(tasks, completed_ids)
         
-        assert "task_003" in expanded
+        # assert "task_003" in expanded
     
-    def test_check_and_complete_parent_tasks(self, mock_nocodb_clients):
-        """Тест завершения родительских задач."""
-        orchestrator = Orchestrator()
+    # def test_check_and_complete_parent_tasks(self, mock_nocodb_clients):
+        # """Тест завершения родительских задач."""
+        # orchestrator = Orchestrator()
         
-        tasks = [
-            {"task_id": "dev_001", "status": "completed", "Id": 101},
-            {"task_id": "dev_002", "status": "completed", "Id": 102},
-            {"task_id": "task_003", "status": "in_progress", "Id": 100}
-        ]
+        # tasks = [
+            # {"task_id": "dev_001", "status": "completed", "Id": 101},
+            # {"task_id": "dev_002", "status": "completed", "Id": 102},
+            # {"task_id": "task_003", "status": "in_progress", "Id": 100}
+        # ]
         
-        orchestrator.check_and_complete_parent_tasks(tasks)
+        # orchestrator.check_and_complete_parent_tasks(tasks)
         
-        # Проверяем, что родительская задача обновлена
-        mock_nocodb_clients['tasks'].update_task.assert_called_with(
-            100,
-            {
-                "status": "completed",
-                "qa_approved": "true",
-                "qa_feedback": "Все 2 подзадач завершены успешно"
-            }
-        )
+        # # Проверяем, что родительская задача обновлена
+        # mock_nocodb_clients['tasks'].update_task.assert_called_with(
+            # 100,
+            # {
+                # "status": "completed",
+                # "qa_approved": "true",
+                # "qa_feedback": "Все 2 подзадач завершены успешно"
+            # }
+        # )

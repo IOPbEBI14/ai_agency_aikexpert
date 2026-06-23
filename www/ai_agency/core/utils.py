@@ -89,9 +89,14 @@ def call_llm(agent_name: str, system_prompt: str, user_task: str, max_retries: i
             response = requests.post(url, json=payload, headers=headers, timeout=180)
             
             if response.status_code != 200:
-                logger.error(f"❌ LLM вернул статус {response.status_code}: {response.text[:300]}")
-                response.raise_for_status()
-            
+                error_msg = f"❌ LLM вернул статус {response.status_code}: {response.text[:300]}"
+                logger.error(error_msg)
+                
+                if attempt == max_retries:
+                    raise RuntimeError(error_msg)
+                
+                continue  # ⭐ ВАЖНО: Переходим к следующей попытке, а не обрабатываем ошибку как успех
+                
             data = response.json()
             content = ""
             
