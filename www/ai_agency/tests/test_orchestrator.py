@@ -3,7 +3,7 @@
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from core.orchestrator import Orchestrator
+from core.utils import call_llm, try_fix_truncated_json, validate_with_qa
 
 
 class TestOrchestratorInitialization:

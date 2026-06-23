@@ -4,7 +4,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
-from main import call_llm, try_fix_truncated_json
+from core.utils import call_llm, try_fix_truncated_json, validate_with_qa
 
 
 class TestCallLLM:

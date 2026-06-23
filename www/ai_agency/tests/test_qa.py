@@ -3,7 +3,7 @@
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from main import validate_with_qa
+from core.utils import validate_with_qa
 
 
 class TestValidateWithQA:
