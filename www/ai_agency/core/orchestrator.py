@@ -752,7 +752,7 @@ class Orchestrator:
                         logger.info(f"📋 update_status={update_status}, task_db_id={task_db_id}")
                     
                     return True
-        else:
+            else:
                 logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
                 self.tasks_db.update_task(task_db_id, {
                     "status": "pending",
