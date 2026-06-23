@@ -197,9 +197,9 @@ class TestOrchestratorExecuteTask:
 class TestOrchestratorQA:
     """Тесты метода run_qa_gate()."""
     
-    @patch('main.validate_with_qa')
-    @patch('main.log_to_agent_logs')
-    @patch('main.update_last_agent_log')
+    @patch('core.orchestrator.validate_with_qa')
+    @patch('core.orchestrator.log_to_agent_logs')
+    @patch('core.orchestrator.update_last_agent_log')
     def test_qa_passed(self, mock_update_log, mock_log, mock_validate_qa,
                        mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест пройденной QA проверки."""
@@ -231,10 +231,11 @@ class TestOrchestratorQA:
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "completed"
         assert call_args[0][1]["qa_approved"] == "true"
-
-    @patch('main.validate_with_qa')
-    @patch('main.log_to_agent_logs')
-    @patch('main.update_last_agent_log')
+        assert call_args[0][1]["qa_feedback"] == "Всё отлично"
+    
+    @patch('core.orchestrator.validate_with_qa')
+    @patch('core.orchestrator.log_to_agent_logs')
+    @patch('core.orchestrator.update_last_agent_log')
     def test_qa_failed(self, mock_update_log, mock_log, mock_validate_qa,
                        mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест проваленной QA проверки."""
@@ -267,9 +268,9 @@ class TestOrchestratorQA:
         assert call_args[0][1]["qa_approved"] == "false"
         assert call_args[0][1]["qa_feedback"] == "Найдены ошибки"
     
-    @patch('main.validate_with_qa')
-    @patch('main.log_to_agent_logs')
-    @patch('main.update_last_agent_log')
+    @patch('core.orchestrator.validate_with_qa')
+    @patch('core.orchestrator.log_to_agent_logs')
+    @patch('core.orchestrator.update_last_agent_log')
     def test_qa_failed_max_iterations(self, mock_update_log, mock_log, mock_validate_qa,
                                       mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест проваленной QA после максимального числа итераций."""
@@ -302,7 +303,6 @@ class TestOrchestratorQA:
             sample_task_data["Id"],
             {"status": "failed"}
         )
-
 
 class TestOrchestratorHelpers:
     """Тесты вспомогательных методов."""

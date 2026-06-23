@@ -262,23 +262,18 @@ def update_last_agent_log(project_id: int, agent_name: str, new_status: str):
 
 
 def validate_with_qa(agent_name: str, agent_response: str, task_description: str) -> Dict[str, Any]:
-    """
-    QA Gate с Pydantic-валидацией.
-    """
-    from core.prompt_builder import build_prompt_with_schema
-    from core.llm_parser import safe_parse_llm_response
-    from core.schemas import QAResponse
-    
+    """QA Gate: проверяет результат задачи через QA-агента."""
     logger.info(f"🔍 QA получает ответ от {agent_name}: {len(agent_response)} символов")
     
     qa_prompt = load_prompt("qa")
-    schema_prompt = build_prompt_with_schema(qa_prompt, QAResponse)
     
     qa_task = f"""
+Ты — QA Agent. Проверь результат задачи.
+
 ЗАДАЧА: {task_description}
 АГЕНТ: {agent_name}
 
-РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response)} символов):
+РЕЗУЛЬТАТ (длина: {len(agent_response)} символов):
 {agent_response[:6000]}
 
 ПРОВЕРЬ:
@@ -286,26 +281,33 @@ def validate_with_qa(agent_name: str, agent_response: str, task_description: str
 2. Нет ли ошибок или противоречий?
 3. Достаточно ли данных для следующих задач?
 4. Валиден ли JSON?
+
+Верни JSON:
+{{
+    "approved": true/false,
+    "feedback": "конкретные замечания если не прошло",
+    "issues": ["список проблем"]
+}}
 """
     
     try:
-        result, tokens = safe_parse_llm_response(
-            call_llm, "qa", schema_prompt, qa_task, QAResponse
-        )
+        qa_response, qa_tokens = call_llm("qa", qa_prompt, qa_task)
+        qa_result = json.loads(qa_response)
+        qa_result["tokens_used"] = qa_tokens
         
-        # Если результат — Pydantic-модель, конвертируем в dict
-        if hasattr(result, 'model_dump'):
-            qa_result = result.model_dump()
-        else:
-            qa_result = result
+        # Убеждаемся, что есть обязательные ключи
+        if "approved" not in qa_result:
+            qa_result["approved"] = False
+        if "feedback" not in qa_result:
+            qa_result["feedback"] = ""
+        if "issues" not in qa_result:
+            qa_result["issues"] = []
         
-        qa_result["tokens_used"] = tokens
         return qa_result
-        
     except Exception as e:
         logger.error(f"❌ Ошибка QA: {e}")
         return {"approved": True, "feedback": "QA ошибка, пропускаем", "tokens_used": 0}
-
+        
 # ==================== FLASK API ====================
 
 @app.route('/api/agency/status', methods=['GET'])
