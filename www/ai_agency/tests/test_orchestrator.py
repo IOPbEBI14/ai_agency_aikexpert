@@ -166,17 +166,23 @@ class TestOrchestratorExecuteTask:
         orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
         
-        sample_task_data["iteration_count"] = 3
-        sample_task_data["max_iterations"] = 3
+        # ⭐ ВАЖНО: Подменяем tasks_db на мок
+        orchestrator.tasks_db = mock_nocodb_clients['tasks']
+        
+        # Устанавливаем лимит итераций
+        sample_task_data['iteration_count'] = 3
+        sample_task_data['max_iterations'] = 3
+        sample_task_data['Id'] = 100  # Убеждаемся, что Id = 100
         
         result = orchestrator.execute_task(sample_task_data, "pm_prompt")
         
         assert result is False
-        mock_nocodb_clients['tasks'].update_task.assert_called_with(
-            sample_task_data["Id"],
-            {"status": "failed", "qa_feedback": "Превышен лимит итераций"}
+        
+        # Проверяем вызов update_task с правильными параметрами
+        mock_nocodb_clients['tasks'].update_task.assert_called_once_with(
+            100,
+            {'status': 'failed', 'qa_feedback': 'Превышен лимит итераций'}
         )
-
 
 class TestOrchestratorQA:
     """Тесты метода run_qa_gate()."""

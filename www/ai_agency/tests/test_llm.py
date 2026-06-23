@@ -52,7 +52,6 @@ class TestCallLLM:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
-        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
         mock_post.return_value = mock_response
         
         from core.utils import call_llm
