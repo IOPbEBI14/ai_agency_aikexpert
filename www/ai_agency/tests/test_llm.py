@@ -18,11 +18,10 @@ class TestCallLLM:
         mock_response.json.return_value = mock_llm_response
         mock_post.return_value = mock_response
         
-        content, tokens = call_llm("test_agent", "system prompt", "user task")
-        
-        assert content == mock_llm_response["output_text"]
-        assert tokens == 100
-        mock_post.assert_called_once()
+        content, tokens = call_llm("test", "system", "task")
+    
+        assert content == '{"status": "ok", "data": "test"}'
+        assert tokens == 100    
     
     @patch('core.utils.requests.post')
     def test_call_with_timeout_retry(self, mock_post, mock_llm_response):

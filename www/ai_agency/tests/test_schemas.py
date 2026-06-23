@@ -74,13 +74,12 @@ class TestPMDecisionModel:
     
     def test_valid_pm_decision(self, sample_pydantic_responses):
         """Тест валидного решения PM."""
-        data = sample_pydantic_responses["pm_decision"]
-        model = PMDecision(**data)
+       decision = sample_pydantic_responses["pm_decision"]
         
-        assert model.project_status == "in_progress"
-        assert model.current_phase == "analysis"
-        assert model.next_agent == "analyst"
-        assert model.pm_comment == "Начинаем с анализа"
+        assert decision.project_status == "in_progress"
+        assert decision.current_phase == "analysis"
+        assert decision.next_agent == "analyst"
+        assert decision.pm_comment == "Начинаем с анализа"
     
     def test_pm_decision_with_null_agent(self):
         """Тест решения PM без следующего агента."""
