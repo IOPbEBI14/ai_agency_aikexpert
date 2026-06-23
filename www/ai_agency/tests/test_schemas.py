@@ -74,7 +74,7 @@ class TestPMDecisionModel:
     
     def test_valid_pm_decision(self, sample_pydantic_responses):
         """Тест валидного решения PM."""
-       decision = sample_pydantic_responses["pm_decision"]
+        decision = sample_pydantic_responses["pm_decision"]
         
         assert decision.project_status == "in_progress"
         assert decision.current_phase == "analysis"
