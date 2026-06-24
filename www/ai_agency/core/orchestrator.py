@@ -148,7 +148,7 @@ class Orchestrator:
         Raises:
             ValueError: Если LLM не смог вернуть валидный JSON
         """
-        from main import call_llm
+        #from main import call_llm
         
         model_class = self.AGENT_MODELS.get(model_key)
         if not model_class:
@@ -371,7 +371,7 @@ class Orchestrator:
         """
         Создаёт начальный Task Graph через PM, если задач ещё нет.
         """
-        from main import load_prompt, call_llm, log_to_agent_logs
+        #from main import load_prompt, call_llm, log_to_agent_logs
         
         project_id = self.current_project.get("Id")
         tasks = self.tasks_db.get_tasks_by_project(project_id)
@@ -578,7 +578,7 @@ class Orchestrator:
     
     def _handle_architect(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer."""
-        from main import call_llm, log_to_agent_logs, update_last_agent_log
+        #from main import call_llm, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         
@@ -916,7 +916,7 @@ class Orchestrator:
         """
         Вызывает PM для разрешения тупика с Pydantic-валидацией.
         """
-        from main import load_prompt
+        #from main import load_prompt
         
         project_id = self.current_project.get("Id")
         
