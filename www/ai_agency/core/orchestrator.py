@@ -576,59 +576,73 @@ class Orchestrator:
             })
             return False
     
-    def _handle_architect(self, task, task_db_id, task_name, architect_response, pm_prompt) -> bool:
-        """
-        Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer.
-        """
-        #from main import log_to_agent_logs, update_last_agent_log
+    def _handle_architect(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+        """Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer."""
+        from main import call_llm, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         
         # QA проверка
         logger.info(f"🔍 QA-проверка для {task_name}...")
-        architect_json = architect_response.model_dump_json(indent=2)
-        qa_result = self.run_qa_gate(task, task_db_id, task_name, "architect", architect_json, task.get("task_description"), 0, 3, update_status=False)
+        qa_result = self.run_qa_gate(task, task_db_id, task_name, "architect", 
+                                      agent_response, task.get("task_description"), 0, 3, 
+                                      update_status=False)
+        
+        logger.info(f"📋 QA результат: {qa_result}")  # ⭐ ДОБАВИТЬ
         
         if not qa_result:
+            logger.error(f"❌ QA не прошел для {task_name}")  # ⭐ ДОБАВИТЬ
             return False
         
         # Декомпозиция на подзадачи
-        logger.info("✅ Architect прошёл QA. PM декомпозирует архитектуру на подзадачи...")
+        logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")  # ⭐ ДОБАВИТЬ
         
-        # Загружаем промпт PM
-        from main import load_prompt
-        pm_prompt_text = load_prompt("pm")
-        
-        # Добавляем JSON Schema для декомпозиции
-        schema_prompt = self.build_prompt_with_schema(pm_prompt_text, "pm_decomposition")
-        
-        user_task = f"""
-АРХИТЕКТУРА ОТ ARCHITECT:
-{architect_json[:4000]}
+        decompose_prompt = f"""
+    Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
 
-ЦЕЛЬ ПРОЕКТА:
-{self.current_project.get('goal')}
+    АРХИТЕКТУРА ОТ ARCHITECT:
+    {agent_response[:4000]}
 
-РАЗБЕЙ архитектуру на подзадачи для developer согласно схеме выше.
+    ЦЕЛЬ ПРОЕКТА:
+    {self.current_project.get('goal')}
 
-ПРАВИЛА:
-- Каждая подзадача атомарна (один компонент/интеграция)
-- Максимум 5-7 подзадач
-- Указывай зависимости между подзадачами
-- Передавай developer только релевантный контекст
-"""
+    ФОРМАТ ОТВЕТА (строго JSON):
+    {{
+        "subtasks": [
+            {{
+                "subtask_id": "dev_001",
+                "description": "Создать webhook для Telegram в n8n",
+                "depends_on": [],
+                "context": "Из архитектуры: Telegram Bot API, webhook endpoint /telegram"
+            }}
+        ],
+        "pm_comment": "Разбил архитектуру на N подзадач."
+    }}
+
+    ПРАВИЛА:
+    - Каждая подзадача атомарна (один компонент/интеграция)
+    - Максимум 5-7 подзадач
+    - Указывай зависимости между подзадачами
+    - Передавай developer только релевантный контекст
+    - Верни ТОЛЬКО валидный JSON.
+    """
         
         try:
-            # Вызываем PM с валидацией
-            pm_decomposition, pm_tokens = self.call_agent_with_validation(
-                "PM", schema_prompt, user_task, "pm_decomposition"
-            )
+            logger.info(f"🤖 Вызов PM для декомпозиции...")  # ⭐ ДОБАВИТЬ
             
-            # Обновляем бюджет
+            pm_response, pm_tokens = call_llm("PM", pm_prompt, decompose_prompt)
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            subtasks = pm_decomposition.subtasks
+            pm_decision = json.loads(pm_response)
+            subtasks = pm_decision.get("subtasks", [])
+            
+            logger.info(f"📦 PM вернул {len(subtasks)} подзадач")  # ⭐ ДОБАВИТЬ
+            
+            if not subtasks:
+                logger.error(f"❌ PM не вернул подзадачи")  # ⭐ ДОБАВИТЬ
+                self.tasks_db.update_task(task_db_id, {"status": "failed"})
+                return False
             
             logger.info(f"✅ PM декомпозировал на {len(subtasks)} подзадач")
             
@@ -640,7 +654,7 @@ class Orchestrator:
                     "task_description": subtask.get("description"),
                     "input_data": json.dumps({
                         "context": subtask.get("context", ""),
-                        "architecture_summary": architect_json[:2000]
+                        "architecture_summary": agent_response[:2000]
                     }, ensure_ascii=False),
                     "status": "pending",
                     "depends_on": json.dumps(subtask.get("depends_on", []), ensure_ascii=False),
@@ -650,9 +664,11 @@ class Orchestrator:
                     "created_at": datetime.now().isoformat()
                 }
                 self.tasks_db.create_task(subtask_data)
+                logger.info(f"  → Создана подзадача: {subtask.get('subtask_id')}")  # ⭐ ДОБАВИТЬ
             
-            # Помечаем родительскую задачу как completed
+            # ⭐ ВАЖНО: Помечаем родительскую задачу как completed
             if task_db_id:
+                logger.info(f"✅ Помечаю задачу {task_name} как completed")  # ⭐ ДОБАВИТЬ
                 self.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
@@ -665,17 +681,17 @@ class Orchestrator:
                 agent_name="PM",
                 status="completed",
                 task_description=f"Декомпозиция задачи {task_name} на {len(subtasks)} подзадач для developer",
-                full_response=pm_decomposition.model_dump_json(indent=2),
+                full_response=json.dumps(pm_decision, ensure_ascii=False),
                 tokens_used=pm_tokens
             )
             
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка декомпозиции: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка декомпозиции: {e}", exc_info=True)  # ⭐ ДОБАВИТЬ exc_info
             self.tasks_db.update_task(task_db_id, {"status": "failed"})
             return False
-    
+        
     # ==================== QA GATE ====================
     
     def run_qa_gate(self, task, task_db_id, task_name, agent_name, agent_response, task_description, iteration_count, max_iter, update_status=True) -> bool:

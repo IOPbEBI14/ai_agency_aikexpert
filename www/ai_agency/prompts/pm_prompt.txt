@@ -224,18 +224,39 @@
 
 {
   "analysis": "анализ ситуации",
-  "solution": "update_dependencies | skip_tasks | create_tasks | stop_project",
+  "solution": "update_dependencies | skip_tasks | create_tasks | stop_project | need_human_review",
   "actions": [
     {
       "action": "update_task | skip_task | create_task",
       "task_id": "task_id",
-      "new_status": "pending | completed | failed",
+      "new_status": "pending | completed | failed | needs_human_review",
       "new_depends_on": ["обновлённые зависимости"]
     }
   ],
   "comment": "комментарий PM"
 }
 
+⚠️ ПРИОРИТЕТЫ РЕШЕНИЙ:
+1. **need_human_review** — если задача застряла после нескольких итераций QA или требует экспертной оценки. Установи статус needs_human_review для привлечения человека
+2. **update_dependencies** — если зависимости неверно указаны
+3. **skip_tasks** — если задача провалена и её можно пропустить без критического ущерба
+4. **create_tasks** — если нужны дополнительные задачи для разблокировки
+5. **stop_project** — только если проект невозможно продолжить
+
+ПРИМЕР: Задача analyst не прошла QA 3 раза:
+{
+  "analysis": "Задача analyst не прошла QA 3 итерации. Вероятно, требуется уточнение требований.",
+  "solution": "need_human_review",
+  "actions": [
+    {
+      "action": "update_task",
+      "task_id": "task_001",
+      "new_status": "needs_human_review",
+      "new_depends_on": []
+    }
+  ],
+  "comment": "Требуется вмешательство человека для уточнения требований к анализу"
+}
 ═══════════════════════════════════════════════════════════
 ПРОТОКОЛ HANDOFF-ДАННЫХ
 ═══════════════════════════════════════════════════════════
