@@ -18,9 +18,8 @@ from .schemas import (
     AnalystResponse, ArchitectResponse, DeveloperResponse,
     QAResponse, TechWriterResponse,
     LeadHunterResponse, SalesResponse, CRMCustomizerResponse,
-    get_model_schema, extract_json_from_text
+    get_model_schema, extract_json_from_text, QAIssue, call_and_parse_llm
 )
-
 from core.utils import validate_with_qa, log_to_agent_logs, update_last_agent_log, load_prompt, call_llm, build_agent_task
 
 logger = logging.getLogger("Orchestrator")
@@ -694,11 +693,86 @@ class Orchestrator:
         
     # ==================== QA GATE ====================
     
-    def run_qa_gate(self, task, task_db_id, task_name, agent_name, agent_response, task_description, iteration_count, max_iter, update_status=True) -> bool:
+def _qa_response_to_result(self, qa_response: QAResponse) -> Dict[str, Any]:
+    """
+    Преобразует Pydantic-модель QAResponse в результат QA-проверки.
+    
+    Returns:
+        dict с полями:
+        - approved: bool
+        - feedback: str
+        - issues: list
+        - tokens_used: int
+    """
+    # Определяем approved: нет проваленных тестов И нет критических/high issues
+    has_critical_issues = any(
+        issue.severity in ("critical", "high") 
+        for issue in qa_response.issues
+    )
+    
+    approved = (qa_response.tests_failed == 0) and not has_critical_issues
+    
+    # Формируем feedback
+    feedback_parts = [qa_response.summary]
+    
+    if qa_response.issues:
+        feedback_parts.append("\nНайденные проблемы:")
+        for issue in qa_response.issues:
+            feedback_parts.append(
+                f"- [{issue.severity.upper()}] {issue.description} "
+                f"(в {issue.location}) → {issue.recommendation}"
+            )
+    
+    if qa_response.warnings:
+        feedback_parts.append("\nПредупреждения:")
+        for warning in qa_response.warnings:
+            feedback_parts.append(f"- {warning}")
+    
+    feedback = "\n".join(feedback_parts)
+    
+    return {
+        "approved": approved,
+        "feedback": feedback,
+        "issues": [
+            {
+                "severity": issue.severity,
+                "type": issue.type,
+                "description": issue.description,
+                "location": issue.location,
+                "recommendation": issue.recommendation
+            }
+            for issue in qa_response.issues
+        ],
+        "summary": qa_response.summary,
+        "tests_total": qa_response.tests_total,
+        "tests_passed": qa_response.tests_passed,
+        "tests_failed": qa_response.tests_failed,
+        "tokens_used": 0  # Будет заполнено вызывающим кодом
+    }
+
+
+    def run_qa_gate(self, task, task_db_id, task_name, agent_name, 
+                    agent_response, task_description, iteration_count, 
+                    max_iter, update_status=True) -> bool:
         """
         Проверяет результат задачи через QA-агента с Pydantic-валидацией.
+        
+        Args:
+            task: Задача
+            task_db_id: ID задачи в БД
+            task_name: Имя задачи
+            agent_name: Имя агента-исполнителя
+            agent_response: Ответ агента (строка)
+            task_description: Описание задачи
+            iteration_count: Номер итерации
+            max_iter: Максимум итераций
+            update_status: Обновлять ли статус задачи в БД
+        
+        Returns:
+            True если QA пройден, False если не пройден.
         """
-        #from main import load_prompt, log_to_agent_logs, update_last_agent_log
+        from main import load_prompt, log_to_agent_logs, update_last_agent_log
+        from core.schemas import get_model_schema
         
         project_id = self.current_project.get("Id")
         
@@ -707,40 +781,68 @@ class Orchestrator:
         # Загружаем промпт QA
         qa_prompt = load_prompt("qa")
         
-        # Добавляем JSON Schema для QA
-        schema_prompt = self.build_prompt_with_schema(qa_prompt, "qa")
+        # Добавляем JSON Schema к промпту
+        schema = get_model_schema(QAResponse)
+        schema_prompt = qa_prompt + f"""
+
+    ═══════════════════════════════════════════════════════════
+    СТРОГАЯ СТРУКТУРА ОТВЕТА (JSON Schema)
+    ═══════════════════════════════════════════════════════════
+
+    Ты ДОЛЖЕН вернуть ТОЛЬКО валидный JSON, строго соответствующий этой схеме:
+
+    {schema}
+
+    ПРАВИЛА:
+    1. Верни ТОЛЬКО JSON, без комментариев до или после
+    2. Все обязательные поля должны быть заполнены
+    3. Типы данных должны точно соответствовать схеме
+    4. Убедись, что все скобки и кавычки закрыты
+
+    ═══════════════════════════════════════════════════════════
+    """
         
+        # Формируем задачу для QA
         qa_task = f"""
-ЗАДАЧА: {task_description}
-АГЕНТ: {agent_name}
+    ЗАДАЧА: {task_description}
+    АГЕНТ: {agent_name}
 
-РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response)} символов):
-{agent_response[:6000]}
+    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response)} символов):
+    {agent_response[:6000]}
 
-ПРОВЕРЬ согласно схеме выше:
-1. Соответствует ли результат задаче?
-2. Нет ли ошибок или противоречий?
-3. Достаточно ли данных для следующих задач?
-4. Валиден ли JSON?
-"""
+    ПРОВЕРЬ:
+    1. Соответствует ли результат задаче?
+    2. Нет ли ошибок или противоречий?
+    3. Достаточно ли данных для следующих задач?
+    4. Валиден ли JSON?
+    """
         
         try:
-            # Вызываем QA с валидацией
-            qa_response, qa_tokens = self.call_agent_with_validation(
-                "qa", schema_prompt, qa_task, "qa"
+            # Вызываем LLM с Pydantic-валидацией
+            qa_response, qa_tokens = call_and_parse_llm(
+                call_llm_func=self._call_llm_wrapper,
+                agent_name="qa",
+                system_prompt=schema_prompt,
+                user_task=qa_task,
+                response_model=QAResponse,
+                max_retries=2
             )
+            
+            logger.info(f"✅ QA вернул валидный ответ: {qa_response.summary}")
+            logger.info(f"   Тестов: {qa_response.tests_total}, пройдено: {qa_response.tests_passed}, провалено: {qa_response.tests_failed}")
             
             # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            # Конвертируем Pydantic-модель в dict
-            qa_result = qa_response.model_dump()
+            # Преобразуем Pydantic-модель в результат
+            qa_result = self._qa_response_to_result(qa_response)
             qa_result["tokens_used"] = qa_tokens
             
-            qa_approved = qa_result.get("approved", False)
-            qa_feedback_text = qa_result.get("feedback", "")
+            qa_approved = qa_result["approved"]
+            qa_feedback_text = qa_result["feedback"]
             
+            # Логируем
             log_to_agent_logs(
                 project_id=project_id,
                 agent_name="qa",
@@ -754,20 +856,14 @@ class Orchestrator:
                 return qa_approved
             
             if qa_approved:
-                    logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
-                    
-                    # ⭐ ВАЖНО: Обновляем статус задачи
-                    if update_status and task_db_id:
-                        self.tasks_db.update_task(task_db_id, {
-                            "status": "completed",
-                            "qa_approved": "true",
-                            "qa_feedback": qa_feedback_text
-                        })
-                        logger.info(f"📝 Задача {task_name} обновлена: status=completed")
-                        logger.info(f"🔍 QA результат: approved={qa_approved}, feedback={qa_feedback_text[:100]}")
-                        logger.info(f"📋 update_status={update_status}, task_db_id={task_db_id}")
-                    
-                    return True
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": qa_feedback_text
+                })
+                update_last_agent_log(project_id, agent_name, "completed")
+                logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
+                return True
             else:
                 logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
                 self.tasks_db.update_task(task_db_id, {
@@ -794,6 +890,15 @@ class Orchestrator:
                 })
             
             return False
+
+
+    def _call_llm_wrapper(self, agent_name: str, system_prompt: str, user_task: str) -> tuple:
+        """
+        Обёртка для call_llm, которая возвращает (content, tokens).
+        Используется в call_and_parse_llm.
+        """
+        from main import call_llm
+        return call_llm(agent_name, system_prompt, user_task)
     
     # ==================== ФИНАЛИЗАЦИЯ ====================
     
