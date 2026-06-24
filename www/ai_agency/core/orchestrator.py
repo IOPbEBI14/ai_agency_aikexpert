@@ -247,6 +247,81 @@ class Orchestrator:
         
         return base_prompt + schema_section
     
+    # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+    
+    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]):
+        """
+        Проверяет родительские задачи: если все подзадачи завершены,
+        помечает родителя как completed.
+        """
+        parent_candidates = {}
+        
+        for task in tasks:
+            task_id = task.get("task_id", "")
+            status = task.get("status", "")
+            
+            if task_id.startswith("dev_"):
+                parent_id = "task_003"
+                if parent_id not in parent_candidates:
+                    parent_candidates[parent_id] = []
+                parent_candidates[parent_id].append({
+                    "task_id": task_id,
+                    "status": status
+                })
+        
+        for parent_id, subtasks in parent_candidates.items():
+            all_completed = all(st["status"] == "completed" for st in subtasks)
+            
+            if all_completed:
+                parent_task = next((t for t in tasks if t.get("task_id") == parent_id), None)
+                if parent_task and parent_task.get("status") != "completed":
+                    parent_db_id = parent_task.get("Id")
+                    logger.info(f"✅ Все подзадачи {parent_id} завершены. Помечаем родителя как completed.")
+                    self.tasks_db.update_task(parent_db_id, {
+                        "status": "completed",
+                        "qa_approved": "true",
+                        "qa_feedback": f"Все {len(subtasks)} подзадач завершены успешно"
+                    })
+    
+    def _expand_completed_with_parents(self, tasks: List[Dict[str, Any]], completed_ids: List[str]) -> List[str]:
+        """
+        Расширяет список completed_ids родителем, если все его подзадачи выполнены.
+        """
+        expanded = set(completed_ids)
+        
+        parent_subtasks = {}
+        for task in tasks:
+            task_id = task.get("task_id", "")
+            status = task.get("status", "")
+            
+            if task_id.startswith("dev_"):
+                parent_id = "task_003"
+                if parent_id not in parent_subtasks:
+                    parent_subtasks[parent_id] = []
+                parent_subtasks[parent_id].append(status)
+        
+        for parent_id, statuses in parent_subtasks.items():
+            if statuses and all(s == "completed" for s in statuses):
+                expanded.add(parent_id)
+        
+        return list(expanded)
+    
+    def _find_ready_tasks(self, pending_tasks: List[Dict[str, Any]], completed_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Находит задачи, у которых все зависимости выполнены.
+        """
+        ready = []
+        for task in pending_tasks:
+            depends_on = task.get("depends_on", "[]")
+            try:
+                depends_on = json.loads(depends_on) if isinstance(depends_on, str) else depends_on
+            except:
+                depends_on = []
+            
+            if all(dep_id in completed_ids for dep_id in depends_on):
+                ready.append(task)
+        return ready
+        
     # ==================== ГЛАВНЫЙ ЦИКЛ ====================
     
     def run(self):
@@ -1090,77 +1165,3 @@ def _qa_response_to_result(self, qa_response: QAResponse) -> Dict[str, Any]:
             logger.error(f" Ошибка разрешения тупика: {e}")
             return False
     
-    # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
-    
-    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]):
-        """
-        Проверяет родительские задачи: если все подзадачи завершены,
-        помечает родителя как completed.
-        """
-        parent_candidates = {}
-        
-        for task in tasks:
-            task_id = task.get("task_id", "")
-            status = task.get("status", "")
-            
-            if task_id.startswith("dev_"):
-                parent_id = "task_003"
-                if parent_id not in parent_candidates:
-                    parent_candidates[parent_id] = []
-                parent_candidates[parent_id].append({
-                    "task_id": task_id,
-                    "status": status
-                })
-        
-        for parent_id, subtasks in parent_candidates.items():
-            all_completed = all(st["status"] == "completed" for st in subtasks)
-            
-            if all_completed:
-                parent_task = next((t for t in tasks if t.get("task_id") == parent_id), None)
-                if parent_task and parent_task.get("status") != "completed":
-                    parent_db_id = parent_task.get("Id")
-                    logger.info(f"✅ Все подзадачи {parent_id} завершены. Помечаем родителя как completed.")
-                    self.tasks_db.update_task(parent_db_id, {
-                        "status": "completed",
-                        "qa_approved": "true",
-                        "qa_feedback": f"Все {len(subtasks)} подзадач завершены успешно"
-                    })
-    
-    def _expand_completed_with_parents(self, tasks: List[Dict[str, Any]], completed_ids: List[str]) -> List[str]:
-        """
-        Расширяет список completed_ids родителем, если все его подзадачи выполнены.
-        """
-        expanded = set(completed_ids)
-        
-        parent_subtasks = {}
-        for task in tasks:
-            task_id = task.get("task_id", "")
-            status = task.get("status", "")
-            
-            if task_id.startswith("dev_"):
-                parent_id = "task_003"
-                if parent_id not in parent_subtasks:
-                    parent_subtasks[parent_id] = []
-                parent_subtasks[parent_id].append(status)
-        
-        for parent_id, statuses in parent_subtasks.items():
-            if statuses and all(s == "completed" for s in statuses):
-                expanded.add(parent_id)
-        
-        return list(expanded)
-    
-    def _find_ready_tasks(self, pending_tasks: List[Dict[str, Any]], completed_ids: List[str]) -> List[Dict[str, Any]]:
-        """
-        Находит задачи, у которых все зависимости выполнены.
-        """
-        ready = []
-        for task in pending_tasks:
-            depends_on = task.get("depends_on", "[]")
-            try:
-                depends_on = json.loads(depends_on) if isinstance(depends_on, str) else depends_on
-            except:
-                depends_on = []
-            
-            if all(dep_id in completed_ids for dep_id in depends_on):
-                ready.append(task)
-        return ready
