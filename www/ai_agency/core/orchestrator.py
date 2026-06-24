@@ -768,62 +768,62 @@ class Orchestrator:
         
     # ==================== QA GATE ====================
     
-def _qa_response_to_result(self, qa_response: QAResponse) -> Dict[str, Any]:
-    """
-    Преобразует Pydantic-модель QAResponse в результат QA-проверки.
-    
-    Returns:
-        dict с полями:
-        - approved: bool
-        - feedback: str
-        - issues: list
-        - tokens_used: int
-    """
-    # Определяем approved: нет проваленных тестов И нет критических/high issues
-    has_critical_issues = any(
-        issue.severity in ("critical", "high") 
-        for issue in qa_response.issues
-    )
-    
-    approved = (qa_response.tests_failed == 0) and not has_critical_issues
-    
-    # Формируем feedback
-    feedback_parts = [qa_response.summary]
-    
-    if qa_response.issues:
-        feedback_parts.append("\nНайденные проблемы:")
-        for issue in qa_response.issues:
-            feedback_parts.append(
-                f"- [{issue.severity.upper()}] {issue.description} "
-                f"(в {issue.location}) → {issue.recommendation}"
-            )
-    
-    if qa_response.warnings:
-        feedback_parts.append("\nПредупреждения:")
-        for warning in qa_response.warnings:
-            feedback_parts.append(f"- {warning}")
-    
-    feedback = "\n".join(feedback_parts)
-    
-    return {
-        "approved": approved,
-        "feedback": feedback,
-        "issues": [
-            {
-                "severity": issue.severity,
-                "type": issue.type,
-                "description": issue.description,
-                "location": issue.location,
-                "recommendation": issue.recommendation
-            }
+    def _qa_response_to_result(self, qa_response: QAResponse) -> Dict[str, Any]:
+        """
+        Преобразует Pydantic-модель QAResponse в результат QA-проверки.
+        
+        Returns:
+            dict с полями:
+            - approved: bool
+            - feedback: str
+            - issues: list
+            - tokens_used: int
+        """
+        # Определяем approved: нет проваленных тестов И нет критических/high issues
+        has_critical_issues = any(
+            issue.severity in ("critical", "high") 
             for issue in qa_response.issues
-        ],
-        "summary": qa_response.summary,
-        "tests_total": qa_response.tests_total,
-        "tests_passed": qa_response.tests_passed,
-        "tests_failed": qa_response.tests_failed,
-        "tokens_used": 0  # Будет заполнено вызывающим кодом
-    }
+        )
+        
+        approved = (qa_response.tests_failed == 0) and not has_critical_issues
+        
+        # Формируем feedback
+        feedback_parts = [qa_response.summary]
+        
+        if qa_response.issues:
+            feedback_parts.append("\nНайденные проблемы:")
+            for issue in qa_response.issues:
+                feedback_parts.append(
+                    f"- [{issue.severity.upper()}] {issue.description} "
+                    f"(в {issue.location}) → {issue.recommendation}"
+                )
+        
+        if qa_response.warnings:
+            feedback_parts.append("\nПредупреждения:")
+            for warning in qa_response.warnings:
+                feedback_parts.append(f"- {warning}")
+        
+        feedback = "\n".join(feedback_parts)
+        
+        return {
+            "approved": approved,
+            "feedback": feedback,
+            "issues": [
+                {
+                    "severity": issue.severity,
+                    "type": issue.type,
+                    "description": issue.description,
+                    "location": issue.location,
+                    "recommendation": issue.recommendation
+                }
+                for issue in qa_response.issues
+            ],
+            "summary": qa_response.summary,
+            "tests_total": qa_response.tests_total,
+            "tests_passed": qa_response.tests_passed,
+            "tests_failed": qa_response.tests_failed,
+            "tokens_used": 0  # Будет заполнено вызывающим кодом
+        }
 
 
     def run_qa_gate(self, task, task_db_id, task_name, agent_name, 
