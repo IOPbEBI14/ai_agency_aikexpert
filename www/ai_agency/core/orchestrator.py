@@ -830,117 +830,67 @@ class Orchestrator:
                     agent_response, task_description, iteration_count, 
                     max_iter, update_status=True) -> bool:
         """
-        Проверяет результат задачи через QA-агента с Pydantic-валидацией.
+        Проверяет результат задачи через QA-агента.
+        Работает как со строкой, так и с Pydantic-моделью.
         """
-        from core.schemas import QAResponse, call_and_parse_llm, get_model_schema
-        from core.utils import load_prompt, log_to_agent_logs, update_last_agent_log
+        from main import validate_with_qa, log_to_agent_logs, update_last_agent_log
+        from pydantic import BaseModel
+        
+        # ⭐ ВАЖНО: Если agent_response — Pydantic-модель, конвертируем в JSON-строку
+        if isinstance(agent_response, BaseModel):
+            agent_response_str = agent_response.model_dump_json(indent=2)
+        else:
+            agent_response_str = str(agent_response)
         
         project_id = self.current_project.get("Id")
         
         logger.info(f"🔍 QA-проверка для задачи {task_name}...")
         
-        # Загружаем промпт QA
-        qa_prompt = load_prompt("qa")
+        # Используем строковую версию во всех местах
+        qa_result = validate_with_qa(agent_name, agent_response_str, task_description)
+        qa_tokens = qa_result.get("tokens_used", 0)
         
-        # Добавляем JSON Schema к промпту
-        schema = get_model_schema(QAResponse)
-        schema_prompt = qa_prompt + f"""
-
-    ═══════════════════════════════════════════════════════════
-    СТРОГАЯ СТРУКТУРА ОТВЕТА (JSON Schema)
-    ═══════════════════════════════════════════════════════════
-
-    Ты ДОЛЖЕН вернуть ТОЛЬКО валидный JSON, строго соответствующий этой схеме:
-
-    {schema}
-
-    ПРАВИЛА:
-    1. Верни ТОЛЬКО JSON, без комментариев до или после
-    2. Все обязательные поля должны быть заполнены
-    3. Типы данных должны точно соответствовать схеме
-    4. Убедись, что все скобки и кавычки закрыты
-
-    ═══════════════════════════════════════════════════════════
-    """
+        self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
+        self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
         
-        # Формируем задачу для QA
-        agent_response_str = agent_response.model_dump_json(indent=2)
-        qa_task = f"""
-    ЗАДАЧА: {task_description}
-    АГЕНТ: {agent_name}
-
-    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
-    {agent_response[:6000]}
-
-    ПРОВЕРЬ:
-    1. Соответствует ли результат задаче?
-    2. Нет ли ошибок или противоречий?
-    3. Достаточно ли данных для следующих задач?
-    4. Валиден ли JSON?
-    """
+        qa_approved = qa_result.get("approved", False)
+        qa_feedback_text = qa_result.get("feedback", "")
         
-        try:
-            # Вызываем LLM с Pydantic-валидацией
-            qa_response, qa_tokens = call_and_parse_llm(
-                call_llm_func=lambda name, sys_prompt, user_task: self._call_llm_wrapper(name, sys_prompt, user_task),
-                agent_name="qa",
-                system_prompt=schema_prompt,
-                user_task=qa_task,
-                response_model=QAResponse,
-                max_retries=2
-            )
+        log_to_agent_logs(
+            project_id=project_id,
+            agent_name="qa",
+            status="completed" if qa_approved else "needs_review",
+            task_description=f"QA-проверка {task_name}: {'✅ ПРОШЁЛ' if qa_approved else '❌ НЕ ПРОШЁЛ'}",
+            full_response=json.dumps(qa_result, ensure_ascii=False),
+            tokens_used=qa_tokens
+        )
+        
+        if not update_status:
+            return qa_approved
+        
+        if qa_approved:
+            self.tasks_db.update_task(task_db_id, {
+                "status": "completed",
+                "qa_approved": "true",
+                "qa_feedback": qa_feedback_text
+            })
+            update_last_agent_log(project_id, agent_name, "completed")
+            logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
+            return True
+        else:
+            logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
+            self.tasks_db.update_task(task_db_id, {
+                "status": "pending",
+                "qa_approved": "false",
+                "qa_feedback": qa_feedback_text
+            })
+            update_last_agent_log(project_id, agent_name, "needs_review")
             
-            logger.info(f"✅ QA вернул валидный ответ: {qa_response.summary}")
-            logger.info(f"   Тестов: {qa_response.tests_total}, пройдено: {qa_response.tests_passed}, провалено: {qa_response.tests_failed}")
-            
-            # Обновляем бюджет
-            self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
-            self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
-            
-            # Преобразуем Pydantic-модель в результат QA
-            qa_result = self._qa_response_to_result(qa_response)
-            qa_result["tokens_used"] = qa_tokens
-            
-            qa_approved = qa_result["approved"]
-            qa_feedback_text = qa_result["feedback"]
-            
-            # Логируем
-            log_to_agent_logs(
-                project_id=project_id,
-                agent_name="qa",
-                status="completed" if qa_approved else "needs_review",
-                task_description=f"QA-проверка {task_name}: {'✅ ПРОШЁЛ' if qa_approved else '❌ НЕ ПРОШЁЛ'}",
-                full_response=qa_response.model_dump_json(indent=2),
-                tokens_used=qa_tokens
-            )
-            
-            if not update_status:
-                return qa_approved
-            
-            if qa_approved:
-                self.tasks_db.update_task(task_db_id, {
-                    "status": "completed",
-                    "qa_approved": "true",
-                    "qa_feedback": qa_feedback_text
-                })
-                update_last_agent_log(project_id, agent_name, "completed")
-                logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
-                return True
-            else:
-                logger.warning(f"️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
-                self.tasks_db.update_task(task_db_id, {
-                    "status": "pending",
-                    "qa_approved": "false",
-                    "qa_feedback": qa_feedback_text
-                })
-                update_last_agent_log(project_id, agent_name, "needs_review")
-                
-                if iteration_count + 1 >= max_iter:
-                    logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций")
-                    self.tasks_db.update_task(task_db_id, {"status": "failed"})
-                    update_last_agent_log(project_id, agent_name, "failed")
-                return False
-                
+            if iteration_count + 1 >= max_iter:
+                logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций")
+                self.tasks_db.update_task(task_db_id, {"status": "failed"})
+                update_last_agent_log(project_id, agent_name, "failed")
+            return False                
         except Exception as e:
             logger.error(f" Ошибка QA: {e}", exc_info=True)
             
