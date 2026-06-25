@@ -468,10 +468,8 @@ class Orchestrator:
     
     def _create_initial_task_graph(self) -> bool:
         """
-        Создаёт начальный Task Graph через PM.
-        PM сам анализирует цели проекта и решает, какие задачи создавать.
+        Создаёт начальный Task Graph через PM с Pydantic-валидацией.
         """
-        
         project_id = self.current_project.get("Id")
         tasks = self.tasks_db.get_tasks_by_project(project_id)
         
@@ -482,7 +480,7 @@ class Orchestrator:
         
         pm_prompt = load_prompt("pm")
         
-        #  НОВОЕ: Передаём цели проекта для анализа
+        # Получаем цель проекта для анализа
         project_goal = self.current_project.get("goal", "")
         project_name = self.current_project.get("project_name", "")
         
@@ -498,7 +496,6 @@ class Orchestrator:
     2. Определи, какие агенты нужны для достижения цели
     3. Если в цели указано "не делать [задача]" — исключи соответствующего агента
     4. Построй оптимальный граф задач только с нужными агентами
-    5. Объясни, почему ты исключил某些 агентов (если исключал)
 
     ДОСТУПНЫЕ АГЕНТЫ:
     - lead_hunter: поиск потенциальных клиентов (селлеров WB/Ozon)
@@ -510,24 +507,9 @@ class Orchestrator:
     - qa: тестирование и валидация
     - tech_writer: создание документации для клиента
 
-    ПРИМЕРЫ АНАЛИЗА:
+    ⚠️ КРИТИЧНО: Используй поле "task_id" (НЕ "id"!) для идентификации задач!
 
-    Пример 1: "Автоматизировать сбор заявок, разработка не требуется"
-    → Исключить: developer, crm_customizer
-    → Оставить: analyst, architect, qa, tech_writer
-    → Reasoning: "В цели указано 'разработка не требуется', поэтому developer и crm_customizer исключены"
-
-    Пример 2: "Только анализ рынка и подготовка презентации"
-    → Исключить: architect, developer, crm_customizer, qa
-    → Оставить: analyst, tech_writer
-    → Reasoning: "Проект только про анализ, поэтому технические агенты не нужны"
-
-    Пример 3: "Настроить CRM без анализа"
-    → Исключить: analyst, architect
-    → Оставить: crm_customizer, qa, tech_writer
-    → Reasoning: "В цели указано 'без анализа', поэтому analyst и architect исключены"
-
-    ФОРМАТ ОТВЕТА (строго JSON):
+    ФОРМАТ ОТВЕТА (строго JSON, без markdown-обёрток):
     {{
       "tasks": [
         {{
@@ -539,46 +521,58 @@ class Orchestrator:
           "max_iterations": 3
         }}
       ],
-      "excluded_agents": ["developer", "crm_customizer"],
-      "reasoning": "В цели проекта указано 'разработка не требуется', поэтому developer и crm_customizer исключены"
+      "excluded_agents": ["developer"],
+      "reasoning": "В цели указано 'разработка не требуется'"
     }}
 
-    ⚠️ ВАЖНО:
-    - Используй поле "task_id" (НЕ "id"!) для идентификации задач
-    - Если исключаешь агента — обязательно объясни почему в поле reasoning
-    - excluded_agents должен содержать только имена агентов из списка доступных
-    - Даже если исключаешь агентов, задачи должны быть логически связаны
+    ВАЖНО:
+    - Верни ТОЛЬКО JSON, без ```json ... ``` обёрток
+    - Все обязательные поля должны быть заполнены
+    - Используй "task_id" (НЕ "id"!)
+    - Если исключаешь агента — объясни почему в reasoning
     - QA всегда нужен, если есть хотя бы одна задача
-
-    Верни ТОЛЬКО валидный JSON.
     """
         
         try:
-            pm_response, pm_tokens = call_llm("PM", pm_prompt, task_graph_prompt)
+            # ⭐ ИСПОЛЬЗУЕМ PYDANTIC-ВАЛИДАЦИЮ ВМЕСТО СЫРОГО json.loads
+            pm_task_graph, pm_tokens = self.call_agent_with_validation(
+                "PM", pm_prompt, task_graph_prompt, "pm_task_graph", max_retries=3
+            )
             
+            logger.info(f"✅ PM вернул валидный Task Graph: {len(pm_task_graph.tasks)} задач")
+            
+            # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            task_graph = json.loads(pm_response)
-            tasks_list = task_graph.get("tasks", [])
-            excluded_agents = task_graph.get("excluded_agents", [])
-            reasoning = task_graph.get("reasoning", "")
+            # Извлекаем задачи из Pydantic-модели
+            tasks_list = pm_task_graph.tasks
+            excluded_agents = pm_task_graph.excluded_agents if hasattr(pm_task_graph, 'excluded_agents') else []
+            reasoning = pm_task_graph.reasoning if hasattr(pm_task_graph, 'reasoning') else ""
             
             if not tasks_list:
                 logger.error("❌ PM не вернул задачи")
                 return False
             
-            # ⭐ НОВОЕ: Логируем решение PM
+            # Логируем решение PM
             if excluded_agents:
                 logger.info(f"📋 PM исключил агентов: {excluded_agents}")
                 logger.info(f"📝 Причина: {reasoning}")
             
+            # Создаём задачи в NocoDB
             for task_data in tasks_list:
+                # Гарантируем наличие всех полей
                 task_data["project_id"] = project_id
                 task_data["status"] = "pending"
                 task_data["iteration_count"] = 0
                 task_data["qa_approved"] = "pending"
                 task_data["created_at"] = datetime.now().isoformat()
+                
+                # Убеждаемся, что task_id есть
+                if "task_id" not in task_data:
+                    logger.warning(f"️ Задача без task_id, пропускаем: {task_data}")
+                    continue
+                
                 self.tasks_db.create_task(task_data)
 
             # Сохраняем Task Graph в поле plan проекта
@@ -586,7 +580,7 @@ class Orchestrator:
                 self.projects_db.update_project(
                     self.current_project["Id"],
                     {
-                        "plan": json.dumps(task_graph, ensure_ascii=False),
+                        "plan": pm_task_graph.model_dump_json(indent=2),
                         "excluded_agents": json.dumps(excluded_agents, ensure_ascii=False),
                         "reasoning": reasoning
                     }
@@ -600,7 +594,7 @@ class Orchestrator:
                 agent_name="PM",
                 status="completed",
                 task_description=f"Построен Task Graph из {len(tasks_list)} задач. Исключено агентов: {len(excluded_agents)}. Причина: {reasoning}",
-                full_response=json.dumps(task_graph, ensure_ascii=False),
+                full_response=pm_task_graph.model_dump_json(indent=2),
                 tokens_used=0
             )
             
@@ -609,7 +603,7 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"❌ Ошибка построения Task Graph: {e}", exc_info=True)
             return False
-
+        
     # ==================== ВЫПОЛНЕНИЕ ЗАДАЧИ ====================
     
     def execute_task(self, task: Dict[str, Any], pm_prompt: str) -> bool:

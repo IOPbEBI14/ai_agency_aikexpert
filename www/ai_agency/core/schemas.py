@@ -493,51 +493,59 @@ def get_model_example(model_class: type) -> str:
 def extract_json_from_text(text: str) -> str:
     """
     Извлекает JSON из текста ответа LLM.
-    Поддерживает как объекты {...}, так и массивы [...].
+    Обрабатывает markdown-обёртки, комментарии до/после JSON.
     """
+    if not text or not text.strip():
+        raise ValueError("Пустой ответ")
+    
     text = text.strip()
     
-    # Определяем тип JSON
-    if text.startswith('{'):
-        start = 0
-        end_char = '}'
-        end = text.rfind('}')
-    elif text.startswith('['):
-        start = 0
-        end_char = ']'
-        end = text.rfind(']')
-    else:
-        # Ищем первый { или [
-        start_obj = text.find('{')
-        start_arr = text.find('[')
-        
-        if start_obj == -1 and start_arr == -1:
-            raise ValueError("JSON не найден в ответе")
-        
-        if start_obj == -1:
-            start = start_arr
-            end_char = ']'
-            end = text.rfind(']')
-        elif start_arr == -1:
-            start = start_obj
-            end_char = '}'
-            end = text.rfind('}')
-        else:
-            # Берём тот, который раньше
-            if start_obj < start_arr:
-                start = start_obj
-                end_char = '}'
-                end = text.rfind('}')
-            else:
-                start = start_arr
-                end_char = ']'
-                end = text.rfind(']')
+    # Удаляем markdown-обёртки ```json ... ```
+    # Ищем паттерн ```json ... ``` или ``` ... ```
+    markdown_pattern = r'```(?:json)?\s*(.*?)\s*```'
+    matches = re.findall(markdown_pattern, text, re.DOTALL)
+    if matches:
+        # Берём последний матч (обычно это основной JSON)
+        text = matches[-1].strip()
     
-    if start == -1 or end == -1 or end <= start:
+    # Ищем первый { или [
+    start_obj = text.find('{')
+    start_arr = text.find('[')
+    
+    if start_obj == -1 and start_arr == -1:
         raise ValueError("JSON не найден в ответе")
     
-    return text[start:end+1]
-
+    # Определяем, что идёт первым
+    if start_obj == -1:
+        start = start_arr
+        end_char = ']'
+    elif start_arr == -1:
+        start = start_obj
+        end_char = '}'
+    else:
+        if start_obj < start_arr:
+            start = start_obj
+            end_char = '}'
+        else:
+            start = start_arr
+            end_char = ']'
+    
+    # Ищем последний закрывающий символ
+    end = text.rfind(end_char)
+    
+    if end == -1 or end <= start:
+        raise ValueError(f"JSON не найден (нет закрывающей скобки {end_char})")
+    
+    result = text[start:end+1]
+    
+    # Проверяем, что это валидный JSON
+    try:
+        json.loads(result)
+        return result
+    except json.JSONDecodeError:
+        # Если не валидно, пробуем восстановить
+        raise ValueError(f"Найденный текст не является валидным JSON: {result[:100]}...")
+        
 def call_and_parse_llm(
     call_llm_func,
     agent_name: str,
