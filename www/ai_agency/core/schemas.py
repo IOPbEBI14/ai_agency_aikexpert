@@ -58,15 +58,14 @@ class PMTaskGraph(BaseModel):
     """Task Graph, созданный PM."""
     tasks: List[Dict[str, Any]] = Field(description="Список задач")
     excluded_agents: List[str] = Field(
-            default=[],
-            description="Список агентов, которые не нужны для этого проекта"
-        )
-        reasoning: str = Field(
-            default="",
-            description="Объяснение, почему некоторые агенты исключены"
-        )
-        
-    # ⭐ НОВОЕ: Нормализация id → task_id
+        default=[],
+        description="Список агентов, которые не нужны для этого проекта"
+    )
+    reasoning: str = Field(
+        default="",
+        description="Объяснение, почему некоторые агенты исключены"
+    )
+
     @model_validator(mode="before")
     @classmethod
     def normalize_task_ids(cls, data):
@@ -74,7 +73,6 @@ class PMTaskGraph(BaseModel):
         if isinstance(data, dict) and "tasks" in data:
             for task in data["tasks"]:
                 if isinstance(task, dict):
-                    # Если есть 'id', но нет 'task_id' — копируем
                     if "id" in task and "task_id" not in task:
                         task["task_id"] = task["id"]
         return data
@@ -88,14 +86,12 @@ class PMTaskGraph(BaseModel):
             task_id = task.get("task_id")
             depends_on = task.get("depends_on", [])
             
-            # Проверка, что все зависимости существуют
             for dep_id in depends_on:
                 if dep_id not in task_ids:
                     raise ValueError(
                         f"Задача {task_id} зависит от несуществующей задачи {dep_id}"
                     )
             
-            # Проверка на циклы (простая: задача не может зависеть от себя)
             if task_id in depends_on:
                 raise ValueError(f"Задача {task_id} зависит от самой себя")
         
