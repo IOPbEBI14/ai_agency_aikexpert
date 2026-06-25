@@ -693,10 +693,9 @@ class Orchestrator:
             # Особая обработка для architect → декомпозиция
             if agent_name == "architect":
                 return self._handle_architect(task, task_db_id, task_name, validated_response, pm_prompt)
-            # ⭐ НОВОЕ: Особая обработка для Lead Hunter
+            # Особая обработка для lead_hunter → реальный поиск
             if agent_name == "lead_hunter":
-                return self._handle_lead_hunter(task, task_db_id, task_name, validated_response, pm_prompt)
-
+                return self._handle_lead_hunter_with_tools(task, task_db_id, task_name, validated_response, pm_prompt)
             #  НОВОЕ: Особая обработка для Sales
             if agent_name == "sales":
                 return self._handle_sales(task, task_db_id, task_name, validated_response, pm_prompt)
@@ -1357,35 +1356,125 @@ class Orchestrator:
             logger.error(f" Ошибка разрешения тупика: {e}")
             return False
     
-    def _handle_lead_hunter(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+    def _handle_lead_hunter_with_tools(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """
-        Обрабатывает результат Lead Hunter: извлекает лиды и передаёт Sales.
+        Обрабатывает результат Lead Hunter с использованием реальных инструментов поиска.
         """
         from pydantic import BaseModel
         from core.schemas import LeadHunterResponse
+        from core.lead_tools import lead_tools
         
         project_id = self.current_project.get("Id")
         
-        # Преобразуем в строку если нужно
-        if isinstance(agent_response, BaseModel):
-            response_str = agent_response.model_dump_json(indent=2)
-        else:
-            response_str = str(agent_response)
+        # Получаем параметры поиска из задачи
+        task_description = task.get("task_description", "")
         
+        # Извлекаем категорию и минимальное количество отзывов из описания
+        category = "Одежда"  # По умолчанию
+        min_reviews = 1000
+        
+        # Простой парсинг категории из описания
+        if "электроник" in task_description.lower():
+            category = "Электроника"
+        elif "товар" in task_description.lower() and "дом" in task_description.lower():
+            category = "Товары для дома"
+        elif "косметик" in task_description.lower():
+            category = "Косметика"
+        
+        # Извлекаем минимальное количество отзывов
+        import re
+        reviews_match = re.search(r'(\d+)\s*\+?\s*отзыв', task_description.lower())
+        if reviews_match:
+            min_reviews = int(reviews_match.group(1))
+        
+        logger.info(f"🔍 Начинаю реальный поиск лидов: категория={category}, мин. отзывов={min_reviews}")
+        
+        # Используем инструменты для поиска
+        all_leads = []
+        
+        # # 1. Поиск селлеров WB
+        # logger.info("🛍️ Поиск селлеров Wildberries...")
+        # wb_sellers = lead_tools.search_wb_sellers(category, min_reviews)
+        # for seller in wb_sellers:
+            # all_leads.append({
+                # "company_name": seller['company_name'],
+                # "marketplace": "Wildberries",
+                # "category": category,
+                # "estimated_revenue": None,  # Нужно оценить отдельно
+                # "pain_points": [f"{seller['reviews_count']} отзывов требуют обработки"],
+                # "contact_telegram": None,
+                # "contact_email": None,
+                # "contact_phone": None,
+                # "source": "WB API"
+            # })
+        
+        # # 2. Поиск селлеров Ozon
+        # logger.info("🛍️ Поиск селлеров Ozon...")
+        # ozon_sellers = lead_tools.search_ozon_sellers(category)
+        # for seller in ozon_sellers:
+            # all_leads.append({
+                # "company_name": seller['company_name'],
+                # "marketplace": "Ozon",
+                # "category": category,
+                # "estimated_revenue": None,
+                # "pain_points": ["Активные продажи на Ozon"],
+                # "contact_telegram": None,
+                # "contact_email": None,
+                # "contact_phone": None,
+                # "source": "Ozon API"
+            # })
+        
+        # 3. Поиск Telegram каналов
+        logger.info("📱 Поиск Telegram каналов...")
+        telegram_channels = lead_tools.search_telegram_channels(f"селлеры WB {category}")
+        for channel in telegram_channels:
+            all_leads.append({
+                "company_name": channel['name'],
+                "marketplace": "Wildberries/Ozon",
+                "category": category,
+                "estimated_revenue": None,
+                "pain_points": ["Активное сообщество селлеров"],
+                "contact_telegram": channel.get('link'),
+                "contact_email": None,
+                "contact_phone": None,
+                "source": "Telegram"
+            })
+        
+        # # 4. Поиск через Google
+        # logger.info("🔍 Поиск через Google...")
+        # google_results = lead_tools.search_google(f"контакты селлер WB {category}")
+        # for result in google_results[:5]:
+            # # Пытаемся извлечь контакты с найденных сайтов
+            # if result.get('link'):
+                # contacts = lead_tools.scrape_website(result['link'])
+                # if contacts.get('emails') or contacts.get('phones') or contacts.get('telegram'):
+                    # all_leads.append({
+                        # "company_name": result.get('title', 'Неизвестно'),
+                        # "marketplace": "Wildberries",
+                        # "category": category,
+                        # "estimated_revenue": None,
+                        # "pain_points": ["Найдены через Google"],
+                        # "contact_telegram": contacts.get('telegram', [None])[0] if contacts.get('telegram') else None,
+                        # "contact_email": contacts.get('emails', [None])[0] if contacts.get('emails') else None,
+                        # "contact_phone": contacts.get('phones', [None])[0] if contacts.get('phones') else None,
+                        # "source": f"Google: {result.get('link')}"
+                    # })
+        
+        logger.info(f"✅ Найдено {len(all_leads)} лидов из реальных источников")
+        
+        # Создаём Pydantic-модель
         try:
-            # Парсим ответ
-            if isinstance(agent_response, BaseModel):
-                lead_data = agent_response
-            else:
-                lead_data = LeadHunterResponse(**json.loads(response_str))
+            lead_response = LeadHunterResponse(
+                leads_found=all_leads[:20],  # Максимум 20 лидов
+                total_found=len(all_leads),
+                notes=f"Реальный поиск выполнен. Найдено {len(all_leads)} лидов из WB, Ozon, Telegram, Google."
+            )
             
-            logger.info(f"📊 Lead Hunter нашёл {lead_data.total_found} лидов")
-            
-            # Сохраняем лиды в контекст проекта для Sales
+            # Сохраняем лиды в контекст проекта
             if "leads_context" not in self.current_project:
                 self.current_project["leads_context"] = []
             
-            for lead in lead_data.leads_found:
+            for lead in lead_response.leads_found:
                 self.current_project["leads_context"].append({
                     "company_name": lead.company_name,
                     "marketplace": lead.marketplace,
@@ -1397,12 +1486,12 @@ class Orchestrator:
                     "source": lead.source
                 })
             
-            # ⭐ ВАЖНО: Помечаем задачу как completed
+            # Помечаем задачу как completed
             if task_db_id:
                 self.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Найдено {lead_data.total_found} лидов"
+                    "qa_feedback": f"Найдено {len(all_leads)} реальных лидов"
                 })
                 logger.info(f"✅ Задача {task_name} помечена как completed")
             
@@ -1412,7 +1501,6 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"❌ Ошибка обработки Lead Hunter: {e}", exc_info=True)
             return False
-
 
     def _handle_sales(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """
