@@ -888,7 +888,12 @@ class Orchestrator:
         
         # Загружаем промпт QA
         qa_prompt = load_prompt("qa")
-        
+        # ⭐ ВАЖНО: Если agent_response — Pydantic-модель, конвертируем в JSON-строку
+        if isinstance(agent_response, BaseModel):
+            agent_response_str = agent_response.model_dump_json(indent=2)        
+        else:
+            agent_response_str = agent_response
+            
         # Добавляем JSON Schema к промпту
         schema = get_model_schema(QAResponse)
         schema_prompt = qa_prompt + f"""
