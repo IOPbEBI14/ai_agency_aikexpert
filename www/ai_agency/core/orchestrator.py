@@ -732,7 +732,7 @@ class Orchestrator:
     Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
 
     АРХИТЕКТУРА ОТ ARCHITECT:
-    {agent_response_str[:4000]}
+    {agent_response_str[:16000]}
 
     ЦЕЛЬ ПРОЕКТА:
     {self.current_project.get('goal')}
@@ -936,7 +936,7 @@ class Orchestrator:
     АГЕНТ: {agent_name}
 
     РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
-    {agent_response_str[:6000]}
+    {agent_response_str[:32000]}
 
     ПРОВЕРЬ:
     1. Соответствует ли результат задаче?
