@@ -410,10 +410,35 @@ class Orchestrator:
                 logger.info(f"   - {t.get('task_id')} ({t.get('agent_name')})")
             
             if not ready_tasks and in_progress:
-                logger.info(" Ждём завершения текущих задач...")
+                # ⭐ ИСПРАВЛЕНИЕ: Проверяем, не застряли ли задачи
+                stuck_tasks = []
+                for t in in_progress:
+                    # Если задача в in_progress больше 5 минут - считаем её застрявшей
+                    updated_at = t.get("updated_at")
+                    if updated_at:
+                        try:
+                            from datetime import datetime, timezone
+                            last_update = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                            now = datetime.now(timezone.utc)
+                            if (now - last_update).total_seconds() > 300:  # 5 минут
+                                stuck_tasks.append(t)
+                        except:
+                            pass
+                
+                if stuck_tasks:
+                    logger.warning(f"⚠️ Найдены застрявшие задачи: {[t.get('task_id') for t in stuck_tasks]}")
+                    for t in stuck_tasks:
+                        logger.warning(f"   - {t.get('task_id')} ({t.get('agent_name')}) - обновлена {t.get('updated_at')}")
+                        # Возвращаем застрявшую задачу в pending
+                        self.tasks_db.update_task(t.get("Id"), {
+                            "status": "pending",
+                            "qa_feedback": "Задача застряла, возвращена в pending"
+                        })
+                    continue
+                
+                logger.info("⏳ Ждём завершения текущих задач...")
                 time.sleep(5)
-                continue
-            
+                continue            
             if not ready_tasks:
                 if pending:
                     logger.warning(f"⚠️ Тупик: {len(pending)} задач в pending")
@@ -651,8 +676,10 @@ class Orchestrator:
             return False
     
     def _handle_architect(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
-        """Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer."""
-        #from main import call_llm, log_to_agent_logs, update_last_agent_log
+        """
+        Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer.
+        """
+        from main import call_llm, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         
@@ -662,12 +689,32 @@ class Orchestrator:
                                       agent_response, task.get("task_description"), 0, 3, 
                                       update_status=False)
         
-        logger.info(f"📋 QA результат: {qa_result}")  # ⭐ ДОБАВИТЬ
+        logger.info(f"📋 QA результат: {qa_result}")
         
         if not qa_result:
-            logger.error(f"❌ QA не прошел для {task_name}")  # ⭐ ДОБАВИТЬ
-            return False
+            # ⭐ ИСПРАВЛЕНИЕ: При неудачной QA увеличиваем итерацию и возвращаем в pending
+            iteration_count = task.get("iteration_count", 0) or 0
+            max_iter = task.get("max_iterations", 3) or 3
+            
+            if iteration_count + 1 >= max_iter:
+                logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций QA")
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "failed",
+                    "qa_feedback": "QA не прошел после максимального количества итераций"
+                })
+                return False
+            else:
+                logger.warning(f"⚠️ QA не прошел для {task_name}, возвращаем в pending (итерация {iteration_count + 1}/{max_iter})")
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "pending",
+                    "iteration_count": iteration_count + 1,
+                    "qa_approved": "false",
+                    "qa_feedback": "QA не прошел, требуется доработка"
+                })
+                return False
         
+        # Декомпозиция на подзадачи
+        logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")        
         # Декомпозиция на подзадачи
         logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")  # ⭐ ДОБАВИТЬ
         
