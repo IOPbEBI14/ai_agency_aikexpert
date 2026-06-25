@@ -1168,6 +1168,120 @@ class Orchestrator:
                 for issue in qa_response.issues
             ]
         }    
+    # ==================== ФИНАЛИЗАЦИЯ ====================
+    def finalize(self, pm_prompt: str, tasks: List[Dict[str, Any]]) -> bool:
+        """
+        Финализирует проект: PM формирует финальный отчёт с Pydantic-валидацией.
+        """
+        #from main import load_prompt, log_to_agent_logs
+        
+        project_id = self.current_project.get("Id")
+        
+        # Собираем результаты задач
+        task_results = []
+        for task in tasks:
+            task_results.append({
+                "task_id": task.get("task_id"),
+                "agent": task.get("agent_name"),
+                "description": task.get("task_description"),
+                "output": task.get("output_data", "")[:500],
+                "status": task.get("status"),
+                "iterations": task.get("iteration_count", 0),
+                "tokens": task.get("tokens_used", 0)
+            })
+        
+        # Собираем метрики
+        total_tokens = sum(t.get("tokens_used", 0) for t in tasks)
+        total_iterations = sum(t.get("iteration_count", 0) for t in tasks)
+        completed_count = len([t for t in tasks if t.get("status") == "completed"])
+        
+        tokens_per_agent = {}
+        for task in tasks:
+            agent = task.get("agent_name")
+            tokens = task.get("tokens_used", 0)
+            tokens_per_agent[agent] = tokens_per_agent.get(agent, 0) + tokens
+        
+        # Загружаем промпт PM
+        pm_prompt_text = load_prompt("pm")
+        
+        # Добавляем JSON Schema для финального отчёта
+        schema_prompt = self.build_prompt_with_schema(pm_prompt_text, "pm_final_report")
+        
+        user_task = f"""
+ПРОЕКТ ЗАВЕРШЕН. Все задачи выполнены.
+
+ИНФОРМАЦИЯ О ПРОЕКТЕ:
+Клиент: {self.current_project.get('client_name')}
+Цель: {self.current_project.get('goal')}
+
+ВЫПОЛНЕННЫЕ ЗАДАЧИ ({completed_count} из {len(tasks)}):
+{json.dumps(task_results, ensure_ascii=False, indent=2)}
+
+МЕТРИКИ:
+- Общие затраты токенов: {total_tokens}
+- Общее количество итераций: {total_iterations}
+- Затраты по агентам: {json.dumps(tokens_per_agent, ensure_ascii=False)}
+
+СФОРМИРУЙ финальный отчёт для клиента согласно схеме выше.
+
+ПРАВИЛА:
+- Отчет должен быть в markdown-формате
+- Включи разделы: краткое резюме, что было сделано, технические детали, рекомендации, метрики
+- Отчет должен быть понятен не-техническому специалисту
+"""
+        
+        try:
+            logger.info("🤖 Вызов PM для финализации проекта...")
+            
+            # Вызываем PM с валидацией
+            pm_final_report, pm_tokens = self.call_agent_with_validation(
+                "PM", schema_prompt, user_task, "pm_final_report"
+            )
+            
+            # Обновляем бюджет
+            self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
+            self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
+            
+            # Получаем данные из Pydantic-модели
+            final_report = pm_final_report.final_report
+            metrics = pm_final_report.metrics
+            
+            logger.info(f"📄 Длина final_report: {len(final_report)} символов")
+            logger.info(f"📊 Метрики: {metrics}")
+            
+            # Обновляем проект в памяти
+            self.current_project["final_report"] = final_report
+            self.current_project["metrics"] = json.dumps(metrics, ensure_ascii=False)
+            self.current_project["completed_at"] = datetime.now().isoformat()
+            self.current_project["status"] = "completed"
+            
+            # Сохраняем в NocoDB
+            self.projects_db.update_project(project_id, {
+                "status": "completed",
+                "final_report": final_report,
+                "metrics": self.current_project["metrics"],
+                "completed_at": self.current_project["completed_at"]
+            })
+            
+            logger.info("✅ Проект завершен. Финальный отчет сохранен.")
+            
+            log_to_agent_logs(
+                project_id=project_id,
+                agent_name="PM",
+                status="completed",
+                task_description="Финализация проекта. Отчет подготовлен для клиента.",
+                full_response=pm_final_report.model_dump_json(indent=2),
+                tokens_used=pm_tokens
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка финализации: {e}", exc_info=True)
+            self.current_project["status"] = "needs_human_review"
+            self.projects_db.update_project(project_id, {"status": "needs_human_review"})
+            return False
+            
     # ==================== РАЗРЕШЕНИЕ ТУПИКОВ ====================
     
     def resolve_deadlock(self, pm_prompt: str, tasks: List[Dict[str, Any]], pending_tasks: List[Dict[str, Any]]) -> bool:
