@@ -1283,12 +1283,22 @@ class Orchestrator:
                     "source": lead.source
                 })
             
+            # ⭐ ВАЖНО: Помечаем задачу как completed
+            if task_db_id:
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": f"Найдено {lead_data.total_found} лидов"
+                })
+                logger.info(f"✅ Задача {task_name} помечена как completed")
+            
             logger.info(f"✅ Лиды сохранены в контекст проекта")
             return True
             
         except Exception as e:
-            logger.error(f" Ошибка обработки Lead Hunter: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка обработки Lead Hunter: {e}", exc_info=True)
             return False
+
 
     def _handle_sales(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """
@@ -1324,12 +1334,22 @@ class Orchestrator:
                 "next_steps": sales_data.next_steps
             })
             
+            # ⭐ ВАЖНО: Помечаем задачу как completed
+            if task_db_id:
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": f"Отправлено {len(sales_data.messages)} сообщений"
+                })
+                logger.info(f"✅ Задача {task_name} помечена как completed")
+            
             logger.info(f"✅ Результаты Sales сохранены в контекст проекта")
             return True
             
         except Exception as e:
             logger.error(f"❌ Ошибка обработки Sales: {e}", exc_info=True)
             return False
+
 
     def _handle_analyst(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """
@@ -1353,7 +1373,7 @@ class Orchestrator:
             else:
                 analyst_data = AnalystResponse(**json.loads(response_str))
             
-            logger.info(f"📊 Analyst рассчитал ROI:")
+            logger.info(f" Analyst рассчитал ROI:")
             logger.info(f"   Экономия: {analyst_data.roi_calculation.cost_saved_per_month_rub} руб/мес")
             logger.info(f"   Окупаемость: {analyst_data.roi_calculation.payback_period_months} мес")
             
@@ -1369,9 +1389,18 @@ class Orchestrator:
                 "proposal_structure": analyst_data.proposal_structure
             }
             
+            # ⭐ ВАЖНО: Помечаем задачу как completed
+            if task_db_id:
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": f"ROI рассчитан: экономия {analyst_data.roi_calculation.cost_saved_per_month_rub} руб/мес"
+                })
+                logger.info(f"✅ Задача {task_name} помечена как completed")
+            
             logger.info(f"✅ Анализ сохранён в контекст проекта")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка обработки Analyst: {e}", exc_info=True)
+            logger.error(f" Ошибка обработки Analyst: {e}", exc_info=True)
             return False
