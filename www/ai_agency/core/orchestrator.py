@@ -870,7 +870,7 @@ class Orchestrator:
     АГЕНТ: {agent_name}
 
     РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
-    {agent_response[:16000]}
+    {agent_response[:6000]}
 
     ПРОВЕРЬ:
     1. Соответствует ли результат задаче?
