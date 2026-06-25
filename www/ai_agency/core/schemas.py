@@ -57,7 +57,15 @@ class PMDecision(BaseModel):
 class PMTaskGraph(BaseModel):
     """Task Graph, созданный PM."""
     tasks: List[Dict[str, Any]] = Field(description="Список задач")
-
+    excluded_agents: List[str] = Field(
+            default=[],
+            description="Список агентов, которые не нужны для этого проекта"
+        )
+        reasoning: str = Field(
+            default="",
+            description="Объяснение, почему некоторые агенты исключены"
+        )
+        
     # ⭐ НОВОЕ: Нормализация id → task_id
     @model_validator(mode="before")
     @classmethod

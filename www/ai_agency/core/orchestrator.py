@@ -468,9 +468,9 @@ class Orchestrator:
     
     def _create_initial_task_graph(self) -> bool:
         """
-        Создаёт начальный Task Graph через PM, если задач ещё нет.
+        Создаёт начальный Task Graph через PM.
+        PM сам анализирует цели проекта и решает, какие задачи создавать.
         """
-        #from main import load_prompt, call_llm, log_to_agent_logs
         
         project_id = self.current_project.get("Id")
         tasks = self.tasks_db.get_tasks_by_project(project_id)
@@ -481,52 +481,78 @@ class Orchestrator:
         logger.info("🧠 PM строит Task Graph...")
         
         pm_prompt = load_prompt("pm")
+        
+        #  НОВОЕ: Передаём цели проекта для анализа
+        project_goal = self.current_project.get("goal", "")
+        project_name = self.current_project.get("project_name", "")
+        
         task_graph_prompt = f"""
-    Ты — Project Manager. Декомпозируй проект на задачи и построй граф зависимостей.
+    Ты — Project Manager. Проанализируй цели проекта и построй оптимальный Task Graph.
 
     ПРОЕКТ:
-    Клиент: {self.current_project.get('client_name')}
-    Цель: {self.current_project.get('goal')}
+    Название: {project_name}
+    Цель: {project_goal}
+
+    ТВОЯ ЗАДАЧА:
+    1. Внимательно проанализируй цель проекта
+    2. Определи, какие агенты нужны для достижения цели
+    3. Если в цели указано "не делать [задача]" — исключи соответствующего агента
+    4. Построй оптимальный граф задач только с нужными агентами
+    5. Объясни, почему ты исключил某些 агентов (если исключал)
 
     ДОСТУПНЫЕ АГЕНТЫ:
-    - analyst: анализ потребностей и ROI
-    - architect: проектирование архитектуры (после analyst)
-    - developer: разработка автоматизаций (после architect, будет декомпозирован на подзадачи)
-    - crm_customizer: настройка CRM (после developer)
-    - qa: тестирование и валидация (после crm_customizer)
-    - tech_writer: документация (после qa)
+    - lead_hunter: поиск потенциальных клиентов (селлеров WB/Ozon)
+    - sales: написание холодных сообщений и квалификация лидов
+    - analyst: расчёт ROI и подготовка презентации
+    - architect: проектирование архитектуры интеграции
+    - developer: разработка автоматизаций (n8n, Albato)
+    - crm_customizer: настройка CRM (Битрикс24, AmoCRM, Bpium)
+    - qa: тестирование и валидация
+    - tech_writer: создание документации для клиента
 
-    ВАЖНО:
-    - analyst и architect — это ОДНА задача каждый
-    - developer — это ОДНА задача (после её выполнения PM декомпозирует на подзадачи)
-    - crm_customizer, qa, tech_writer — по одной задаче
+    ПРИМЕРЫ АНАЛИЗА:
 
-    ⚠️ КРИТИЧНО: Используй поле "task_id" (НЕ "id"!) для идентификации задач!
+    Пример 1: "Автоматизировать сбор заявок, разработка не требуется"
+    → Исключить: developer, crm_customizer
+    → Оставить: analyst, architect, qa, tech_writer
+    → Reasoning: "В цели указано 'разработка не требуется', поэтому developer и crm_customizer исключены"
 
-    ПОСТРОЙ Task Graph в формате JSON:
+    Пример 2: "Только анализ рынка и подготовка презентации"
+    → Исключить: architect, developer, crm_customizer, qa
+    → Оставить: analyst, tech_writer
+    → Reasoning: "Проект только про анализ, поэтому технические агенты не нужны"
+
+    Пример 3: "Настроить CRM без анализа"
+    → Исключить: analyst, architect
+    → Оставить: crm_customizer, qa, tech_writer
+    → Reasoning: "В цели указано 'без анализа', поэтому analyst и architect исключены"
+
+    ФОРМАТ ОТВЕТА (строго JSON):
     {{
-        "tasks": [
-            {{
-                "task_id": "task_001",
-                "agent_name": "analyst",
-                "task_description": "Провести анализ...",
-                "depends_on": [],
-                "input_data": {{}},
-                "max_iterations": 3
-            }},
-            {{
-                "task_id": "task_002",
-                "agent_name": "architect",
-                "task_description": "Спроектировать архитектуру...",
-                "depends_on": ["task_001"],
-                "input_data": {{"roi_data": "результат analyst"}},
-                "max_iterations": 3
-            }}
-        ]
+      "tasks": [
+        {{
+          "task_id": "task_001",
+          "agent_name": "имя_агента",
+          "task_description": "описание задачи",
+          "depends_on": [],
+          "input_data": {{}},
+          "max_iterations": 3
+        }}
+      ],
+      "excluded_agents": ["developer", "crm_customizer"],
+      "reasoning": "В цели проекта указано 'разработка не требуется', поэтому developer и crm_customizer исключены"
     }}
+
+    ⚠️ ВАЖНО:
+    - Используй поле "task_id" (НЕ "id"!) для идентификации задач
+    - Если исключаешь агента — обязательно объясни почему в поле reasoning
+    - excluded_agents должен содержать только имена агентов из списка доступных
+    - Даже если исключаешь агентов, задачи должны быть логически связаны
+    - QA всегда нужен, если есть хотя бы одна задача
 
     Верни ТОЛЬКО валидный JSON.
     """
+        
         try:
             pm_response, pm_tokens = call_llm("PM", pm_prompt, task_graph_prompt)
             
@@ -535,10 +561,17 @@ class Orchestrator:
             
             task_graph = json.loads(pm_response)
             tasks_list = task_graph.get("tasks", [])
+            excluded_agents = task_graph.get("excluded_agents", [])
+            reasoning = task_graph.get("reasoning", "")
             
             if not tasks_list:
                 logger.error("❌ PM не вернул задачи")
                 return False
+            
+            # ⭐ НОВОЕ: Логируем решение PM
+            if excluded_agents:
+                logger.info(f"📋 PM исключил агентов: {excluded_agents}")
+                logger.info(f"📝 Причина: {reasoning}")
             
             for task_data in tasks_list:
                 task_data["project_id"] = project_id
@@ -552,15 +585,21 @@ class Orchestrator:
             if self.current_project.get("Id"):
                 self.projects_db.update_project(
                     self.current_project["Id"],
-                    {"plan": json.dumps(task_graph, ensure_ascii=False)}
-                )            
+                    {
+                        "plan": json.dumps(task_graph, ensure_ascii=False),
+                        "excluded_agents": json.dumps(excluded_agents, ensure_ascii=False),
+                        "reasoning": reasoning
+                    }
+                )
+                
             logger.info(f"✅ Task Graph создан: {len(tasks_list)} задач")
+            logger.info(f"📊 Исключено агентов: {len(excluded_agents)}")
             
             log_to_agent_logs(
                 project_id=project_id,
                 agent_name="PM",
                 status="completed",
-                task_description=f"Построен Task Graph из {len(tasks_list)} задач",
+                task_description=f"Построен Task Graph из {len(tasks_list)} задач. Исключено агентов: {len(excluded_agents)}. Причина: {reasoning}",
                 full_response=json.dumps(task_graph, ensure_ascii=False),
                 tokens_used=0
             )
@@ -570,6 +609,7 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"❌ Ошибка построения Task Graph: {e}", exc_info=True)
             return False
+
     # ==================== ВЫПОЛНЕНИЕ ЗАДАЧИ ====================
     
     def execute_task(self, task: Dict[str, Any], pm_prompt: str) -> bool:
@@ -653,6 +693,18 @@ class Orchestrator:
             # Особая обработка для architect → декомпозиция
             if agent_name == "architect":
                 return self._handle_architect(task, task_db_id, task_name, validated_response, pm_prompt)
+            # ⭐ НОВОЕ: Особая обработка для Lead Hunter
+            if agent_name == "lead_hunter":
+                return self._handle_lead_hunter(task, task_db_id, task_name, validated_response, pm_prompt)
+
+            #  НОВОЕ: Особая обработка для Sales
+            if agent_name == "sales":
+                return self._handle_sales(task, task_db_id, task_name, validated_response, pm_prompt)
+
+            # ⭐ НОВОЕ: Особая обработка для Analyst
+            if agent_name == "analyst":
+                return self._handle_analyst(task, task_db_id, task_name, validated_response, pm_prompt)
+                
             
             # QA Gate
             if agent_name != "qa":
@@ -1191,3 +1243,135 @@ class Orchestrator:
             logger.error(f" Ошибка разрешения тупика: {e}")
             return False
     
+    def _handle_lead_hunter(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+        """
+        Обрабатывает результат Lead Hunter: извлекает лиды и передаёт Sales.
+        """
+        from pydantic import BaseModel
+        from core.schemas import LeadHunterResponse
+        
+        project_id = self.current_project.get("Id")
+        
+        # Преобразуем в строку если нужно
+        if isinstance(agent_response, BaseModel):
+            response_str = agent_response.model_dump_json(indent=2)
+        else:
+            response_str = str(agent_response)
+        
+        try:
+            # Парсим ответ
+            if isinstance(agent_response, BaseModel):
+                lead_data = agent_response
+            else:
+                lead_data = LeadHunterResponse(**json.loads(response_str))
+            
+            logger.info(f"📊 Lead Hunter нашёл {lead_data.total_found} лидов")
+            
+            # Сохраняем лиды в контекст проекта для Sales
+            if "leads_context" not in self.current_project:
+                self.current_project["leads_context"] = []
+            
+            for lead in lead_data.leads_found:
+                self.current_project["leads_context"].append({
+                    "company_name": lead.company_name,
+                    "marketplace": lead.marketplace,
+                    "category": lead.category,
+                    "pain_points": lead.pain_points,
+                    "contact_telegram": lead.contact_telegram,
+                    "contact_email": lead.contact_email,
+                    "contact_phone": lead.contact_phone,
+                    "source": lead.source
+                })
+            
+            logger.info(f"✅ Лиды сохранены в контекст проекта")
+            return True
+            
+        except Exception as e:
+            logger.error(f" Ошибка обработки Lead Hunter: {e}", exc_info=True)
+            return False
+
+    def _handle_sales(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+        """
+        Обрабатывает результат Sales: извлекает сообщения и передаёт Analyst.
+        """
+        from pydantic import BaseModel
+        from core.schemas import SalesResponse
+        
+        project_id = self.current_project.get("Id")
+        
+        # Преобразуем в строку если нужно
+        if isinstance(agent_response, BaseModel):
+            response_str = agent_response.model_dump_json(indent=2)
+        else:
+            response_str = str(agent_response)
+        
+        try:
+            # Парсим ответ
+            if isinstance(agent_response, BaseModel):
+                sales_data = agent_response
+            else:
+                sales_data = SalesResponse(**json.loads(response_str))
+            
+            logger.info(f"📝 Sales отправил {len(sales_data.messages)} сообщений")
+            
+            # Сохраняем результаты квалификации в контекст проекта
+            if "sales_context" not in self.current_project:
+                self.current_project["sales_context"] = []
+            
+            self.current_project["sales_context"].append({
+                "messages": [msg.model_dump() for msg in sales_data.messages],
+                "qualification_questions": sales_data.qualification_questions,
+                "next_steps": sales_data.next_steps
+            })
+            
+            logger.info(f"✅ Результаты Sales сохранены в контекст проекта")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки Sales: {e}", exc_info=True)
+            return False
+
+    def _handle_analyst(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+        """
+        Обрабатывает результат Analyst: извлекает ROI и передаёт Architect.
+        """
+        from pydantic import BaseModel
+        from core.schemas import AnalystResponse
+        
+        project_id = self.current_project.get("Id")
+        
+        # Преобразуем в строку если нужно
+        if isinstance(agent_response, BaseModel):
+            response_str = agent_response.model_dump_json(indent=2)
+        else:
+            response_str = str(agent_response)
+        
+        try:
+            # Парсим ответ
+            if isinstance(agent_response, BaseModel):
+                analyst_data = agent_response
+            else:
+                analyst_data = AnalystResponse(**json.loads(response_str))
+            
+            logger.info(f"📊 Analyst рассчитал ROI:")
+            logger.info(f"   Экономия: {analyst_data.roi_calculation.cost_saved_per_month_rub} руб/мес")
+            logger.info(f"   Окупаемость: {analyst_data.roi_calculation.payback_period_months} мес")
+            
+            # Сохраняем анализ в контекст проекта для Architect
+            if "analyst_context" not in self.current_project:
+                self.current_project["analyst_context"] = {}
+            
+            self.current_project["analyst_context"] = {
+                "client_name": analyst_data.client_name,
+                "pain_points": [pp.model_dump() for pp in analyst_data.current_pain_points],
+                "proposed_automation": [pa.model_dump() for pa in analyst_data.proposed_automation],
+                "roi_calculation": analyst_data.roi_calculation.model_dump(),
+                "proposal_structure": analyst_data.proposal_structure
+            }
+            
+            logger.info(f"✅ Анализ сохранён в контекст проекта")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки Analyst: {e}", exc_info=True)
+            return False

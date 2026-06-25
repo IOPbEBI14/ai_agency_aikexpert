@@ -342,3 +342,160 @@ class TestOrchestratorQA:
                 # "qa_feedback": "Все 2 подзадач завершены успешно"
             # }
         # )
+        
+class TestOrchestratorNewAgents:
+    """Тесты для методов обработки новых агентов."""
+    
+    @patch('core.orchestrator.update_last_agent_log')
+    @patch('core.orchestrator.log_to_agent_logs')
+    def test_handle_lead_hunter(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+        """Тест обработки результата Lead Hunter."""
+        from core.schemas import LeadHunterResponse, Lead
+        
+        orchestrator.current_project = sample_project_data
+        
+        # Создаём Pydantic-модель
+        lead_response = LeadHunterResponse(
+            leads_found=[
+                Lead(
+                    company_name="ООО Ромашка",
+                    marketplace="WB",
+                    category="Одежда",
+                    pain_points=["Много отзывов"],
+                    source="Telegram"
+                )
+            ],
+            total_found=1,
+            notes="Найден 1 лид"
+        )
+        
+        # Вызываем метод
+        result = orchestrator._handle_lead_hunter(
+            sample_task_data,
+            sample_task_data["Id"],
+            "task_001",
+            lead_response,
+            "pm_prompt"
+        )
+        
+        assert result is True
+        assert "leads_context" in orchestrator.current_project
+        assert len(orchestrator.current_project["leads_context"]) == 1
+        assert orchestrator.current_project["leads_context"][0]["company_name"] == "ООО Ромашка"
+    
+    @patch('core.orchestrator.update_last_agent_log')
+    @patch('core.orchestrator.log_to_agent_logs')
+    def test_handle_sales(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+        """Тест обработки результата Sales."""
+        from core.schemas import SalesResponse, SalesMessage
+        
+        orchestrator.current_project = sample_project_data
+        
+        # Создаём Pydantic-модель
+        sales_response = SalesResponse(
+            messages=[
+                SalesMessage(
+                    lead_name="ООО Ромашка",
+                    message_text="Здравствуйте!",
+                    channel="telegram",
+                    personalization_points=["Активные продажи"]
+                )
+            ],
+            qualification_questions=["Вопрос 1"],
+            next_steps="Назначить встречу"
+        )
+        
+        # Вызываем метод
+        result = orchestrator._handle_sales(
+            sample_task_data,
+            sample_task_data["Id"],
+            "task_001",
+            sales_response,
+            "pm_prompt"
+        )
+        
+        assert result is True
+        assert "sales_context" in orchestrator.current_project
+        assert len(orchestrator.current_project["sales_context"]) == 1
+        assert len(orchestrator.current_project["sales_context"][0]["messages"]) == 1
+    
+    @patch('core.orchestrator.update_last_agent_log')
+    @patch('core.orchestrator.log_to_agent_logs')
+    def test_handle_analyst(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+        """Тест обработки результата Analyst."""
+        from core.schemas import AnalystResponse, PainPoint, ProposedAutomation, ROICalculation
+        
+        orchestrator.current_project = sample_project_data
+        
+        # Создаём Pydantic-модель
+        analyst_response = AnalystResponse(
+            client_name="ООО Тест",
+            current_pain_points=[
+                PainPoint(process="Ручной перенос", time_per_day_hours=2.0, cost_per_month_rub=20000.0)
+            ],
+            proposed_automation=[
+                ProposedAutomation(
+                    solution="Автоматизация",
+                    tools=["n8n"],
+                    time_saved_hours_per_day=1.5,
+                    implementation_complexity="medium"
+                )
+            ],
+            roi_calculation=ROICalculation(
+                total_time_saved_hours_per_month=30.0,
+                cost_saved_per_month_rub=30000.0,
+                implementation_cost_rub=50000.0,
+                payback_period_months=1.7
+            ),
+            proposal_structure=["Слайд 1"],
+            notes="Тест"
+        )
+        
+        # Вызываем метод
+        result = orchestrator._handle_analyst(
+            sample_task_data,
+            sample_task_data["Id"],
+            "task_001",
+            analyst_response,
+            "pm_prompt"
+        )
+        
+        assert result is True
+        assert "analyst_context" in orchestrator.current_project
+        assert orchestrator.current_project["analyst_context"]["client_name"] == "ООО Тест"
+        assert orchestrator.current_project["analyst_context"]["roi_calculation"]["cost_saved_per_month_rub"] == 30000.0
+    
+    @patch('core.orchestrator.update_last_agent_log')
+    @patch('core.orchestrator.log_to_agent_logs')
+    def test_handle_lead_hunter_with_string(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+        """Тест обработки Lead Hunter со строковым ответом."""
+        import json
+        
+        orchestrator.current_project = sample_project_data
+        
+        # Передаём JSON-строку
+        lead_json = json.dumps({
+            "leads_found": [
+                {
+                    "company_name": "ООО Тест",
+                    "marketplace": "WB",
+                    "category": "Одежда",
+                    "pain_points": ["Тест"],
+                    "source": "Telegram"
+                }
+            ],
+            "total_found": 1,
+            "notes": "Тест"
+        })
+        
+        # Вызываем метод
+        result = orchestrator._handle_lead_hunter(
+            sample_task_data,
+            sample_task_data["Id"],
+            "task_001",
+            lead_json,
+            "pm_prompt"
+        )
+        
+        assert result is True
+        assert "leads_context" in orchestrator.current_project        

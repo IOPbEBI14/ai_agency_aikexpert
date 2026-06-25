@@ -4,22 +4,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
-import json
-
-from core.schemas import (
-    PMDecision, PMTaskGraph, PMDecomposition, PMFinalReport,
-    PMHumanReview, PMDeadlockResolution,
-    AnalystResponse, ArchitectResponse, DeveloperResponse,
-    QAResponse, TechWriterResponse,
-    LeadHunterResponse, SalesResponse, CRMCustomizerResponse,
-    PainPoint, ProposedAutomation, ROICalculation,
-    QAIssue, QATestCase,
-    SystemInfo, DataFlowStep,
-    DeveloperFile,
-    Document, DocumentSection, VideoScript, FAQItem,
-    Lead, SalesMessage,
-    CustomField, Entity, Pipeline, BusinessProcess, FieldMapping
-)
 
 
 # ==================== ФИКСТУРЫ ДАННЫХ ====================
@@ -73,7 +57,22 @@ def sample_task_data():
 
 @pytest.fixture
 def sample_pydantic_responses():
-    """Готовые экземпляры Pydantic-моделей для тестирования."""
+    """Готовые Pydantic-модели для тестов."""
+    from core.schemas import (
+        PMDecision, PMTaskGraph, PMDecomposition, PMFinalReport,
+        PMHumanReview, PMDeadlockResolution,
+        AnalystResponse, ArchitectResponse, DeveloperResponse,
+        QAResponse, TechWriterResponse,
+        LeadHunterResponse, SalesResponse, CRMCustomizerResponse,
+        PainPoint, ProposedAutomation, ROICalculation,
+        QAIssue, QATestCase,
+        SystemInfo, DataFlowStep,
+        DeveloperFile,
+        Document, DocumentSection, VideoScript, FAQItem,
+        Lead, SalesMessage,
+        CustomField, Entity, Pipeline, BusinessProcess, FieldMapping
+    )
+    
     return {
         "pm_decision": PMDecision(
             project_status="in_progress",
@@ -84,40 +83,28 @@ def sample_pydantic_responses():
         ),
         "pm_task_graph": PMTaskGraph(
             tasks=[
-                {
-                    "task_id": "task_001",
-                    "agent_name": "analyst",
-                    "depends_on": []
-                },
-                {
-                    "task_id": "task_002",
-                    "agent_name": "architect",
-                    "depends_on": ["task_001"]
-                }
+                {"task_id": "task_001", "agent_name": "analyst", "depends_on": []},
+                {"task_id": "task_002", "agent_name": "architect", "depends_on": ["task_001"]}
             ]
         ),
         "pm_decomposition": PMDecomposition(
             subtasks=[
-                {
-                    "subtask_id": "dev_001",
-                    "description": "Создать webhook для Telegram",
-                    "depends_on": []
-                }
+                {"subtask_id": "dev_001", "description": "Создать webhook", "depends_on": []}
             ],
             pm_comment="Разбил на подзадачи"
         ),
         "pm_final_report": PMFinalReport(
             project_status="completed",
-            final_report="# Отчет\n\nПроект завершен.",
+            final_report="# Отчёт\n\nПроект завершен.",
             metrics={"total_tokens_used": 10000, "tasks_completed": 5},
             pm_comment="Проект успешно завершен"
         ),
         "pm_human_review": PMHumanReview(
-            updated_task_description="Новое описание задачи",
+            updated_task_description="Новое описание",
             pm_comment="Задача скорректирована"
         ),
         "pm_deadlock": PMDeadlockResolution(
-            analysis="Тупик из-за зависимостей",
+            analysis="Тупик",
             solution="update_dependencies",
             actions=[{"action": "update_task", "task_id": "task_001"}],
             comment="Обновлены зависимости"
@@ -125,16 +112,12 @@ def sample_pydantic_responses():
         "analyst_response": AnalystResponse(
             client_name="ООО Тест",
             current_pain_points=[
-                PainPoint(
-                    process="Ручной перенос данных",
-                    time_per_day_hours=2.0,
-                    cost_per_month_rub=20000.0
-                )
+                PainPoint(process="Ручной перенос", time_per_day_hours=2.0, cost_per_month_rub=20000.0)
             ],
             proposed_automation=[
                 ProposedAutomation(
-                    solution="Автоматизация через n8n",
-                    tools=["n8n", "API WB"],
+                    solution="Автоматизация",
+                    tools=["n8n"],
                     time_saved_hours_per_day=1.5,
                     implementation_complexity="medium"
                 )
@@ -145,52 +128,30 @@ def sample_pydantic_responses():
                 implementation_cost_rub=50000.0,
                 payback_period_months=1.7
             ),
-            proposal_structure=["Слайд 1: Проблема", "Слайд 2: Решение"],
-            notes="Тестовый пример"
+            proposal_structure=["Слайд 1"],
+            notes="Тест"
         ),
         "architect_response": ArchitectResponse(
             summary="Архитектура n8n + Bpium",
             approach="Webhook → n8n → Bpium",
-            systems=[
-                SystemInfo(
-                    name="Wildberries API",
-                    role="source",
-                    api_available=True,
-                    limitations="Rate limit 10 req/sec"
-                )
-            ],
-            data_flow=[
-                DataFlowStep(
-                    **{
-                        "step": 1,
-                        "from": "Wildberries",
-                        "to": "n8n",
-                        "trigger": "cron",
-                        "data": "Отзывы",
-                        "transformation": "Фильтрация"
-                    }
-                )
-            ],
-            tech_stack=["n8n", "Bpium"],
+            systems=[SystemInfo(name="WB API", role="source", api_available=True)],
+            data_flow=[DataFlowStep(
+                **{"step": 1, "from": "WB", "to": "n8n", "trigger": "cron", "data": "Отзывы", "transformation": "Фильтр"}
+            )],
+            tech_stack=["n8n"],
             estimated_complexity="medium",
             estimated_time_hours=8,
-            risks=["Изменение API"],
-            recommendations="Добавить логирование"
+            risks=["Риск"],
+            recommendations="Логировать"
         ),
         "developer_response": DeveloperResponse(
-            summary="Создан workflow для Telegram",
-            workflow_name="Telegram → Bpium",
-            n8n_json={"name": "test", "nodes": []},
-            files=[
-                DeveloperFile(
-                    name="workflow.json",
-                    type="n8n_workflow",
-                    description="Готовый workflow"
-                )
-            ],
-            setup_instructions=["Шаг 1: Импортировать"],
-            testing_steps=["Тест 1: Отправить сообщение"],
-            notes="Протестировано"
+            summary="Создан workflow",
+            workflow_name="Test",
+            n8n_json={"name": "test"},
+            files=[DeveloperFile(name="w.json", type="n8n_workflow", description="Workflow")],
+            setup_instructions=["Шаг 1"],
+            testing_steps=["Тест 1"],
+            notes="Готово"
         ),
         "qa_response": QAResponse(
             summary="Проверка пройдена",
@@ -199,104 +160,52 @@ def sample_pydantic_responses():
             tests_failed=0,
             issues=[],
             warnings=[],
-            recommendations=["Всё отлично"],
-            test_cases=[
-                QATestCase(
-                    name="Тест 1",
-                    status="passed",
-                    description="Проверка структуры"
-                )
-            ]
+            recommendations=["Отлично"],
+            test_cases=[QATestCase(name="Тест 1", status="passed", description="Проверка")]
         ),
         "tech_writer_response": TechWriterResponse(
             summary="Создана документация",
-            documents=[
-                Document(
-                    title="Инструкция",
-                    type="user_guide",
-                    audience="Менеджеры",
-                    sections=[
-                        DocumentSection(
-                            title="Введение",
-                            content="Описание",
-                            screenshot_needed=False
-                        )
-                    ]
-                )
-            ],
-            video_scripts=[
-                VideoScript(
-                    title="Видео 1",
-                    duration_minutes=5,
-                    script="Текст",
-                    visual_cues=["Экран 1"]
-                )
-            ],
-            faq=[FAQItem(question="Вопрос", answer="Ответ")],
+            documents=[Document(
+                title="Инструкция",
+                type="user_guide",
+                audience="Менеджеры",
+                sections=[DocumentSection(title="Введение", content="Описание", screenshot_needed=False)]
+            )],
+            video_scripts=[VideoScript(title="Видео", duration_minutes=5, script="Текст", visual_cues=["Экран"])],
+            faq=[FAQItem(question="В?", answer="О")],
             checklist=["Пункт 1"],
             notes="Готово"
         ),
         "lead_hunter_response": LeadHunterResponse(
-            leads_found=[
-                Lead(
-                    company_name="ООО Ромашка",
-                    marketplace="Wildberries",
-                    category="Одежда",
-                    pain_points=["Много отзывов"],
-                    source="Telegram"
-                )
-            ],
+            leads_found=[Lead(
+                company_name="ООО Ромашка",
+                marketplace="WB",
+                category="Одежда",
+                pain_points=["Много отзывов"],
+                source="Telegram"
+            )],
             total_found=1,
             notes="Найден 1 лид"
         ),
         "sales_response": SalesResponse(
-            messages=[
-                SalesMessage(
-                    lead_name="ООО Ромашка",
-                    message_text="Здравствуйте!",
-                    channel="telegram",
-                    personalization_points=["Активные продажи"]
-                )
-            ],
+            messages=[SalesMessage(
+                lead_name="ООО Ромашка",
+                message_text="Здравствуйте!",
+                channel="telegram",
+                personalization_points=["Активные продажи"]
+            )],
             qualification_questions=["Вопрос 1"],
             next_steps="Назначить встречу"
         ),
         "crm_customizer_response": CRMCustomizerResponse(
             summary="Настроена CRM",
             platform="Bpium",
-            entities=[
-                Entity(
-                    name="Заявки",
-                    custom_fields=[
-                        CustomField(
-                            name="Источник",
-                            type="select",
-                            purpose="Канал поступления"
-                        )
-                    ]
-                )
-            ],
-            pipelines=[
-                Pipeline(
-                    name="Обработка",
-                    stages=["Новая", "В работе", "Завершена"]
-                )
-            ],
-            business_processes=[
-                BusinessProcess(
-                    trigger="Создание заявки",
-                    actions=["Уведомить"],
-                    purpose="Оповещение"
-                )
-            ],
-            field_mapping=[
-                FieldMapping(
-                    from_system="n8n",
-                    from_field="source",
-                    to_system="Bpium",
-                    to_field="Источник"
-                )
-            ],
+            entities=[Entity(name="Заявки", custom_fields=[
+                CustomField(name="Источник", type="select", purpose="Канал")
+            ])],
+            pipelines=[Pipeline(name="Обработка", stages=["Новая", "В работе"])],
+            business_processes=[BusinessProcess(trigger="Создание", actions=["Уведомить"], purpose="Оповещение")],
+            field_mapping=[FieldMapping(from_system="n8n", from_field="source", to_system="Bpium", to_field="Источник")],
             setup_steps=["Шаг 1"],
             notes="Готово"
         )
@@ -333,7 +242,6 @@ def orchestrator(mock_nocodb_clients):
     from core.orchestrator import Orchestrator
     
     orch = Orchestrator()
-    # Принудительно подменяем клиенты на моки
     orch.projects_db = mock_nocodb_clients['projects']
     orch.tasks_db = mock_nocodb_clients['tasks']
     orch.agent_logs_db = mock_nocodb_clients['nocodb']
