@@ -881,19 +881,24 @@ class Orchestrator:
         """
         from core.schemas import QAResponse, call_and_parse_llm, get_model_schema
         from pydantic import BaseModel
-        
+
         project_id = self.current_project.get("Id")
-        
+
         logger.info(f" QA-проверка для задачи {task_name}...")
-        
+
         # Загружаем промпт QA
         qa_prompt = load_prompt("qa")
-        # ⭐ ВАЖНО: Если agent_response — Pydantic-модель, конвертируем в JSON-строку
+
+        # ⭐ УНИВЕРСАЛЬНОЕ ПРЕОБРАЗОВАНИЕ В СТРОКУ
         if isinstance(agent_response, BaseModel):
-            agent_response_str = agent_response.model_dump_json(indent=2)        
-        else:
+            agent_response_str = agent_response.model_dump_json(indent=2)
+        elif isinstance(agent_response, dict):
+            agent_response_str = json.dumps(agent_response, indent=2, ensure_ascii=False)
+        elif isinstance(agent_response, str):
             agent_response_str = agent_response
-            
+        else:
+            agent_response_str = str(agent_response)
+
         # Добавляем JSON Schema к промпту
         schema = get_model_schema(QAResponse)
         schema_prompt = qa_prompt + f"""
@@ -914,14 +919,14 @@ class Orchestrator:
 
     ═══════════════════════════════════════════════════════════
     """
-        
+
         # Формируем задачу для QA
         qa_task = f"""
     ЗАДАЧА: {task_description}
     АГЕНТ: {agent_name}
 
     РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
-    {agent_response[:6000]}
+    {agent_response_str[:6000]}
 
     ПРОВЕРЬ:
     1. Соответствует ли результат задаче?
@@ -932,7 +937,7 @@ class Orchestrator:
     ВАЖНО: Если результат соответствует задаче и не содержит критических ошибок, 
     установи tests_failed=0 и не добавляй issues с severity=critical или high.
     """
-        
+
         try:
             # Вызываем LLM с Pydantic-валидацией
             qa_response, qa_tokens = call_and_parse_llm(
@@ -943,14 +948,14 @@ class Orchestrator:
                 response_model=QAResponse,
                 max_retries=2
             )
-            
-            # ⭐ ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ РЕЗУЛЬТАТА QA
+
+            # Детальное логирование
             logger.info(f"✅ QA вернул ответ для {task_name}:")
             logger.info(f"   Summary: {qa_response.summary}")
             logger.info(f"   Тестов всего: {qa_response.tests_total}")
             logger.info(f"   Пройдено: {qa_response.tests_passed}")
             logger.info(f"   Провалено: {qa_response.tests_failed}")
-            
+
             if qa_response.issues:
                 logger.info(f"   Найдены проблемы")
                 for i, issue in enumerate(qa_response.issues, 1):
@@ -959,26 +964,26 @@ class Orchestrator:
                     logger.info(f"      Рекомендация: {issue.recommendation}")
             else:
                 logger.info(f"   Проблем не найдено")
-            
+
             if qa_response.warnings:
                 logger.info(f"   Предупреждения: {qa_response.warnings}")
-            
+
             if qa_response.recommendations:
                 logger.info(f"   Рекомендации: {qa_response.recommendations}")
-            
+
             # Определяем approved
             has_critical_issues = any(
                 issue.severity in ("critical", "high") 
                 for issue in qa_response.issues
             )
             qa_approved = (qa_response.tests_failed == 0) and not has_critical_issues
-            
+
             logger.info(f"   QA approved: {qa_approved}")
-            
+
             # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
-            
+
             # Формируем feedback
             feedback_parts = [qa_response.summary]
             if qa_response.issues:
@@ -993,7 +998,7 @@ class Orchestrator:
                 for warning in qa_response.warnings:
                     feedback_parts.append(f"- {warning}")
             qa_feedback_text = "\n".join(feedback_parts)
-            
+
             # Логируем в agent_logs
             log_to_agent_logs(
                 project_id=project_id,
@@ -1003,10 +1008,10 @@ class Orchestrator:
                 full_response=qa_response.model_dump_json(indent=2),
                 tokens_used=qa_tokens
             )
-            
+
             if not update_status:
                 return qa_approved
-            
+
             if qa_approved:
                 self.tasks_db.update_task(task_db_id, {
                     "status": "completed",
@@ -1024,23 +1029,23 @@ class Orchestrator:
                     "qa_feedback": qa_feedback_text
                 })
                 update_last_agent_log(project_id, agent_name, "needs_review")
-                
+
                 if iteration_count + 1 >= max_iter:
                     logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций QA")
                     self.tasks_db.update_task(task_db_id, {"status": "failed"})
                     update_last_agent_log(project_id, agent_name, "failed")
                 return False
-                
+
         except Exception as e:
             logger.error(f" Ошибка QA: {e}", exc_info=True)
-            
+
             if update_status:
                 self.tasks_db.update_task(task_db_id, {
                     "status": "pending",
                     "qa_approved": "false",
                     "qa_feedback": f"Ошибка QA: {str(e)[:500]}"
                 })
-            
+
             return False
         
     def _call_llm_wrapper(self, agent_name: str, system_prompt: str, user_task: str) -> tuple:
