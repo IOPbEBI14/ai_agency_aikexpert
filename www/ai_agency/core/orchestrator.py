@@ -864,12 +864,13 @@ class Orchestrator:
     """
         
         # Формируем задачу для QA
+        agent_response_str = agent_response.model_dump_json(indent=2)
         qa_task = f"""
     ЗАДАЧА: {task_description}
     АГЕНТ: {agent_name}
 
-    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response)} символов):
-    {agent_response[:6000]}
+    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
+    {agent_response[:16000]}
 
     ПРОВЕРЬ:
     1. Соответствует ли результат задаче?
