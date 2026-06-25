@@ -880,6 +880,7 @@ class Orchestrator:
         Проверяет результат задачи через QA-агента с Pydantic-валидацией.
         """
         from core.schemas import QAResponse, call_and_parse_llm, get_model_schema
+        from pydantic import BaseModel
         
         project_id = self.current_project.get("Id")
         
@@ -946,7 +947,7 @@ class Orchestrator:
             logger.info(f"   Провалено: {qa_response.tests_failed}")
             
             if qa_response.issues:
-                logger.info(f"   Найдено проблем: {len(qa_response.issues)}")
+                logger.info(f"   Найдены проблемы")
                 for i, issue in enumerate(qa_response.issues, 1):
                     logger.info(f"   {i}. [{issue.severity.upper()}] {issue.description}")
                     logger.info(f"      Локация: {issue.location}")
