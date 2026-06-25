@@ -833,64 +833,65 @@ class Orchestrator:
         Проверяет результат задачи через QA-агента.
         Работает как со строкой, так и с Pydantic-моделью.
         """
-        from main import validate_with_qa, log_to_agent_logs, update_last_agent_log
         from pydantic import BaseModel
         
-        # ⭐ ВАЖНО: Если agent_response — Pydantic-модель, конвертируем в JSON-строку
-        if isinstance(agent_response, BaseModel):
-            agent_response_str = agent_response.model_dump_json(indent=2)
-        else:
-            agent_response_str = str(agent_response)
-        
-        project_id = self.current_project.get("Id")
-        
-        logger.info(f"🔍 QA-проверка для задачи {task_name}...")
-        
-        # Используем строковую версию во всех местах
-        qa_result = validate_with_qa(agent_name, agent_response_str, task_description)
-        qa_tokens = qa_result.get("tokens_used", 0)
-        
-        self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
-        self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
-        
-        qa_approved = qa_result.get("approved", False)
-        qa_feedback_text = qa_result.get("feedback", "")
-        
-        log_to_agent_logs(
-            project_id=project_id,
-            agent_name="qa",
-            status="completed" if qa_approved else "needs_review",
-            task_description=f"QA-проверка {task_name}: {'✅ ПРОШЁЛ' if qa_approved else '❌ НЕ ПРОШЁЛ'}",
-            full_response=json.dumps(qa_result, ensure_ascii=False),
-            tokens_used=qa_tokens
-        )
-        
-        if not update_status:
-            return qa_approved
-        
-        if qa_approved:
-            self.tasks_db.update_task(task_db_id, {
-                "status": "completed",
-                "qa_approved": "true",
-                "qa_feedback": qa_feedback_text
-            })
-            update_last_agent_log(project_id, agent_name, "completed")
-            logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
-            return True
-        else:
-            logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
-            self.tasks_db.update_task(task_db_id, {
-                "status": "pending",
-                "qa_approved": "false",
-                "qa_feedback": qa_feedback_text
-            })
-            update_last_agent_log(project_id, agent_name, "needs_review")
+        try:
+            # ⭐ ВАЖНО: Если agent_response — Pydantic-модель, конвертируем в JSON-строку
+            if isinstance(agent_response, BaseModel):
+                agent_response_str = agent_response.model_dump_json(indent=2)
+            else:
+                agent_response_str = str(agent_response)
             
-            if iteration_count + 1 >= max_iter:
-                logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций")
-                self.tasks_db.update_task(task_db_id, {"status": "failed"})
-                update_last_agent_log(project_id, agent_name, "failed")
-            return False                
+            project_id = self.current_project.get("Id")
+            
+            logger.info(f"🔍 QA-проверка для задачи {task_name}...")
+            
+            # Используем строковую версию во всех местах
+            qa_result = validate_with_qa(agent_name, agent_response_str, task_description)
+            qa_tokens = qa_result.get("tokens_used", 0)
+            
+            self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + qa_tokens
+            self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
+            
+            qa_approved = qa_result.get("approved", False)
+            qa_feedback_text = qa_result.get("feedback", "")
+            
+            log_to_agent_logs(
+                project_id=project_id,
+                agent_name="qa",
+                status="completed" if qa_approved else "needs_review",
+                task_description=f"QA-проверка {task_name}: {'✅ ПРОШЁЛ' if qa_approved else '❌ НЕ ПРОШЁЛ'}",
+                full_response=json.dumps(qa_result, ensure_ascii=False),
+                tokens_used=qa_tokens
+            )
+            
+            if not update_status:
+                return qa_approved
+            
+            if qa_approved:
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": qa_feedback_text
+                })
+                update_last_agent_log(project_id, agent_name, "completed")
+                logger.info(f"✅ Задача {task_name} ({agent_name}) выполнена и прошла QA")
+                return True
+            else:
+                logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:200]}")
+                self.tasks_db.update_task(task_db_id, {
+                    "status": "pending",
+                    "qa_approved": "false",
+                    "qa_feedback": qa_feedback_text
+                })
+                update_last_agent_log(project_id, agent_name, "needs_review")
+                
+                if iteration_count + 1 >= max_iter:
+                    logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций")
+                    self.tasks_db.update_task(task_db_id, {"status": "failed"})
+                    update_last_agent_log(project_id, agent_name, "failed")
+                return False
+                
         except Exception as e:
             logger.error(f" Ошибка QA: {e}", exc_info=True)
             
