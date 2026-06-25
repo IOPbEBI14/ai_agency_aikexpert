@@ -920,7 +920,7 @@ class Orchestrator:
     ЗАДАЧА: {task_description}
     АГЕНТ: {agent_name}
 
-    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response)} символов):
+    РЕЗУЛЬТАТ ДЛЯ ПРОВЕРКИ (длина: {len(agent_response_str)} символов):
     {agent_response[:6000]}
 
     ПРОВЕРЬ:
