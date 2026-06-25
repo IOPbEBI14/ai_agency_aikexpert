@@ -785,7 +785,7 @@ class Orchestrator:
                     "task_description": subtask.get("description"),
                     "input_data": json.dumps({
                         "context": subtask.get("context", ""),
-                        "architecture_summary": agent_response[:2000]
+                        "architecture_summary": agent_response_str[:2000]
                     }, ensure_ascii=False),
                     "status": "pending",
                     "depends_on": json.dumps(subtask.get("depends_on", []), ensure_ascii=False),
