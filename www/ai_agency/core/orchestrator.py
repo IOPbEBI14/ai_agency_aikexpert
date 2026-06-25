@@ -717,12 +717,22 @@ class Orchestrator:
         logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")        
         # Декомпозиция на подзадачи
         logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")  # ⭐ ДОБАВИТЬ
-        
+        from pydantic import BaseModel
+
+        # ⭐ УНИВЕРСАЛЬНОЕ ПРЕОБРАЗОВАНИЕ В СТРОКУ
+        if isinstance(agent_response, BaseModel):
+            agent_response_str = agent_response.model_dump_json(indent=2)
+        elif isinstance(agent_response, dict):
+            agent_response_str = json.dumps(agent_response, indent=2, ensure_ascii=False)
+        elif isinstance(agent_response, str):
+            agent_response_str = agent_response
+        else:
+            agent_response_str = str(agent_response)
         decompose_prompt = f"""
     Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
 
     АРХИТЕКТУРА ОТ ARCHITECT:
-    {agent_response[:4000]}
+    {agent_response_str[:4000]}
 
     ЦЕЛЬ ПРОЕКТА:
     {self.current_project.get('goal')}
