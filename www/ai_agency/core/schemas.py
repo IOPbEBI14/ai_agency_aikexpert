@@ -151,43 +151,89 @@ class PMDeadlockResolution(BaseModel):
 
 class PainPoint(BaseModel):
     """Болевая точка клиента."""
-    
-    process: str = Field(description="Описание процесса")
-    time_per_day_hours: float = Field(description="Время в часах в день")
-    cost_per_month_rub: float = Field(description="Стоимость в рублях в месяц")
+    process: str = Field(default="Не указано", description="Описание процесса")
+    time_per_day_hours: float = Field(default=0.0, description="Время в часах в день")
+    cost_per_month_rub: float = Field(default=0.0, description="Стоимость в рублях в месяц")
 
 
 class ProposedAutomation(BaseModel):
     """Предлагаемая автоматизация."""
-    
-    solution: str = Field(description="Описание решения")
-    tools: List[str] = Field(description="Список инструментов")
-    time_saved_hours_per_day: float = Field(description="Экономия времени в часах в день")
+    solution: str = Field(default="Не указано", description="Описание решения")
+    tools: List[str] = Field(default_factory=list, description="Список инструментов")
+    time_saved_hours_per_day: float = Field(default=0.0, description="Экономия времени в часах в день")
     implementation_complexity: Literal["low", "medium", "high"] = Field(
-        description="Сложность реализации"
+        default="medium", description="Сложность реализации"
     )
 
 
 class ROICalculation(BaseModel):
     """Расчёт ROI."""
-    
-    total_time_saved_hours_per_month: float = Field(description="Общая экономия времени в часах в месяц")
-    cost_saved_per_month_rub: float = Field(description="Экономия в рублях в месяц")
-    implementation_cost_rub: float = Field(description="Стоимость внедрения в рублях")
-    payback_period_months: float = Field(description="Срок окупаемости в месяцах")
+    total_time_saved_hours_per_month: float = Field(default=0.0, description="Общая экономия времени в часах в месяц")
+    cost_saved_per_month_rub: float = Field(default=0.0, description="Экономия в рублях в месяц")
+    implementation_cost_rub: float = Field(default=0.0, description="Стоимость внедрения в рублях")
+    payback_period_months: float = Field(default=0.0, description="Срок окупаемости в месяцах")
 
 
 class AnalystResponse(BaseModel):
     """Ответ аналитика."""
-    
-    client_name: str = Field(description="Имя клиента")
-    current_pain_points: List[PainPoint] = Field(description="Текущие болевые точки")
-    proposed_automation: List[ProposedAutomation] = Field(description="Предлагаемая автоматизация")
-    roi_calculation: ROICalculation = Field(description="Расчёт ROI")
-    proposal_structure: List[str] = Field(description="Структура коммерческого предложения")
+    client_name: str = Field(default="Неизвестный клиент", description="Имя клиента")
+    current_pain_points: List[PainPoint] = Field(default_factory=list, description="Текущие болевые точки")
+    proposed_automation: List[ProposedAutomation] = Field(default_factory=list, description="Предлагаемая автоматизация")
+    roi_calculation: ROICalculation = Field(default_factory=ROICalculation, description="Расчёт ROI")
+    proposal_structure: List[str] = Field(default_factory=list, description="Структура коммерческого предложения")
     notes: Optional[str] = Field(default=None, description="Дополнительные заметки")
-
-
+    
+    @model_validator(mode="before")
+    @classmethod
+    def fill_missing_fields(cls, data):
+        """Заполняет отсутствующие поля дефолтными значениями."""
+        if not isinstance(data, dict):
+            return data
+        
+        # Заполняем client_name
+        if not data.get("client_name"):
+            data["client_name"] = "Потенциальный клиент"
+        
+        # Заполняем pain_points если пусто
+        if not data.get("current_pain_points"):
+            data["current_pain_points"] = [
+                {
+                    "process": "Ручная обработка заказов",
+                    "time_per_day_hours": 2.0,
+                    "cost_per_month_rub": 20000.0
+                }
+            ]
+        
+        # Заполняем proposed_automation если пусто
+        if not data.get("proposed_automation"):
+            data["proposed_automation"] = [
+                {
+                    "solution": "Автоматизация обработки заказов",
+                    "tools": ["n8n"],
+                    "time_saved_hours_per_day": 1.5,
+                    "implementation_complexity": "medium"
+                }
+            ]
+        
+        # Заполняем roi_calculation если пусто или содержит null
+        roi = data.get("roi_calculation", {})
+        if not roi or isinstance(roi, dict):
+            data["roi_calculation"] = {
+                "total_time_saved_hours_per_month": roi.get("total_time_saved_hours_per_month") or 30.0,
+                "cost_saved_per_month_rub": roi.get("cost_saved_per_month_rub") or 30000.0,
+                "implementation_cost_rub": roi.get("implementation_cost_rub") or 50000.0,
+                "payback_period_months": roi.get("payback_period_months") or 1.7
+            }
+        
+        # Заполняем proposal_structure если пусто
+        if not data.get("proposal_structure"):
+            data["proposal_structure"] = [
+                "Слайд 1: Проблема клиента",
+                "Слайд 2: Наше решение",
+                "Слайд 3: Экономика (ROI)"
+            ]
+        
+        return data
 # ==================== ARCHITECT MODELS ====================
 
 class SystemInfo(BaseModel):

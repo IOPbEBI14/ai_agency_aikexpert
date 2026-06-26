@@ -627,6 +627,9 @@ class Orchestrator:
         except:
             input_data = {}
         
+        # ⭐ НОВОЕ: Логируем входные данные для отладки
+        logger.info(f"📥 Входные данные для {agent_name}: {json.dumps(input_data, ensure_ascii=False)[:500]}")
+    
         if iteration_count >= max_iter:
             logger.warning(f"⚠️ Задача {task_name} превысила лимит итераций ({max_iter})")
             self.tasks_db.update_task(task_db_id, {
