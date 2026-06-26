@@ -546,8 +546,8 @@ def extract_json_from_text(text: str) -> str:
     
     text = text.strip()
     
-    # Удаляем markdown-обёртки ```json ... ```
-    # Ищем паттерн ```json ... ``` или ``` ... ```
+    # Удаляем markdown-обёртки ```json ... ``` или ``` ... ```
+    import re
     markdown_pattern = r'```(?:json)?\s*(.*?)\s*```'
     matches = re.findall(markdown_pattern, text, re.DOTALL)
     if matches:
@@ -559,7 +559,7 @@ def extract_json_from_text(text: str) -> str:
     start_arr = text.find('[')
     
     if start_obj == -1 and start_arr == -1:
-        raise ValueError("JSON не найден в ответе")
+        raise ValueError(f"JSON не найден в ответе. Текст: {text[:200]}...")
     
     # Определяем, что идёт первым
     if start_obj == -1:
@@ -580,7 +580,7 @@ def extract_json_from_text(text: str) -> str:
     end = text.rfind(end_char)
     
     if end == -1 or end <= start:
-        raise ValueError(f"JSON не найден (нет закрывающей скобки {end_char})")
+        raise ValueError(f"JSON не найден (нет закрывающей скобки {end_char}). Текст: {text[:200]}...")
     
     result = text[start:end+1]
     
@@ -588,9 +588,9 @@ def extract_json_from_text(text: str) -> str:
     try:
         json.loads(result)
         return result
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         # Если не валидно, пробуем восстановить
-        raise ValueError(f"Найденный текст не является валидным JSON: {result[:100]}...")
+        raise ValueError(f"Найденный текст не является валидным JSON: {result[:100]}... Ошибка: {e}")
         
 def call_and_parse_llm(
     call_llm_func,

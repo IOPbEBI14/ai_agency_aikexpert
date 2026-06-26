@@ -727,7 +727,7 @@ class Orchestrator:
         """
         Обрабатывает результат architect: QA → декомпозиция на подзадачи для developer.
         """
-        from main import call_llm, log_to_agent_logs, update_last_agent_log
+        from pydantic import BaseModel
         
         project_id = self.current_project.get("Id")
         
@@ -740,7 +740,7 @@ class Orchestrator:
         logger.info(f"📋 QA результат: {qa_result}")
         
         if not qa_result:
-            # ⭐ ИСПРАВЛЕНИЕ: При неудачной QA увеличиваем итерацию и возвращаем в pending
+            # При неудачной QA увеличиваем итерацию и возвращаем в pending
             iteration_count = task.get("iteration_count", 0) or 0
             max_iter = task.get("max_iterations", 3) or 3
             
@@ -761,12 +761,6 @@ class Orchestrator:
                 })
                 return False
         
-        # Декомпозиция на подзадачи
-        logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")        
-        # Декомпозиция на подзадачи
-        logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")  # ⭐ ДОБАВИТЬ
-        from pydantic import BaseModel
-
         # ⭐ УНИВЕРСАЛЬНОЕ ПРЕОБРАЗОВАНИЕ В СТРОКУ
         if isinstance(agent_response, BaseModel):
             agent_response_str = agent_response.model_dump_json(indent=2)
@@ -776,6 +770,10 @@ class Orchestrator:
             agent_response_str = agent_response
         else:
             agent_response_str = str(agent_response)
+        
+        # Декомпозиция на подзадачи
+        logger.info(f"✅ Architect прошёл QA. Начинаю декомпозицию...")
+        
         decompose_prompt = f"""
     Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
 
@@ -807,51 +805,63 @@ class Orchestrator:
     """
         
         try:
-            logger.info(f"🤖 Вызов PM для декомпозиции...")  # ⭐ ДОБАВИТЬ
+            logger.info(f"🤖 Вызов PM для декомпозиции...")
             
-            pm_response, pm_tokens = call_llm("PM", pm_prompt, decompose_prompt)
+            # ⭐ ИСПОЛЬЗУЕМ PYDANTIC-ВАЛИДАЦИЮ ВМЕСТО СЫРОГО json.loads
+            pm_decision, pm_tokens = self.call_agent_with_validation(
+                "PM", pm_prompt, decompose_prompt, "pm_decomposition", max_retries=3
+            )
+            
+            # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            pm_decision = json.loads(pm_response)
-            subtasks = pm_decision.get("subtasks", [])
+            # Извлекаем подзадачи из Pydantic-модели
+            subtasks = pm_decision.subtasks if hasattr(pm_decision, 'subtasks') else pm_decision.get('subtasks', [])
             
-            logger.info(f"📦 PM вернул {len(subtasks)} подзадач")  # ⭐ ДОБАВИТЬ
+            logger.info(f"📦 PM вернул {len(subtasks)} подзадач")
             
             if not subtasks:
-                logger.error(f"❌ PM не вернул подзадачи")  # ⭐ ДОБАВИТЬ
+                logger.error(f"❌ PM не вернул подзадачи")
                 self.tasks_db.update_task(task_db_id, {"status": "failed"})
                 return False
             
             logger.info(f"✅ PM декомпозировал на {len(subtasks)} подзадач")
             
             for subtask in subtasks:
+                # Подзадача может быть dict или Pydantic-модель
+                if hasattr(subtask, 'model_dump'):
+                    subtask_dict = subtask.model_dump()
+                else:
+                    subtask_dict = subtask
+                
                 subtask_data = {
-                    "task_id": subtask.get("subtask_id"),
+                    "task_id": subtask_dict.get("subtask_id"),
                     "project_id": project_id,
                     "agent_name": "developer",
-                    "task_description": subtask.get("description"),
+                    "task_description": subtask_dict.get("description"),
                     "input_data": json.dumps({
-                        "context": subtask.get("context", ""),
+                        "context": subtask_dict.get("context", ""),
                         "architecture_summary": agent_response_str[:2000]
                     }, ensure_ascii=False),
                     "status": "pending",
-                    "depends_on": json.dumps(subtask.get("depends_on", []), ensure_ascii=False),
+                    "depends_on": json.dumps(subtask_dict.get("depends_on", []), ensure_ascii=False),
                     "iteration_count": 0,
                     "max_iterations": 3,
                     "qa_approved": "pending",
                     "created_at": datetime.now().isoformat()
                 }
                 self.tasks_db.create_task(subtask_data)
-                logger.info(f"  → Создана подзадача: {subtask.get('subtask_id')}")  # ⭐ ДОБАВИТЬ
+                logger.info(f"  → Создана подзадача: {subtask_dict.get('subtask_id')}")
             
-            # ⭐ ВАЖНО: Помечаем родительскую задачу как completed
+            # Помечаем родительскую задачу как completed
             if task_db_id:
-                logger.info(f"✅ Помечаю задачу {task_name} как completed")  # ⭐ ДОБАВИТЬ
+                logger.info(f"✅ Помечаю задачу {task_name} как completed")
+                subtask_ids = [s.get('subtask_id') if hasattr(s, 'get') else getattr(s, 'subtask_id', '') for s in subtasks]
                 self.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Декомпозирована на {len(subtasks)} подзадач: {', '.join([s.get('subtask_id') for s in subtasks])}"
+                    "qa_feedback": f"Декомпозирована на {len(subtasks)} подзадач: {', '.join(subtask_ids)}"
                 })
                 logger.info(f"✅ Родительская задача {task_name} переведена в статус completed")
             
@@ -860,17 +870,16 @@ class Orchestrator:
                 agent_name="PM",
                 status="completed",
                 task_description=f"Декомпозиция задачи {task_name} на {len(subtasks)} подзадач для developer",
-                full_response=json.dumps(pm_decision, ensure_ascii=False),
+                full_response=pm_decision.model_dump_json(indent=2) if hasattr(pm_decision, 'model_dump_json') else json.dumps(pm_decision, ensure_ascii=False),
                 tokens_used=pm_tokens
             )
             
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка декомпозиции: {e}", exc_info=True)  # ⭐ ДОБАВИТЬ exc_info
+            logger.error(f"❌ Ошибка декомпозиции: {e}", exc_info=True)
             self.tasks_db.update_task(task_db_id, {"status": "failed"})
-            return False
-        
+            return False        
     # ==================== QA GATE ====================
     
     def _qa_response_to_result(self, qa_response: QAResponse) -> Dict[str, Any]:
@@ -1284,8 +1293,6 @@ class Orchestrator:
         """
         Вызывает PM для разрешения тупика с Pydantic-валидацией.
         """
-        #from main import load_prompt
-        
         project_id = self.current_project.get("Id")
         
         tasks_summary = [{
@@ -1302,32 +1309,45 @@ class Orchestrator:
         schema_prompt = self.build_prompt_with_schema(pm_prompt_text, "pm_deadlock")
         
         user_task = f"""
-ПРОЕКТ В ТУПИКЕ! Есть задачи в статусе pending, но ни одна не готова к выполнению.
+    ПРОЕКТ В ТУПИКЕ! Есть задачи в статусе pending, но ни одна не готова к выполнению.
 
-ВСЕ ЗАДАЧИ ПРОЕКТА:
-{json.dumps(tasks_summary, ensure_ascii=False, indent=2)}
+    ВСЕ ЗАДАЧИ ПРОЕКТА:
+    {json.dumps(tasks_summary, ensure_ascii=False, indent=2)}
 
-ЗАДАЧИ В PENDING:
-{json.dumps([{'task_id': t.get('task_id'), 'agent': t.get('agent_name'), 'depends_on': t.get('depends_on')} for t in pending_tasks], ensure_ascii=False, indent=2)}
+    ЗАДАЧИ В PENDING:
+    {json.dumps([{'task_id': t.get('task_id'), 'agent': t.get('agent_name'), 'depends_on': t.get('depends_on')} for t in pending_tasks], ensure_ascii=False, indent=2)}
 
-ПРЕДЛОЖИ решение согласно схеме выше.
-"""
+    ПРЕДЛОЖИ решение согласно схеме выше.
+
+    ВАЖНО:
+    - Верни ТОЛЬКО валидный JSON
+    - Если не можешь разрешить тупик, установи solution="stop_project"
+    """
         
         try:
             # Вызываем PM с валидацией
             pm_deadlock, pm_tokens = self.call_agent_with_validation(
-                "PM", schema_prompt, user_task, "pm_deadlock"
+                "PM", schema_prompt, user_task, "pm_deadlock", max_retries=3
             )
             
             # Обновляем бюджет
             self.current_project["tokens_used"] = (self.current_project.get("tokens_used", 0) or 0) + pm_tokens
             self.projects_db.update_project(project_id, {"tokens_used": self.current_project["tokens_used"]})
             
-            logger.info(f" PM предложил решение: {pm_deadlock.solution}. Комментарий: {pm_deadlock.comment}")
+            logger.info(f"💡 PM предложил решение: {pm_deadlock.solution}. Комментарий: {pm_deadlock.comment}")
             
-            for action in pm_deadlock.actions:
-                action_type = action.get("action")
-                task_id = action.get("task_id")
+            # Извлекаем действия из Pydantic-модели
+            actions = pm_deadlock.actions if hasattr(pm_deadlock, 'actions') else pm_deadlock.get('actions', [])
+            
+            for action in actions:
+                # Action может быть dict или Pydantic-модель
+                if hasattr(action, 'model_dump'):
+                    action_dict = action.model_dump()
+                else:
+                    action_dict = action
+                
+                action_type = action_dict.get("action")
+                task_id = action_dict.get("task_id")
                 
                 task = next((t for t in tasks if t.get("task_id") == task_id), None)
                 if not task:
@@ -1337,10 +1357,10 @@ class Orchestrator:
                 
                 if action_type == "update_task":
                     update_data = {}
-                    if "new_status" in action:
-                        update_data["status"] = action["new_status"]
-                    if "new_depends_on" in action:
-                        update_data["depends_on"] = json.dumps(action["new_depends_on"], ensure_ascii=False)
+                    if "new_status" in action_dict:
+                        update_data["status"] = action_dict["new_status"]
+                    if "new_depends_on" in action_dict:
+                        update_data["depends_on"] = json.dumps(action_dict["new_depends_on"], ensure_ascii=False)
                     if update_data:
                         self.tasks_db.update_task(task_db_id, update_data)
                 
@@ -1350,9 +1370,9 @@ class Orchestrator:
             return pm_deadlock.solution != "stop_project"
             
         except Exception as e:
-            logger.error(f" Ошибка разрешения тупика: {e}")
+            logger.error(f"❌ Ошибка разрешения тупика: {e}", exc_info=True)
             return False
-    
+        
     def _handle_lead_hunter_with_tools(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         """
         Обрабатывает результат Lead Hunter с использованием реальных инструментов поиска.
