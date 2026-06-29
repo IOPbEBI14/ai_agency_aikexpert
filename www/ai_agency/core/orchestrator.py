@@ -328,9 +328,9 @@ class Orchestrator:
         Особенно важно для QA-агента, который должен видеть результаты предыдущих шагов.
         """
         # Базовые input_data из задачи
-        input_data = task.get("input_data", "{}")
+        input_data_raw = task.get("input_data", "{}")
         try:
-            input_data = json.loads(input_data) if isinstance(input_data, str) else input_data
+            input_data = json.loads(input_data_raw) if isinstance(input_data_raw, str) else input_data_raw
         except:
             input_data = {}
         
@@ -343,9 +343,13 @@ class Orchestrator:
         
         # ⭐ НОВОЕ: ВСЕГДА добавляем контекст проекта, даже если нет зависимостей
         if self.current_project:
-            input_data["project_goal"] = self.current_project.get("goal", "")
-            input_data["client_name"] = self.current_project.get("client_name", "")
-            input_data["project_name"] = self.current_project.get("project_name", "")
+            # Не перезаписываем существующие поля, только добавляем недостающие
+            if "project_goal" not in input_data:
+                input_data["project_goal"] = self.current_project.get("goal", "")
+            if "client_name" not in input_data:
+                input_data["client_name"] = self.current_project.get("client_name", "")
+            if "project_name" not in input_data:
+                input_data["project_name"] = self.current_project.get("project_name", "")
             
             # Добавляем контекст от предыдущих агентов (если есть)
             if "leads_context" in self.current_project:
@@ -392,7 +396,8 @@ class Orchestrator:
             if task.get("agent_name") == "qa":
                 for dep_task_id, dep_data in dependency_data.items():
                     # Добавляем output каждой зависимой задачи в корень input_data
-                    input_data[f"output_from_{dep_task.get('agent_name', 'unknown')}"] = dep_data.get("output")
+                    agent_name = dep_data.get("agent_name", "unknown")
+                    input_data[f"output_from_{agent_name}"] = dep_data.get("output")
         
         return input_data
     # ==================== ГЛАВНЫЙ ЦИКЛ ====================
@@ -640,6 +645,14 @@ class Orchestrator:
                 task_data["iteration_count"] = 0
                 task_data["qa_approved"] = "pending"
                 task_data["created_at"] = datetime.now().isoformat()
+                
+                # ⭐ НОВОЕ: Формируем input_data на основе контекста проекта
+                if not task_data.get("input_data") or task_data.get("input_data") == "{}":
+                    task_data["input_data"] = json.dumps({
+                        "project_goal": self.current_project.get("goal", ""),
+                        "client_name": self.current_project.get("client_name", ""),
+                        "project_name": self.current_project.get("project_name", "")
+                    }, ensure_ascii=False)
                 
                 # Убеждаемся, что task_id есть
                 if "task_id" not in task_data:
