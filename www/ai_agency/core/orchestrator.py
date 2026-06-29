@@ -699,12 +699,6 @@ class Orchestrator:
         max_iter = task.get("max_iterations", Config.MAX_TASK_ITERATIONS) or Config.MAX_TASK_ITERATIONS
         qa_feedback = task.get("qa_feedback", "")
         
-        # ⭐ НОВОЕ: Обогащаем input_data данными из зависимых задач
-        if all_tasks is None:
-            # Если all_tasks не передан — получаем из БД
-            project_id = self.current_project.get("Id")
-            all_tasks = self.tasks_db.get_tasks_by_project(project_id) if project_id else []
-
         # ⭐ НОВОЕ: Обогащаем input_data данными из зависимых задач и контекстом проекта
         if all_tasks is None:
             # Если all_tasks не передан — получаем из БД
@@ -1213,7 +1207,7 @@ class Orchestrator:
         """
         Обёртка для call_llm, которая возвращает (content, tokens).
         """
-        from core.utils import call_llm
+        #from core.utils import call_llm
         return call_llm(agent_name, system_prompt, user_task)
 
 
