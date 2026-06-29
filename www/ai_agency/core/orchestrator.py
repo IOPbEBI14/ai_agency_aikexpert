@@ -326,13 +326,6 @@ class Orchestrator:
         """
         Собирает enriched input_data для задачи, подтягивая output_data из зависимых задач.
         Особенно важно для QA-агента, который должен видеть результаты предыдущих шагов.
-        
-        Args:
-            task: Текущая задача
-            all_tasks: Список всех задач проекта
-        
-        Returns:
-            dict с обогащёнными входными данными
         """
         # Базовые input_data из задачи
         input_data = task.get("input_data", "{}")
@@ -348,7 +341,21 @@ class Orchestrator:
         except:
             depends_on = []
         
-        # Если нет зависимостей — возвращаем базовые input_data
+        # ⭐ НОВОЕ: ВСЕГДА добавляем контекст проекта, даже если нет зависимостей
+        if self.current_project:
+            input_data["project_goal"] = self.current_project.get("goal", "")
+            input_data["client_name"] = self.current_project.get("client_name", "")
+            input_data["project_name"] = self.current_project.get("project_name", "")
+            
+            # Добавляем контекст от предыдущих агентов (если есть)
+            if "leads_context" in self.current_project:
+                input_data["leads_context"] = self.current_project["leads_context"]
+            if "sales_context" in self.current_project:
+                input_data["sales_context"] = self.current_project["sales_context"]
+            if "analyst_context" in self.current_project:
+                input_data["analyst_context"] = self.current_project["analyst_context"]
+        
+        # Если нет зависимостей — возвращаем базовые input_data с контекстом проекта
         if not depends_on:
             return input_data
         
@@ -387,20 +394,7 @@ class Orchestrator:
                     # Добавляем output каждой зависимой задачи в корень input_data
                     input_data[f"output_from_{dep_task.get('agent_name', 'unknown')}"] = dep_data.get("output")
         
-        # Добавляем контекст проекта
-        if self.current_project:
-            input_data["project_goal"] = self.current_project.get("goal", "")
-            input_data["client_name"] = self.current_project.get("client_name", "")
-            
-            # Добавляем контекст от предыдущих агентов (если есть)
-            if "leads_context" in self.current_project:
-                input_data["leads_context"] = self.current_project["leads_context"]
-            if "sales_context" in self.current_project:
-                input_data["sales_context"] = self.current_project["sales_context"]
-            if "analyst_context" in self.current_project:
-                input_data["analyst_context"] = self.current_project["analyst_context"]
-        
-        return input_data        
+        return input_data
     # ==================== ГЛАВНЫЙ ЦИКЛ ====================
     
     def run(self):
@@ -711,14 +705,23 @@ class Orchestrator:
             project_id = self.current_project.get("Id")
             all_tasks = self.tasks_db.get_tasks_by_project(project_id) if project_id else []
 
+        # ⭐ НОВОЕ: Обогащаем input_data данными из зависимых задач и контекстом проекта
+        if all_tasks is None:
+            # Если all_tasks не передан — получаем из БД
+            project_id = self.current_project.get("Id")
+            all_tasks = self.tasks_db.get_tasks_by_project(project_id) if project_id else []
+
         input_data = self._build_enriched_input_data(task, all_tasks)
 
         # Логируем обогащённые input_data для отладки
-        logger.info(f"📥 Обогащённые input_data для {task.get('task_id')} ({task.get('agent_name')}):")
+        logger.info(f" Обогащённые input_data для {task.get('task_id')} ({task.get('agent_name')}):")
         logger.info(f"   Зависимости: {task.get('depends_on')}")
+        if "project_goal" in input_data:
+            logger.info(f"   Цель проекта: {input_data['project_goal'][:100]}")
+        if "client_name" in input_data:
+            logger.info(f"   Клиент: {input_data['client_name']}")
         if "dependency_outputs" in input_data:
-            logger.info(f"   Найдено output_data из {len(input_data['dependency_outputs'])} зависимых задач")        
-        # ⭐ НОВОЕ: Логируем входные данные для отладки
+            logger.info(f"   Найдено output_data из {len(input_data['dependency_outputs'])} зависимых задач")        # ⭐ НОВОЕ: Логируем входные данные для отладки
         logger.info(f"📥 Входные данные для {agent_name}: {json.dumps(input_data, ensure_ascii=False)[:500]}")
     
         if iteration_count >= max_iter:
