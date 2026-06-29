@@ -321,7 +321,86 @@ class Orchestrator:
             if all(dep_id in completed_ids for dep_id in depends_on):
                 ready.append(task)
         return ready
+
+    def _build_enriched_input_data(self, task: Dict[str, Any], all_tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Собирает enriched input_data для задачи, подтягивая output_data из зависимых задач.
+        Особенно важно для QA-агента, который должен видеть результаты предыдущих шагов.
         
+        Args:
+            task: Текущая задача
+            all_tasks: Список всех задач проекта
+        
+        Returns:
+            dict с обогащёнными входными данными
+        """
+        # Базовые input_data из задачи
+        input_data = task.get("input_data", "{}")
+        try:
+            input_data = json.loads(input_data) if isinstance(input_data, str) else input_data
+        except:
+            input_data = {}
+        
+        # Получаем зависимости
+        depends_on = task.get("depends_on", "[]")
+        try:
+            depends_on = json.loads(depends_on) if isinstance(depends_on, str) else depends_on
+        except:
+            depends_on = []
+        
+        # Если нет зависимостей — возвращаем базовые input_data
+        if not depends_on:
+            return input_data
+        
+        # Собираем output_data из зависимых задач
+        dependency_data = {}
+        for dep_task_id in depends_on:
+            # Ищем задачу по task_id
+            dep_task = next((t for t in all_tasks if t.get("task_id") == dep_task_id), None)
+            
+            if dep_task and dep_task.get("output_data"):
+                output_data = dep_task.get("output_data", "")
+                
+                # Пытаемся распарсить output_data как JSON
+                try:
+                    parsed_output = json.loads(output_data) if isinstance(output_data, str) else output_data
+                    dependency_data[dep_task_id] = {
+                        "agent_name": dep_task.get("agent_name"),
+                        "task_description": dep_task.get("task_description"),
+                        "output": parsed_output
+                    }
+                except json.JSONDecodeError:
+                    # Если не JSON — сохраняем как строку
+                    dependency_data[dep_task_id] = {
+                        "agent_name": dep_task.get("agent_name"),
+                        "task_description": dep_task.get("task_description"),
+                        "output": output_data
+                    }
+        
+        # Добавляем данные зависимостей в input_data
+        if dependency_data:
+            input_data["dependency_outputs"] = dependency_data
+            
+            # Для QA-агента особенно важно: добавляем все output_data в корень
+            if task.get("agent_name") == "qa":
+                for dep_task_id, dep_data in dependency_data.items():
+                    # Добавляем output каждой зависимой задачи в корень input_data
+                    input_data[f"output_from_{dep_task.get('agent_name', 'unknown')}"] = dep_data.get("output")
+        
+        # Добавляем контекст проекта
+        if self.current_project:
+            input_data["project_goal"] = self.current_project.get("goal", "")
+            input_data["client_name"] = self.current_project.get("client_name", "")
+            
+            # Добавляем контекст от предыдущих агентов (если есть)
+            if "leads_context" in self.current_project:
+                input_data["leads_context"] = self.current_project["leads_context"]
+            if "sales_context" in self.current_project:
+                input_data["sales_context"] = self.current_project["sales_context"]
+            if "analyst_context" in self.current_project:
+                input_data["analyst_context"] = self.current_project["analyst_context"]
+        
+        return input_data        
     # ==================== ГЛАВНЫЙ ЦИКЛ ====================
     
     def run(self):
@@ -450,8 +529,8 @@ class Orchestrator:
                     break
                 continue
             
-            # Выполняем первую готовую задачу
-            self.execute_task(ready_tasks[0], pm_prompt)
+            # Выполняем первую готовую задачу, передавая все задачи для обогащения input_data
+            self.execute_task(ready_tasks[0], pm_prompt, all_tasks=tasks)
         
         self.agency_running = False
         logger.info(f"📊 ИТОГ: статус={self.current_project.get('status')}, токенов={self.current_project.get('tokens_used')}")
@@ -606,11 +685,15 @@ class Orchestrator:
         
     # ==================== ВЫПОЛНЕНИЕ ЗАДАЧИ ====================
     
-    def execute_task(self, task: Dict[str, Any], pm_prompt: str) -> bool:
+    def execute_task(self, task: Dict[str, Any], pm_prompt: str, all_tasks: List[Dict[str, Any]] = None) -> bool:
         """
         Выполняет одну задачу с Pydantic-валидацией.
+        
+        Args:
+            task: Задача для выполнения
+            pm_prompt: Промпт PM
+            all_tasks: Список всех задач проекта (для обогащения input_data)
         """
-        #from main import load_prompt, build_agent_task, log_to_agent_logs, update_last_agent_log
         
         project_id = self.current_project.get("Id")
         task_db_id = task.get("Id")
@@ -622,11 +705,19 @@ class Orchestrator:
         max_iter = task.get("max_iterations", Config.MAX_TASK_ITERATIONS) or Config.MAX_TASK_ITERATIONS
         qa_feedback = task.get("qa_feedback", "")
         
-        try:
-            input_data = json.loads(input_data) if isinstance(input_data, str) else input_data
-        except:
-            input_data = {}
-        
+        # ⭐ НОВОЕ: Обогащаем input_data данными из зависимых задач
+        if all_tasks is None:
+            # Если all_tasks не передан — получаем из БД
+            project_id = self.current_project.get("Id")
+            all_tasks = self.tasks_db.get_tasks_by_project(project_id) if project_id else []
+
+        input_data = self._build_enriched_input_data(task, all_tasks)
+
+        # Логируем обогащённые input_data для отладки
+        logger.info(f"📥 Обогащённые input_data для {task.get('task_id')} ({task.get('agent_name')}):")
+        logger.info(f"   Зависимости: {task.get('depends_on')}")
+        if "dependency_outputs" in input_data:
+            logger.info(f"   Найдено output_data из {len(input_data['dependency_outputs'])} зависимых задач")        
         # ⭐ НОВОЕ: Логируем входные данные для отладки
         logger.info(f"📥 Входные данные для {agent_name}: {json.dumps(input_data, ensure_ascii=False)[:500]}")
     
@@ -1623,3 +1714,5 @@ class Orchestrator:
         except Exception as e:
             logger.error(f" Ошибка обработки Analyst: {e}", exc_info=True)
             return False
+            
+            
