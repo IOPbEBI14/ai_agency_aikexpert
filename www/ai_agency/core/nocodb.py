@@ -95,26 +95,27 @@ class ProjectsClient:
 
     def _build_where_url(self, field: str, value: str, limit: int = 1, sort_field: str = None) -> str:
         """Строит URL с фильтрацией для NocoDB API v3.
-           Синтаксис: ?where=(field,eq,value)&limit=N&sort=[{"field":"...","direction":"..."}]
+        Синтаксис: ?where=(field,eq,value)&limit=N&sort=[{"field":"...","direction":"..."}]
         """
-        # Старый синтаксис where через запятые в скобках
         where_value = f"({field},eq,{value})"
         url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
-    
+
         if sort_field:
-            # API v3 требует JSON-массив для sort
-            # [{"field": "updateTime", "direction": "desc"}]
             sort_json = json.dumps([{"field": sort_field, "direction": "desc"}])
             url += f"&sort={quote(sort_json)}"
-    
-            return url
+
+        return url  # Bug fix: was inside if-block → returned None when sort_field=None
 
     def find_project_by_status(self, status: str) -> Optional[Dict[str, Any]]:
-        """Ищет проект по статусу."""
+        """Ищет проект по статусу, сортируя по дате обновления (новейший первый)."""
         try:
-            where_value = f"({field},eq,{status})" if False else f"(status,eq,{status})"
-            url = f"{self.projects_url}?where={quote(where_value)}&limit=1&sort={quote(json.dumps([{'field': 'UpdatedAt', 'direction': 'desc'}]))}"
-            logger.info(f"?? Поиск проекта: {url}")
+            url = self._build_where_url(
+                field="status",
+                value=status,
+                limit=1,
+                sort_field="updated_at",
+            )
+            logger.info(f"🔍 Поиск проекта со статусом '{status}': {url}")
             
             response = requests.get(url, headers=self.headers, timeout=120)
             
@@ -271,12 +272,12 @@ class ProjectsClient:
     def get_recent_records_by_project(self, project_id: int, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Получает последние записи для конкретного проекта.
-        Фильтрует по ProjectId.
+        Фильтрует по project_id.
         """
         try:
-            # Фильтрация по ProjectId
-            where_value = f"(ProjectId,eq,{project_id})"
-            url = f"{self.records_url}?where={quote(where_value)}&limit={limit}"
+            where_value = f"(project_id,eq,{project_id})"
+            # Bug fix: was self.records_url (AttributeError) — ProjectsClient has projects_url
+            url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
             
             response = requests.get(url, headers=self.headers, timeout=120)
             response.raise_for_status()

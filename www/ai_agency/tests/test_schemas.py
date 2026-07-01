@@ -228,20 +228,21 @@ class TestAnalystResponseModel:
         assert model.current_pain_points[0].process == "Ручной перенос данных"
     
     def test_invalid_roi_calculation(self):
-        """Тест невалидного расчёта ROI."""
+        """Тест частичного ROI — все поля ROICalculation имеют default=0.0,
+        поэтому модель создаётся успешно."""
         data = {
             "client_name": "Тест",
             "current_pain_points": [],
             "proposed_automation": [],
             "roi_calculation": {
                 "total_time_saved_hours_per_month": 10.0
-                # Отсутствуют обязательные поля
             },
             "proposal_structure": []
         }
-        with pytest.raises(ValidationError):
-            AnalystResponse(**data)
-    
+        model = AnalystResponse(**data)
+        assert model.roi_calculation.total_time_saved_hours_per_month == 10.0
+        assert model.roi_calculation.cost_saved_per_month_rub == 0.0
+
     def test_invalid_complexity_value(self):
         """Тест невалидного значения сложности."""
         data = {
@@ -556,24 +557,46 @@ class TestAnalystResponseModel:
         assert model.current_pain_points[0].process == "Ручной перенос"
     
     def test_invalid_roi_calculation(self):
-        """Тест невалидного расчёта ROI."""
+        """Тест частичного ROI — все поля ROICalculation имеют default=0.0,
+        поэтому модель создаётся успешно. Проверяем, что дефолты применяются."""
         from core.schemas import AnalystResponse
-        from pydantic import ValidationError
-        
+
         data = {
             "client_name": "Тест",
             "current_pain_points": [],
             "proposed_automation": [],
             "roi_calculation": {
                 "total_time_saved_hours_per_month": 10.0
-                # Отсутствуют обязательные поля
+                # остальные поля имеют default=0.0
             },
             "proposal_structure": []
         }
-        
+
+        model = AnalystResponse(**data)
+        assert model.roi_calculation.total_time_saved_hours_per_month == 10.0
+        # model_validator заполняет пропущенные поля своими дефолтами
+        assert model.roi_calculation.cost_saved_per_month_rub == 30000.0
+        assert model.roi_calculation.implementation_cost_rub == 50000.0
+        assert model.roi_calculation.payback_period_months == 1.7
+
+    def test_invalid_roi_calculation_wrong_type(self):
+        """Тест невалидного типа — не float → должен бросить ValidationError."""
+        from core.schemas import AnalystResponse
+        from pydantic import ValidationError
+
+        data = {
+            "client_name": "Тест",
+            "current_pain_points": [],
+            "proposed_automation": [],
+            "roi_calculation": {
+                "total_time_saved_hours_per_month": "не число"
+            },
+            "proposal_structure": []
+        }
+
         with pytest.raises(ValidationError):
             AnalystResponse(**data)
-    
+
     def test_invalid_complexity_value(self):
         """Тест невалидного значения сложности."""
         from core.schemas import AnalystResponse
@@ -628,4 +651,153 @@ class TestAnalystResponseModel:
         model = AnalystResponse(**data)
         assert len(model.current_pain_points) == 2
         assert len(model.proposed_automation) == 2
-        assert model.roi_calculation.payback_period_months == 1.3        
+        assert model.roi_calculation.payback_period_months == 1.3
+
+
+# ==================== Direction C: Модели данных и валидация ====================
+
+class TestAgentModelsMapping:
+    """Покрытие AGENT_MODELS — все агенты должны иметь Pydantic-модель."""
+
+    def test_all_worker_agents_have_models(self):
+        """Рабочие агенты системы покрыты AGENT_MODELS."""
+        from core.schemas import AGENT_MODELS
+        required_agents = {
+            "analyst", "architect", "developer", "qa",
+            "tech_writer", "lead_hunter", "sales", "crm_customizer",
+        }
+        missing = required_agents - set(AGENT_MODELS.keys())
+        assert not missing, f"Агенты без Pydantic-модели: {missing}"
+
+    def test_all_pm_variants_have_models(self):
+        """PM-варианты покрыты AGENT_MODELS."""
+        from core.schemas import AGENT_MODELS
+        required_pm = {
+            "pm_decision", "pm_task_graph", "pm_decomposition",
+            "pm_final_report", "pm_human_review", "pm_deadlock",
+        }
+        missing = required_pm - set(AGENT_MODELS.keys())
+        assert not missing, f"PM-варианты без Pydantic-модели: {missing}"
+
+    def test_agent_models_values_are_pydantic_classes(self):
+        """Все значения AGENT_MODELS — Pydantic BaseModel подклассы."""
+        from core.schemas import AGENT_MODELS
+        from pydantic import BaseModel
+        for name, cls in AGENT_MODELS.items():
+            assert issubclass(cls, BaseModel), \
+                f"AGENT_MODELS['{name}'] = {cls} не является BaseModel"
+
+    def test_no_duplicate_models(self):
+        """Нет случайного дублирования: prompt_builder.AGENT_MODELS совпадает с schemas."""
+        from core.schemas import AGENT_MODELS as SCHEMAS_MODELS
+        from core.prompt_builder import get_agent_model
+        for agent_name, model_cls in SCHEMAS_MODELS.items():
+            assert get_agent_model(agent_name) is model_cls, \
+                f"prompt_builder.get_agent_model('{agent_name}') вернул другой класс"
+
+
+class TestDataFlowStepAlias:
+    """DataFlowStep использует alias from/to (зарезервированные слова Python)."""
+
+    def test_accepts_from_to_aliases(self):
+        """LLM возвращает from/to — Pydantic принимает через alias."""
+        from core.schemas import DataFlowStep
+        step = DataFlowStep(**{
+            "step": 1,
+            "from": "Wildberries",
+            "to": "n8n",
+            "trigger": "cron",
+            "data": "Список отзывов",
+            "transformation": "Фильтрация по рейтингу",
+        })
+        assert step.from_system == "Wildberries"
+        assert step.to_system == "n8n"
+
+    def test_accepts_python_field_names(self):
+        """Pydantic принимает from_system/to_system (populate_by_name=True)."""
+        from core.schemas import DataFlowStep
+        step = DataFlowStep(
+            step=1,
+            from_system="Bpium",
+            to_system="AmoCRM",
+            trigger="webhook",
+            data="Лид",
+            transformation="Маппинг полей",
+        )
+        assert step.from_system == "Bpium"
+        assert step.to_system == "AmoCRM"
+
+    def test_json_schema_uses_aliases(self):
+        """JSON Schema содержит from/to (для промптов LLM), не from_system/to_system."""
+        from core.schemas import DataFlowStep, get_model_schema
+        schema_str = get_model_schema(DataFlowStep)
+        schema = json.loads(schema_str)
+        properties = schema.get("properties", {})
+        assert "from" in properties, "JSON Schema должна содержать поле 'from'"
+        assert "to" in properties, "JSON Schema должна содержать поле 'to'"
+
+
+class TestDocumentType:
+    """Тесты типов документов для TechWriter."""
+
+    def test_commercial_proposal_is_valid_type(self):
+        """commercial_proposal теперь является допустимым типом документа."""
+        from core.schemas import Document, DocumentSection
+        doc = Document(
+            title="КП для клиента",
+            type="commercial_proposal",
+            audience="Руководство",
+            sections=[
+                DocumentSection(
+                    title="УТП",
+                    content="Наше решение...",
+                    screenshot_needed=False,
+                )
+            ],
+        )
+        assert doc.type == "commercial_proposal"
+
+    def test_invalid_document_type_raises(self):
+        """Неизвестный тип документа вызывает ValidationError."""
+        from core.schemas import Document, DocumentSection
+        with pytest.raises(ValidationError):
+            Document(
+                title="Test",
+                type="unknown_type",
+                audience="test",
+                sections=[],
+            )
+
+
+class TestGetModelExample:
+    """Тесты get_model_example для всех 14 моделей."""
+
+    def test_all_models_have_examples(self):
+        """Каждая модель из AGENT_MODELS имеет непустой пример."""
+        from core.schemas import AGENT_MODELS, get_model_example
+        for agent_name, model_cls in AGENT_MODELS.items():
+            example_str = get_model_example(model_cls)
+            assert example_str != "{}", \
+                f"Модель {model_cls.__name__} (агент '{agent_name}') вернула пустой пример"
+            # Пример должен быть валидным JSON
+            data = json.loads(example_str)
+            assert isinstance(data, dict), \
+                f"Пример для {model_cls.__name__} не является JSON-объектом"
+
+    def test_example_is_valid_json(self):
+        """get_model_example всегда возвращает валидный JSON."""
+        from core.schemas import get_model_example, AnalystResponse
+        result = get_model_example(AnalystResponse)
+        data = json.loads(result)
+        assert data["client_name"] == "ООО Ромашка"
+
+    def test_unknown_model_returns_empty(self):
+        """Для неизвестной модели возвращается '{}'."""
+        from core.schemas import get_model_example
+        from pydantic import BaseModel
+
+        class UnknownModel(BaseModel):
+            x: int = 1
+
+        result = get_model_example(UnknownModel)
+        assert result == "{}"

@@ -111,17 +111,20 @@ class TestOrchestratorRun:
 class TestOrchestratorExecuteTask:
     """Тесты метода execute_task()."""
     
-    @patch('core.utils.load_prompt')
-    @patch('core.utils.call_llm')
-    @patch('core.utils.log_to_agent_logs')
-    @patch('core.utils.update_last_agent_log')
+    @patch('core.task_executor.load_prompt')
+    @patch('core.task_executor.call_llm')
+    @patch('core.task_executor.log_to_agent_logs')
+    @patch('core.task_executor.update_last_agent_log')
     def test_execute_analyst_task(self, mock_update_log, mock_log, mock_call_llm, mock_load_prompt,
                                   mock_nocodb_clients, sample_project_data, sample_task_data):
-        """Тест выполнения задачи аналитика."""
+        """Тест выполнения задачи аналитика.
+        
+        Патчим core.task_executor.call_llm (а не core.utils.call_llm), потому что
+        task_executor.py импортирует call_llm напрямую через 'from .utils import call_llm'.
+        """
         orchestrator = Orchestrator()
         orchestrator.current_project = sample_project_data
-        
-        # Mock возвращает валидный JSON, соответствующий AnalystResponse
+
         valid_analyst_json = '''
         {
             "client_name": "Тест",
@@ -150,14 +153,15 @@ class TestOrchestratorExecuteTask:
             "notes": "Тест"
         }
         '''
-        
+
         mock_call_llm.return_value = (valid_analyst_json, 100)
         mock_load_prompt.return_value = "Промпт аналитика"
-        
-        # Mock QA
+
+        # run_qa_gate не вызывается для analyst (спец-обработчик),
+        # но патчим на всякий случай
         with patch.object(orchestrator, 'run_qa_gate', return_value=True):
             result = orchestrator.execute_task(sample_task_data, "pm_prompt")
-        
+
         assert result is True
         mock_call_llm.assert_called_once()
     
@@ -185,22 +189,52 @@ class TestOrchestratorExecuteTask:
         )
 
 class TestOrchestratorQA:
-    """Тесты метода run_qa_gate()."""
-    
-    @patch('core.utils.validate_with_qa')
-    @patch('core.utils.log_to_agent_logs')
-    @patch('core.utils.update_last_agent_log')
-    def test_qa_passed(self, mock_update_log, mock_log, mock_validate_qa,
+    """Тесты метода run_qa_gate() — использует call_and_parse_llm → call_llm."""
+
+    # QAResponse JSON, имитирующий успешную проверку (tests_failed=0, нет critical-issues)
+    _QA_PASSED_JSON = '''{
+        "summary": "Проверка пройдена",
+        "tests_total": 3,
+        "tests_passed": 3,
+        "tests_failed": 0,
+        "issues": [],
+        "warnings": [],
+        "recommendations": [],
+        "test_cases": []
+    }'''
+
+    # QAResponse JSON, имитирующий провал (tests_failed=1, есть high-issue)
+    _QA_FAILED_JSON = '''{
+        "summary": "Найдены ошибки",
+        "tests_total": 3,
+        "tests_passed": 1,
+        "tests_failed": 2,
+        "issues": [
+            {
+                "severity": "high",
+                "type": "logic",
+                "description": "Найдены ошибки",
+                "location": "output",
+                "recommendation": "Исправить"
+            }
+        ],
+        "warnings": [],
+        "recommendations": [],
+        "test_cases": []
+    }'''
+
+    @patch('core.qa_gate.call_llm')
+    @patch('core.qa_gate.log_to_agent_logs')
+    @patch('core.qa_gate.update_last_agent_log')
+    def test_qa_passed(self, mock_update_log, mock_log, mock_call_llm,
                        orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
-        """Тест пройденной QA проверки."""
+        """Тест пройденной QA проверки.
+        
+        Патчим core.qa_gate.call_llm — именно там выполняется вызов LLM.
+        """
         orchestrator.current_project = sample_project_data
-        
-        mock_validate_qa.return_value = {
-            "approved": True,
-            "feedback": "Всё отлично",
-            "tokens_used": 50
-        }
-        
+        mock_call_llm.return_value = (self._QA_PASSED_JSON, 50)
+
         result = orchestrator.run_qa_gate(
             sample_task_data,
             sample_task_data["Id"],
@@ -209,29 +243,24 @@ class TestOrchestratorQA:
             '{"response": "data"}',
             "Описание задачи",
             0,
-            3
+            3,
         )
-        
+
         assert result is True
-        
+
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "completed"
         assert call_args[0][1]["qa_approved"] == "true"
-    
-    @patch('core.utils.validate_with_qa')
-    @patch('core.utils.log_to_agent_logs')
-    @patch('core.utils.update_last_agent_log')
-    def test_qa_failed(self, mock_update_log, mock_log, mock_validate_qa,
+
+    @patch('core.qa_gate.call_llm')
+    @patch('core.qa_gate.log_to_agent_logs')
+    @patch('core.qa_gate.update_last_agent_log')
+    def test_qa_failed(self, mock_update_log, mock_log, mock_call_llm,
                        orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест проваленной QA проверки."""
         orchestrator.current_project = sample_project_data
-        
-        mock_validate_qa.return_value = {
-            "approved": False,
-            "feedback": "Найдены ошибки",
-            "tokens_used": 50
-        }
-        
+        mock_call_llm.return_value = (self._QA_FAILED_JSON, 50)
+
         result = orchestrator.run_qa_gate(
             sample_task_data,
             sample_task_data["Id"],
@@ -240,33 +269,29 @@ class TestOrchestratorQA:
             '{"response": "data"}',
             "Описание задачи",
             0,
-            3
+            3,
         )
-        
+
         assert result is False
-        
+
         call_args = mock_nocodb_clients['tasks'].update_task.call_args
         assert call_args[0][1]["status"] == "pending"
         assert call_args[0][1]["qa_approved"] == "false"
-        assert call_args[0][1]["qa_feedback"] == "Найдены ошибки"
-    
-    @patch('core.utils.validate_with_qa')
-    @patch('core.utils.log_to_agent_logs')
-    @patch('core.utils.update_last_agent_log')
-    def test_qa_failed_max_iterations(self, mock_update_log, mock_log, mock_validate_qa,
+        # Feedback содержит summary + issue description
+        assert "Найдены ошибки" in call_args[0][1]["qa_feedback"]
+
+    @patch('core.qa_gate.call_llm')
+    @patch('core.qa_gate.log_to_agent_logs')
+    @patch('core.qa_gate.update_last_agent_log')
+    def test_qa_failed_max_iterations(self, mock_update_log, mock_log, mock_call_llm,
                                       orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
-        """Тест проваленной QA после максимального числа итераций."""
+        """Тест проваленной QA после максимального числа итераций → status=failed."""
         orchestrator.current_project = sample_project_data
-        
-        mock_validate_qa.return_value = {
-            "approved": False,
-            "feedback": "Ошибки",
-            "tokens_used": 50
-        }
-        
+        mock_call_llm.return_value = (self._QA_FAILED_JSON, 50)
+
         sample_task_data["iteration_count"] = 2
         sample_task_data["max_iterations"] = 3
-        
+
         result = orchestrator.run_qa_gate(
             sample_task_data,
             sample_task_data["Id"],
@@ -275,13 +300,13 @@ class TestOrchestratorQA:
             '{"response": "data"}',
             "Описание задачи",
             2,
-            3
+            3,
         )
-        
+
         assert result is False
         mock_nocodb_clients['tasks'].update_task.assert_called_with(
             sample_task_data["Id"],
-            {"status": "failed"}
+            {"status": "failed"},
         )
         
 # class TestOrchestratorHelpers:
@@ -346,9 +371,8 @@ class TestOrchestratorQA:
 class TestOrchestratorNewAgents:
     """Тесты для методов обработки новых агентов."""
     
-    @patch('core.orchestrator.update_last_agent_log')
-    @patch('core.orchestrator.log_to_agent_logs')
-    def test_handle_lead_hunter(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.agent_handlers.log_to_agent_logs')
+    def test_handle_lead_hunter(self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест обработки результата Lead Hunter."""
         from core.schemas import LeadHunterResponse, Lead
         
@@ -383,9 +407,8 @@ class TestOrchestratorNewAgents:
         assert len(orchestrator.current_project["leads_context"]) == 1
         assert orchestrator.current_project["leads_context"][0]["company_name"] == "ООО Ромашка"
     
-    @patch('core.orchestrator.update_last_agent_log')
-    @patch('core.orchestrator.log_to_agent_logs')
-    def test_handle_sales(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.agent_handlers.log_to_agent_logs')
+    def test_handle_sales(self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест обработки результата Sales."""
         from core.schemas import SalesResponse, SalesMessage
         
@@ -419,9 +442,8 @@ class TestOrchestratorNewAgents:
         assert len(orchestrator.current_project["sales_context"]) == 1
         assert len(orchestrator.current_project["sales_context"][0]["messages"]) == 1
     
-    @patch('core.orchestrator.update_last_agent_log')
-    @patch('core.orchestrator.log_to_agent_logs')
-    def test_handle_analyst(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.agent_handlers.log_to_agent_logs')
+    def test_handle_analyst(self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест обработки результата Analyst."""
         from core.schemas import AnalystResponse, PainPoint, ProposedAutomation, ROICalculation
         
@@ -465,9 +487,8 @@ class TestOrchestratorNewAgents:
         assert orchestrator.current_project["analyst_context"]["client_name"] == "ООО Тест"
         assert orchestrator.current_project["analyst_context"]["roi_calculation"]["cost_saved_per_month_rub"] == 30000.0
     
-    @patch('core.orchestrator.update_last_agent_log')
-    @patch('core.orchestrator.log_to_agent_logs')
-    def test_handle_lead_hunter_with_string(self, mock_log, mock_update_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
+    @patch('core.agent_handlers.log_to_agent_logs')
+    def test_handle_lead_hunter_with_string(self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):
         """Тест обработки Lead Hunter со строковым ответом."""
         import json
         

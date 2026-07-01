@@ -16,7 +16,7 @@ import requests
 from core.config import Config
 from core.nocodb import NocoDBClient, ProjectsClient, TasksClient
 from core.orchestrator import Orchestrator
-from core.utils import validate_with_qa, log_to_agent_logs, update_last_agent_log, load_prompt, call_llm, build_agent_task, try_fix_truncated_json
+from core.utils import log_to_agent_logs, update_last_agent_log, load_prompt, call_llm, build_agent_task, try_fix_truncated_json
 
 # ==================== ЛОГИРОВАНИЕ ====================
 logging.basicConfig(
@@ -246,34 +246,61 @@ def human_review():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/nocodb', methods=['GET', 'POST', 'PATCH', 'DELETE'], strict_slashes=False)
-@app.route('/api/nocodb/<path:path>', methods=['GET', 'POST', 'PATCH', 'DELETE'])
+# Разрешённые суффиксы пути в прокси (после базового URL таблицы agent_logs).
+# Пустая строка — корень таблицы, числа — конкретная запись.
+_PROXY_ALLOWED_PATH_RE = __import__('re').compile(r'^(\d+)?$')
+
+# Разрешённые query-параметры (остальные игнорируются)
+_PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
+
+# Разрешённые HTTP-методы (DELETE исключён намеренно)
+_PROXY_ALLOWED_METHODS = frozenset({'GET', 'POST', 'PATCH'})
+
+
+@app.route('/api/nocodb', methods=['GET', 'POST', 'PATCH'], strict_slashes=False)
+@app.route('/api/nocodb/<path:path>', methods=['GET', 'POST', 'PATCH'])
 def nocodb_proxy(path=""):
-    """Прокси для NocoDB API v3."""
+    """Read/write прокси для NocoDB API v3 (только agent_logs).
+
+    Безопасность:
+    - DELETE исключён — дашборд не может удалять записи
+    - path ограничен пустой строкой или числовым ID (блокирует ../traversal)
+    - query-параметры фильтруются по белому списку
+    """
+    # Валидация пути — разрешаем только "" или числовой ID записи
+    if not _PROXY_ALLOWED_PATH_RE.match(path):
+        logger.warning(f"🚫 Прокси: отклонён путь '{path}'")
+        return jsonify({"error": "Forbidden path"}), 403
+
+    if request.method not in _PROXY_ALLOWED_METHODS:
+        return jsonify({"error": "Method not allowed"}), 405
+
     nocodb_url = Config.get_nocodb_records_url()
     if path:
         nocodb_url = f"{nocodb_url}/{path}"
-    
-    if request.args:
-        allowed_params = ['limit', 'offset']
-        filtered_params = {k: v for k, v in request.args.items() if k in allowed_params}
-        if filtered_params:
-            query_string = '&'.join([f"{k}={v}" for k, v in filtered_params.items()])
-            nocodb_url += f"?{query_string}"
-    
+
+    # Фильтрация query-параметров по белому списку
+    filtered_params = {
+        k: v for k, v in request.args.items()
+        if k in _PROXY_ALLOWED_PARAMS
+    }
+    if filtered_params:
+        query_string = '&'.join(f"{k}={v}" for k, v in filtered_params.items())
+        nocodb_url += f"?{query_string}"
+
     headers = {"xc-token": Config.NOCODB_API_TOKEN, "Content-Type": "application/json"}
-    
+
     try:
         resp = requests.request(
             method=request.method,
             url=nocodb_url,
             headers=headers,
             json=request.get_json(silent=True),
-            timeout=30
+            timeout=30,
         )
         return resp.content, resp.status_code, dict(resp.headers)
     except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка прокси в NocoDB: {e}")
+        logger.error(f"❌ Ошибка прокси в NocoDB: {e}")
         return jsonify({"error": str(e)}), 502
 
 

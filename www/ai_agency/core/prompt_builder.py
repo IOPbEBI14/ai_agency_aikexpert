@@ -1,35 +1,27 @@
 """
 Генератор промптов с JSON Schema для строгой валидации ответов LLM.
+
+Единый источник истины для схем — модули schemas.py (AGENT_MODELS, get_model_schema).
+Этот модуль предоставляет только build_prompt_with_schema и get_agent_model.
 """
-import json
-from typing import Type, Any
+from typing import Type
 from pydantic import BaseModel
-from .schemas import (
-    PMDecision, PMTaskGraph, PMDecomposition, PMFinalReport, PMHumanReview, PMDeadlockResolution,
-    AnalystResponse, ArchitectResponse, DeveloperResponse, QAResponse, TechWriterResponse,
-    LeadHunterResponse, SalesResponse, CRMCustomizerResponse
-)
-
-
-def get_json_schema(model_class: Type[BaseModel]) -> str:
-    """Получает JSON Schema модели в формате строки."""
-    schema = model_class.model_json_schema()
-    return json.dumps(schema, indent=2, ensure_ascii=False)
+from .schemas import AGENT_MODELS, get_model_schema
 
 
 def build_prompt_with_schema(base_prompt: str, model_class: Type[BaseModel]) -> str:
     """
     Добавляет JSON Schema к базовому промпту.
-    
+
     Args:
         base_prompt: Базовый текст промпта из файла
         model_class: Pydantic-модель для валидации
-    
+
     Returns:
         Промпт с JSON Schema
     """
-    schema = get_json_schema(model_class)
-    
+    schema = get_model_schema(model_class)
+
     schema_section = f"""
 
 ═══════════════════════════════════════════════════════════
@@ -49,27 +41,8 @@ def build_prompt_with_schema(base_prompt: str, model_class: Type[BaseModel]) -> 
 
 ═══════════════════════════════════════════════════════════
 """
-    
+
     return base_prompt + schema_section
-
-
-# Маппинг агентов к их моделям
-AGENT_MODELS = {
-    "pm_decision": PMDecision,
-    "pm_task_graph": PMTaskGraph,
-    "pm_decomposition": PMDecomposition,
-    "pm_final_report": PMFinalReport,
-    "pm_human_review": PMHumanReview,
-    "pm_deadlock": PMDeadlockResolution,
-    "analyst": AnalystResponse,
-    "architect": ArchitectResponse,
-    "developer": DeveloperResponse,
-    "qa": QAResponse,
-    "tech_writer": TechWriterResponse,
-    "lead_hunter": LeadHunterResponse,
-    "sales": SalesResponse,
-    "crm_customizer": CRMCustomizerResponse,
-}
 
 
 def get_agent_model(agent_name: str) -> Type[BaseModel]:

@@ -18,8 +18,18 @@ logger = logging.getLogger(__name__)
 # ==================== БАЗОВЫЕ МОДЕЛИ ====================
 
 class BaseAgentResponse(BaseModel):
-    """Базовая модель для всех ответов агентов."""
-    model_config = ConfigDict(extra="allow")  # Разрешаем дополнительные поля для гибкости
+    """Базовая модель с разрешёнными дополнительными полями.
+
+    Намеренно не используется как родительский класс для агентских схем:
+    - Pydantic v2 по умолчанию применяет extra="ignore" (лишние поля отбрасываются тихо)
+    - Это безопасное поведение для валидации LLM-ответов
+    - LLM часто добавляет handoff_to_* поля, которые оркестратор игнорирует —
+      это нормально, они используются только как подсказки в промптах
+
+    Оставлен для случаев, когда нужно явно сохранять extra-поля:
+    например, если агент возвращает незаданные заранее метаданные.
+    """
+    model_config = ConfigDict(extra="allow")
 
 # ==================== PM MODELS ====================
 
@@ -138,10 +148,11 @@ class PMHumanReview(BaseModel):
 
 class PMDeadlockResolution(BaseModel):
     """Решение PM для разрешения тупика."""
-    
+
     analysis: str = Field(description="Анализ ситуации")
     solution: Literal[
-        "update_dependencies", "skip_tasks", "create_tasks", "stop_project"
+        "update_dependencies", "skip_tasks", "create_tasks",
+        "stop_project", "need_human_review",
     ] = Field(description="Решение")
     actions: List[Dict[str, Any]] = Field(description="Список действий")
     comment: str = Field(description="Комментарий PM")
@@ -182,6 +193,14 @@ class AnalystResponse(BaseModel):
     roi_calculation: ROICalculation = Field(default_factory=ROICalculation, description="Расчёт ROI")
     proposal_structure: List[str] = Field(default_factory=list, description="Структура коммерческого предложения")
     notes: Optional[str] = Field(default=None, description="Дополнительные заметки")
+    handoff_to_architect: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Структурированный хэндофф для архитектора: required_integrations, "
+            "data_volume_estimate, priority_automations, constraints. "
+            "Сохраняется в analyst_context и передаётся architect через input_data."
+        ),
+    )
     
     @model_validator(mode="before")
     @classmethod
@@ -340,9 +359,9 @@ class Document(BaseModel):
     """Документ."""
     
     title: str = Field(description="Название документа")
-    type: Literal["user_guide", "tech_guide", "video_script", "faq", "checklist"] = Field(
-        description="Тип документа"
-    )
+    type: Literal[
+        "user_guide", "tech_guide", "video_script", "faq", "checklist", "commercial_proposal"
+    ] = Field(description="Тип документа")
     audience: str = Field(description="Для кого документ")
     sections: List[DocumentSection] = Field(description="Список секций")
 
@@ -392,10 +411,18 @@ class Lead(BaseModel):
 
 class LeadHunterResponse(BaseModel):
     """Ответ Lead Hunter."""
-    
+
     leads_found: List[Lead] = Field(description="Список найденных лидов")
     total_found: int = Field(description="Общее количество найденных лидов")
     notes: Optional[str] = Field(default=None, description="Комментарий о качестве лидов")
+    handoff_to_sales: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Структурированный хэндофф для Sales: recommended_approach, "
+            "key_pain_points, best_contacts. "
+            "Сохраняется в leads_context и передаётся sales через input_data."
+        ),
+    )
 
 
 # ==================== SALES MODELS ====================
@@ -471,6 +498,27 @@ class CRMCustomizerResponse(BaseModel):
     notes: Optional[str] = Field(default=None, description="Дополнительные рекомендации")
 
 
+# ==================== МАППИНГ АГЕНТОВ → PYDANTIC-МОДЕЛИ ====================
+
+AGENT_MODELS: dict = {
+    # PM-варианты
+    "pm_decision": PMDecision,
+    "pm_task_graph": PMTaskGraph,
+    "pm_decomposition": PMDecomposition,
+    "pm_final_report": PMFinalReport,
+    "pm_human_review": PMHumanReview,
+    "pm_deadlock": PMDeadlockResolution,
+    # Рабочие агенты
+    "analyst": AnalystResponse,
+    "architect": ArchitectResponse,
+    "developer": DeveloperResponse,
+    "qa": QAResponse,
+    "tech_writer": TechWriterResponse,
+    "lead_hunter": LeadHunterResponse,
+    "sales": SalesResponse,
+    "crm_customizer": CRMCustomizerResponse,
+}
+
 # ==================== УТИЛИТЫ ДЛЯ РАБОТЫ С МОДЕЛЯМИ ====================
 
 def get_model_schema(model_class: type) -> str:
@@ -482,58 +530,285 @@ def get_model_schema(model_class: type) -> str:
     return json.dumps(schema, indent=2, ensure_ascii=False)
 
 
+_MODEL_EXAMPLES: dict = {}
+
+
+def _build_examples() -> dict:
+    """Строит словарь примеров для всех моделей (вызывается один раз)."""
+    return {
+        PMDecision: {
+            "project_status": "in_progress",
+            "current_phase": "analysis",
+            "next_agent": "analyst",
+            "task_for_next_agent": "Провести анализ потребностей клиента",
+            "pm_comment": "Начинаем с анализа потребностей",
+        },
+        PMTaskGraph: {
+            "tasks": [
+                {
+                    "task_id": "task_001",
+                    "agent_name": "analyst",
+                    "task_description": "Анализ потребностей клиента",
+                    "depends_on": [],
+                    "input_data": {},
+                    "max_iterations": 3,
+                }
+            ],
+            "excluded_agents": ["lead_hunter", "sales"],
+            "reasoning": "Клиент уже квалифицирован, начинаем с анализа",
+        },
+        PMDecomposition: {
+            "subtasks": [
+                {
+                    "subtask_id": "dev_001",
+                    "description": "Создать webhook для Telegram в n8n",
+                    "depends_on": [],
+                    "context": "Из архитектуры: Telegram Bot API, endpoint /telegram",
+                }
+            ],
+            "pm_comment": "Разбил архитектуру на 1 подзадачу для разработчика",
+        },
+        PMFinalReport: {
+            "project_status": "completed",
+            "final_report": "# Отчёт\n\n## Что сделано\nАвтоматизирована обработка заявок.",
+            "metrics": {"tasks_completed": 5, "total_tokens_used": 50000},
+            "pm_comment": "Проект завершён успешно",
+        },
+        PMHumanReview: {
+            "updated_task_description": "Уточнённая задача после ревью",
+            "pm_comment": "Обновлено по комментариям ревьюера",
+        },
+        PMDeadlockResolution: {
+            "analysis": "Задача застряла из-за неверных зависимостей",
+            "solution": "update_dependencies",
+            "actions": [
+                {
+                    "action": "update_task",
+                    "task_id": "task_002",
+                    "new_depends_on": ["task_001"],
+                }
+            ],
+            "comment": "Исправляем зависимости для разблокировки",
+        },
+        AnalystResponse: {
+            "client_name": "ООО Ромашка",
+            "current_pain_points": [
+                {
+                    "process": "Ручной перенос данных из WB",
+                    "time_per_day_hours": 2.0,
+                    "cost_per_month_rub": 20000.0,
+                }
+            ],
+            "proposed_automation": [
+                {
+                    "solution": "Автоматическая синхронизация через n8n",
+                    "tools": ["n8n", "API WB"],
+                    "time_saved_hours_per_day": 1.5,
+                    "implementation_complexity": "medium",
+                }
+            ],
+            "roi_calculation": {
+                "total_time_saved_hours_per_month": 30.0,
+                "cost_saved_per_month_rub": 30000.0,
+                "implementation_cost_rub": 50000.0,
+                "payback_period_months": 1.7,
+            },
+            "proposal_structure": ["Слайд 1: Проблема", "Слайд 2: Решение"],
+            "notes": "Данные по ROI оценочные",
+        },
+        ArchitectResponse: {
+            "summary": "Автоматизация через n8n + Bpium",
+            "approach": "Webhook → n8n → фильтрация → Bpium",
+            "systems": [
+                {
+                    "name": "Wildberries API",
+                    "role": "source",
+                    "api_available": True,
+                    "limitations": "Rate limit: 10 req/sec",
+                }
+            ],
+            "data_flow": [
+                {
+                    "step": 1,
+                    "from": "Wildberries",
+                    "to": "n8n",
+                    "trigger": "cron (каждые 15 минут)",
+                    "data": "Список новых отзывов",
+                    "transformation": "Фильтрация по рейтингу < 4",
+                }
+            ],
+            "tech_stack": ["n8n", "Bpium", "API WB"],
+            "estimated_complexity": "medium",
+            "estimated_time_hours": 8,
+            "risks": ["Изменение API WB"],
+            "recommendations": "Добавить логирование всех запросов",
+        },
+        DeveloperResponse: {
+            "summary": "Создан workflow для обработки заявок из Telegram",
+            "workflow_name": "Telegram → Bpium заявки",
+            "n8n_json": {"name": "Telegram → Bpium", "nodes": [], "connections": {}},
+            "files": [
+                {
+                    "name": "telegram-bpium-workflow.json",
+                    "type": "n8n_workflow",
+                    "description": "Готовый workflow для импорта в n8n",
+                }
+            ],
+            "setup_instructions": [
+                "Импортировать workflow в n8n",
+                "Настроить credentials для Telegram Bot API",
+            ],
+            "testing_steps": [
+                "Отправить тестовое сообщение в бот",
+                "Проверить запись в Bpium",
+            ],
+            "notes": None,
+        },
+        QAResponse: {
+            "summary": "Результат соответствует задаче. Архитектура корректна.",
+            "tests_total": 4,
+            "tests_passed": 4,
+            "tests_failed": 0,
+            "issues": [],
+            "warnings": ["Рекомендуем добавить мониторинг"],
+            "recommendations": ["Добавить логирование"],
+            "test_cases": [
+                {
+                    "name": "Соответствие задаче",
+                    "status": "passed",
+                    "description": "Архитектура решает поставленную задачу",
+                }
+            ],
+        },
+        TechWriterResponse: {
+            "summary": "Создано пользовательское руководство и FAQ",
+            "documents": [
+                {
+                    "title": "Руководство пользователя",
+                    "type": "user_guide",
+                    "audience": "Менеджеры клиента",
+                    "sections": [
+                        {
+                            "title": "Начало работы",
+                            "content": "Описание первых шагов...",
+                            "screenshot_needed": True,
+                            "screenshot_description": "Главный экран системы",
+                        }
+                    ],
+                }
+            ],
+            "video_scripts": [
+                {
+                    "title": "Обзор системы",
+                    "duration_minutes": 3,
+                    "script": "Добро пожаловать! В этом видео...",
+                    "visual_cues": ["Показать главный экран"],
+                }
+            ],
+            "faq": [
+                {
+                    "question": "Что делать если автоматизация не сработала?",
+                    "answer": "Проверьте логи в n8n...",
+                }
+            ],
+            "checklist": ["Проверить credentials", "Запустить тестовый сценарий"],
+            "notes": None,
+        },
+        LeadHunterResponse: {
+            "leads_found": [
+                {
+                    "company_name": "ООО Ромашка",
+                    "marketplace": "Wildberries",
+                    "category": "Одежда",
+                    "estimated_revenue": "1-2 млн руб/мес",
+                    "pain_points": ["Ручная обработка отзывов"],
+                    "contact_telegram": "@romashka_seller",
+                    "contact_email": None,
+                    "contact_phone": None,
+                    "source": "Telegram-канал 'Селлеры WB'",
+                }
+            ],
+            "total_found": 1,
+            "notes": "Найден 1 качественный лид",
+        },
+        SalesResponse: {
+            "messages": [
+                {
+                    "lead_name": "ООО Ромашка",
+                    "message_text": "Здравствуйте! Вижу, что вы активно продаёте на WB...",
+                    "channel": "telegram",
+                    "personalization_points": ["Активные продажи на WB", "Категория Одежда"],
+                }
+            ],
+            "qualification_questions": [
+                "Сколько времени уходит на обработку отзывов?",
+                "Используете ли вы CRM?",
+            ],
+            "next_steps": "Назначить встречу с аналитиком для расчёта ROI",
+        },
+        CRMCustomizerResponse: {
+            "summary": "Настроена воронка обработки заявок в Bpium",
+            "platform": "Bpium",
+            "entities": [
+                {
+                    "name": "Заявки",
+                    "custom_fields": [
+                        {
+                            "name": "Источник",
+                            "type": "select",
+                            "purpose": "Канал поступления заявки",
+                        }
+                    ],
+                }
+            ],
+            "pipelines": [
+                {
+                    "name": "Обработка заявок",
+                    "stages": ["Новая", "В работе", "Завершена"],
+                }
+            ],
+            "business_processes": [
+                {
+                    "trigger": "Создание новой заявки",
+                    "actions": ["Отправить уведомление менеджеру"],
+                    "purpose": "Автоматическое оповещение",
+                }
+            ],
+            "field_mapping": [
+                {
+                    "from_system": "n8n",
+                    "from_field": "source",
+                    "to_system": "Bpium",
+                    "to_field": "Источник",
+                }
+            ],
+            "setup_steps": [
+                "Создать таблицу 'Заявки' в Bpium",
+                "Добавить кастомные поля",
+            ],
+            "notes": None,
+        },
+    }
+
+
 def get_model_example(model_class: type) -> str:
     """
     Получает пример JSON для модели.
-    Используется для вставки в промпты.
+    Используется для вставки в промпты агентов.
     """
-    # Создаём пример данных (упрощённый)
+    global _MODEL_EXAMPLES
+    if not _MODEL_EXAMPLES:
+        _MODEL_EXAMPLES = _build_examples()
+
+    example_data = _MODEL_EXAMPLES.get(model_class)
+    if example_data is None:
+        logger.warning(f"Нет примера для {model_class.__name__}")
+        return "{}"
+
     try:
-        # Пытаемся создать модель с минимальными данными
-        if model_class == PMDecision:
-            example = PMDecision(
-                project_status="in_progress",
-                current_phase="analysis",
-                next_agent="analyst",
-                task_for_next_agent="Провести анализ потребностей клиента",
-                pm_comment="Начинаем с анализа"
-            )
-        elif model_class == AnalystResponse:
-            example = AnalystResponse(
-                client_name="ООО Ромашка",
-                current_pain_points=[
-                    PainPoint(
-                        process="Ручной перенос данных",
-                        time_per_day_hours=2.0,
-                        cost_per_month_rub=20000.0
-                    )
-                ],
-                proposed_automation=[
-                    ProposedAutomation(
-                        solution="Автоматическая синхронизация",
-                        tools=["n8n", "API WB"],
-                        time_saved_hours_per_day=1.5,
-                        implementation_complexity="medium"
-                    )
-                ],
-                roi_calculation=ROICalculation(
-                    total_time_saved_hours_per_month=30.0,
-                    cost_saved_per_month_rub=30000.0,
-                    implementation_cost_rub=50000.0,
-                    payback_period_months=1.7
-                ),
-                proposal_structure=[
-                    "Слайд 1: Проблема",
-                    "Слайд 2: Решение"
-                ]
-            )
-        else:
-            # Для других моделей возвращаем пустой пример
-            return "{}"
-        
-        return example.model_dump_json(indent=2)
+        return json.dumps(example_data, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.warning(f"Не удалось создать пример для {model_class.__name__}: {e}")
+        logger.warning(f"Не удалось сериализовать пример для {model_class.__name__}: {e}")
         return "{}"
         
 def extract_json_from_text(text: str) -> str:

@@ -56,7 +56,8 @@ class TestCallLLM:
         mock_post.return_value = mock_response
         
         from core.utils import call_llm
-        with pytest.raises(requests.exceptions.HTTPError):
+        # call_llm бросает RuntimeError (не HTTPError) при статусах 4xx/5xx
+        with pytest.raises(RuntimeError, match="500"):
             call_llm("test_agent", "system", "task", max_retries=0)
     
     @patch('core.utils.requests.post')
