@@ -6,13 +6,16 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from .config import Config
 from .schemas import AGENT_MODELS, call_and_parse_llm, get_model_schema
 from .utils import (
     build_agent_task,
     call_llm,
     load_prompt,
     log_to_agent_logs,
+    send_telegram_alert,
     update_last_agent_log,
+    validate_output_json,
 )
 
 if TYPE_CHECKING:
@@ -73,6 +76,13 @@ class TaskExecutor:
                 task_db_id,
                 {"status": "failed", "qa_feedback": "Превышен лимит итераций"},
             )
+            send_telegram_alert(
+                f"🚨 <b>Агент застрял в цикле</b>\n\n"
+                f"Агент: <code>{agent_name}</code>\n"
+                f"Задача: <code>{task_name}</code>\n"
+                f"Итераций выполнено: {iteration_count}/{max_iter}\n\n"
+                f"Требуется ручное вмешательство или декомпозиция задачи."
+            )
             return False
 
         self.orch.tasks_db.update_task(
@@ -93,6 +103,10 @@ class TaskExecutor:
         # Добавляем JSON Schema к промпту
         schema_prompt = self._build_schema_prompt(agent_prompt, agent_name)
 
+        # Для developer: добавляем версию n8n из .env в контекст задачи
+        if agent_name == "developer":
+            input_data["n8n_version"] = Config.N8N_VERSION
+
         # Формируем задачу для агента
         agent_task = build_agent_task(task_description, input_data, qa_feedback, iteration_count)
 
@@ -111,6 +125,28 @@ class TaskExecutor:
             )
 
             response_json = validated_response.model_dump_json(indent=2)
+
+            # Валидация JSON перед сохранением (защита от обрезанных ответов)
+            json_ok, response_json, json_feedback = validate_output_json(response_json, agent_name)
+            if not json_ok:
+                logger.error(f"❌ JSON от {agent_name} невалиден и не восстановлен: {json_feedback}")
+                self.orch.tasks_db.update_task(
+                    task_db_id,
+                    {
+                        "status": "pending" if iteration_count + 1 < max_iter else "failed",
+                        "qa_feedback": json_feedback,
+                        "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
+                    },
+                )
+                if iteration_count + 1 >= max_iter:
+                    send_telegram_alert(
+                        f"🚨 <b>Агент {agent_name} генерирует битый JSON</b>\n\n"
+                        f"Задача: <code>{task_name}</code>\n"
+                        f"Итераций: {iteration_count + 1}/{max_iter}\n"
+                        f"Задача переведена в статус <b>failed</b>.\n\n"
+                        f"Требуется ручное вмешательство или декомпозиция задачи."
+                    )
+                return False
 
             log_to_agent_logs(
                 project_id=project_id,

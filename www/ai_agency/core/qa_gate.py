@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict
 from pydantic import BaseModel
 
 from .schemas import QAResponse, call_and_parse_llm, get_model_schema
-from .utils import call_llm, load_prompt, log_to_agent_logs, update_last_agent_log
+from .utils import call_llm, load_prompt, log_to_agent_logs, send_telegram_alert, update_last_agent_log
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
@@ -168,6 +168,15 @@ class QAGate:
                 logger.error(f"❌ Задача {task_name} провалена после {max_iter} итераций QA")
                 self.orch.tasks_db.update_task(task_db_id, {"status": "failed"})
                 update_last_agent_log(project_id, agent_name, "failed")
+                send_telegram_alert(
+                    f"🚨 <b>Агент застрял в цикле QA</b>\n\n"
+                    f"Агент: <code>{agent_name}</code>\n"
+                    f"Задача: <code>{task_name}</code>\n"
+                    f"QA-итераций выполнено: {iteration_count + 1}/{max_iter}\n"
+                    f"Последняя ошибка: {qa_feedback_text[:300]}\n\n"
+                    f"Задача переведена в статус <b>failed</b>. "
+                    f"Требуется ручное вмешательство или декомпозиция задачи."
+                )
 
             return False
 

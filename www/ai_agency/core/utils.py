@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 import logging
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from core.config import Config
 from core.nocodb import NocoDBClient
 
@@ -165,6 +165,64 @@ def build_agent_task(task_description: str, input_data: dict, qa_feedback: str, 
 Верни ТОЛЬКО валидный JSON.
 """
     return task
+
+
+def send_telegram_alert(message: str) -> bool:
+    """Отправляет алерт в Telegram-чат оркестратора.
+
+    Используется при критических событиях: превышение лимита итераций,
+    застрявшие задачи. Молча пропускает вызов, если токен не задан.
+    """
+    token = Config.TELEGRAM_BOT_TOKEN
+    chat_id = Config.TELEGRAM_CHAT_ID
+    if not token or not chat_id:
+        logger.debug("📵 Telegram-алерт пропущен: TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы")
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info("📨 Telegram-алерт отправлен")
+            return True
+        logger.warning(f"⚠️ Telegram вернул {response.status_code}: {response.text[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки Telegram-алерта: {e}")
+        return False
+
+
+def validate_output_json(content: str, agent_name: str) -> tuple[bool, str, str]:
+    """Проверяет, является ли content валидным JSON.
+
+    Returns:
+        (is_valid, validated_content, qa_feedback)
+        - is_valid: True если JSON валиден или успешно восстановлен
+        - validated_content: исправленный JSON или исходная строка
+        - qa_feedback: пустая строка если OK, иначе инструкция для агента
+    """
+    if not content or not content.strip():
+        return False, content, "Агент вернул пустой ответ. Повтори генерацию."
+
+    stripped = content.strip()
+    try:
+        json.loads(stripped)
+        return True, stripped, ""
+    except json.JSONDecodeError as e:
+        err_pos = e.pos if hasattr(e, "pos") else "неизвестна"
+        logger.warning(f"⚠️ JSON от {agent_name} невалиден (позиция {err_pos}): {e.msg}")
+
+        fixed = try_fix_truncated_json(stripped)
+        if fixed:
+            logger.info(f"🔧 JSON от {agent_name} восстановлен автоматически")
+            return True, fixed, ""
+
+        feedback = (
+            f"Твой JSON оборвался на позиции {err_pos} (ошибка: {e.msg}). "
+            f"Догенерируй его с этого места или разбей задачу на две части. "
+            f"Убедись, что все скобки и кавычки закрыты."
+        )
+        return False, content, feedback
 
 
 def log_to_agent_logs(project_id: Optional[int], agent_name: str, status: str,

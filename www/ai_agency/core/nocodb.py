@@ -6,7 +6,6 @@ from datetime import datetime
 from urllib.parse import quote
 from .config import Config
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NocoDBClient")
 
 
@@ -349,6 +348,15 @@ class TasksClient:
     def create_task(self, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Создаёт новую задачу"""
         try:
+            # Защита от попадания лог-строк в поле agent_name при создании
+            raw_name = task_data.get("agent_name", "")
+            if not isinstance(raw_name, str) or raw_name not in self._VALID_AGENT_NAMES:
+                logger.error(
+                    f"❌ Попытка создать задачу с недопустимым agent_name: "
+                    f"{repr(str(raw_name)[:120])}. Задача НЕ создана."
+                )
+                return None
+
             payload = [{"fields": task_data}]
             logger.debug(f"📝 POST payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
@@ -413,15 +421,31 @@ class TasksClient:
             logger.error(f"❌ Ошибка чтения задач: {e}")
             return []
 
+    # Допустимые имена агентов — защита от попадания посторонних строк в agent_name
+    _VALID_AGENT_NAMES = frozenset({
+        "PM", "lead_hunter", "sales", "analyst", "architect",
+        "developer", "crm_customizer", "qa", "tech_writer",
+    })
+
     def update_task(self, task_id: str, data: Dict[str, Any]) -> bool:
         """Обновляет задачу через NocoDB API v3"""
         try:
             if not task_id:
                 logger.error("❌ Нельзя обновить задачу без Id")
                 return False
-            
+
+            # Защита от попадания лог-строк в поле agent_name (Инцидент №4)
+            if "agent_name" in data:
+                raw_name = data["agent_name"]
+                if not isinstance(raw_name, str) or raw_name not in self._VALID_AGENT_NAMES:
+                    logger.error(
+                        f"❌ Попытка записать недопустимое значение в agent_name: "
+                        f"{repr(str(raw_name)[:120])}. Поле исключено из PATCH."
+                    )
+                    del data["agent_name"]
+
             data["updated_at"] = datetime.now().isoformat()
-            
+
             # Сериализация JSON-полей
             for field in ["input_data", "output_data", "depends_on", "qa_feedback"]:
                 if field in data and isinstance(data[field], (dict, list)):

@@ -343,10 +343,25 @@ class Orchestrator:
                 ensure_ascii=False,
             )
 
+            VALID_AGENTS = {
+                "lead_hunter", "sales", "analyst", "architect",
+                "developer", "crm_customizer", "qa", "tech_writer",
+            }
+
             for task_data in tasks_list:
                 if "task_id" not in task_data:
                     logger.warning(f"⚠️ Задача без task_id, пропускаем: {task_data}")
                     continue
+
+                # Защита: agent_name должен быть строкой из допустимого набора
+                raw_agent = task_data.get("agent_name", "")
+                if not isinstance(raw_agent, str) or raw_agent not in VALID_AGENTS:
+                    logger.error(
+                        f"❌ Задача {task_data.get('task_id')} содержит "
+                        f"недопустимый agent_name={repr(str(raw_agent)[:80])}. Пропускаем."
+                    )
+                    continue
+
                 task_data.update({
                     "project_id": project_id,
                     "status": "pending",

@@ -20,8 +20,15 @@ class Config:
     
     # Limits
     TOKEN_BUDGET = int(os.getenv("TOKEN_BUDGET", 30000))
-    MAX_TASK_ITERATIONS = int(os.getenv("MAX_TASK_ITERATIONS", 3))  # НОВОЕ
-    
+    MAX_TASK_ITERATIONS = int(os.getenv("MAX_TASK_ITERATIONS", 3))
+
+    # n8n version (читается из .env, используется в developer-промпте)
+    N8N_VERSION = os.getenv("N8N_VERSION", "1.x")
+
+    # Telegram alerts (для уведомлений об ошибках оркестратора)
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")
     DEFAULT_CLIENT_NAME = os.getenv("DEFAULT_CLIENT_NAME", "ООО 'Ромашка' (Селлер WB)")
