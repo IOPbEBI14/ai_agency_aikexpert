@@ -113,7 +113,7 @@ class ProjectsClient:
                 field="status",
                 value=status,
                 limit=1,
-                sort_field="updated_at",
+                sort_field="UpdatedAt",
             )
             logger.info(f"🔍 Поиск проекта со статусом '{status}': {url}")
             
