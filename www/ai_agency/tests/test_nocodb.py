@@ -89,7 +89,7 @@ class TestBuildWhereUrl:
         assert "limit=1" in url
 
     def test_returns_string_with_sort(self, client):
-        url = client._build_where_url("status", "completed", sort_field="UpdatedAt")
+        url = client._build_where_url("status", "completed", sort_field="updated_at")
         assert isinstance(url, str)
         assert "sort=" in url
 
@@ -241,7 +241,7 @@ class TestUpdateTask:
         with patch("requests.patch", side_effect=fake_patch):
             client.update_task(1, {"status": "completed"})
 
-        assert "UpdatedAt" in captured["payload"][0]["fields"]
+        assert "updated_at" in captured["payload"][0]["fields"]
 
 
 # ══════════════════════════════════════════════════════════════════

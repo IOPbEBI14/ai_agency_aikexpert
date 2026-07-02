@@ -1,2 +1,4 @@
 www/ai_agency/.env
 __pycache__
+www/ai_agency/core/__pycache__/nocodb.cpython-310.pyc
+www/ai_agency/__pycache__/main.cpython-310.pyc
