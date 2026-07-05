@@ -1,0 +1,22 @@
+{
+  "name": "ai-agency-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js tools for AI Agency: n8n workflow validation",
+  "scripts": {
+    "validate-n8n": "n8n-workflow-validator",
+    "install-validator": "npm install n8n-workflow-validator --save"
+  },
+  "dependencies": {
+    "n8n-workflow-validator": "^1.4.2"
+  },
+  "_install_notes": [
+    "Если npm install падает на xlsx от cdn.sheetjs.com — это сетевая блокировка SheetJS CDN.",
+    "Обходные варианты:",
+    "  1) npm install --registry https://registry.npmjs.org n8n-workflow-validator",
+    "  2) npm install --prefer-offline n8n-workflow-validator (если кэш есть)",
+    "  3) Установить глобально: npm install -g n8n-workflow-validator",
+    "При любом варианте Python-валидатор автоматически подхватит бинарник.",
+    "Без установки активен heuristic-режим — ловит самые частые LLM-ошибки."
+  ]
+}

@@ -48,6 +48,107 @@
    - Все параметры (URL, поля, маппинг) бери только из input_data текущей задачи.
 
 ═══════════════════════════════════════════════════════════
+КРИТИЧНО: КОРРЕКТНЫЕ СТРУКТУРЫ НОД (защита от ошибки импорта)
+═══════════════════════════════════════════════════════════
+
+⚠️ Самая частая причина, по которой workflow НЕ импортируется в n8n
+(ошибка "X is not iterable" / "propertyValues[itemName] is not iterable"),
+— это подстановка объекта или числа туда, где n8n ждёт МАССИВ (fixedCollection),
+или использование параметров от ДРУГОЙ typeVersion ноды.
+
+ПРАВИЛА:
+- Параметры ноды ДОЛЖНЫ соответствовать её typeVersion. Не смешивай версии.
+- Поля-коллекции (interval, conditions, assignments, parameters) — это МАССИВЫ.
+- НЕ добавляй пустой "options": {} в ноды if/switch (это ломает импорт).
+- Ключи объектов НЕ могут быть выражениями ={{...}} (только значения).
+
+ПРАВИЛЬНЫЕ ШАБЛОНЫ (копируй структуру точь-в-точь):
+
+1) Schedule Trigger (typeVersion 1.2) — interval это МАССИВ:
+{
+  "parameters": {
+    "rule": { "interval": [ { "field": "minutes", "minutesInterval": 10 } ] }
+  },
+  "type": "n8n-nodes-base.scheduleTrigger",
+  "typeVersion": 1.2,
+  "position": [250, 300],
+  "id": "<uuid>",
+  "name": "Schedule Trigger"
+}
+❌ НЕПРАВИЛЬНО: "rule": { "interval": 10, "unit": "minutes" }  ← число вместо массива
+
+2) IF (typeVersion 2.2) — conditions.conditions это МАССИВ:
+{
+  "parameters": {
+    "conditions": {
+      "options": { "caseSensitive": true, "typeValidation": "strict" },
+      "combinator": "and",
+      "conditions": [
+        {
+          "id": "<uuid>",
+          "leftValue": "={{ $json.statusCode }}",
+          "rightValue": 200,
+          "operator": { "type": "number", "operation": "equals" }
+        }
+      ]
+    }
+  },
+  "type": "n8n-nodes-base.if",
+  "typeVersion": 2.2,
+  "position": [1050, 300],
+  "id": "<uuid>",
+  "name": "Check Success"
+}
+❌ НЕПРАВИЛЬНО: "conditions": { "string": { "value1": "...", "operation": "..." } }
+
+3) Set / Edit Fields (typeVersion 3.4) — assignments.assignments это МАССИВ:
+{
+  "parameters": {
+    "assignments": {
+      "assignments": [
+        { "id": "<uuid>", "name": "synced", "value": true, "type": "boolean" },
+        { "id": "<uuid>", "name": "bpium_id", "value": "={{ $json.id }}", "type": "string" }
+      ]
+    },
+    "options": {}
+  },
+  "type": "n8n-nodes-base.set",
+  "typeVersion": 3.4,
+  "position": [1250, 400],
+  "id": "<uuid>",
+  "name": "Prepare Update Data"
+}
+❌ НЕПРАВИЛЬНО: "values": { "string": [ ... ] }  ← формат старой версии
+
+4) HTTP Request (typeVersion 4.2) — JSON-тело через jsonBody (строка):
+{
+  "parameters": {
+    "method": "POST",
+    "url": "={{ $env.BP_API_URL }}/api/v1/catalogs/{{ $env.BP_CATALOG_ID }}/records",
+    "sendHeaders": true,
+    "headerParameters": {
+      "parameters": [ { "name": "Authorization", "value": "={{ $json.token }}" } ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\n  \"values\": {\n    \"2\": \"{{ $json.name }}\",\n    \"3\": \"{{ $json.phone }}\"\n  }\n}",
+    "options": {}
+  },
+  "type": "n8n-nodes-base.httpRequest",
+  "typeVersion": 4.2,
+  "position": [850, 300],
+  "id": "<uuid>",
+  "name": "Create Bpium Record"
+}
+❌ НЕПРАВИЛЬНО: "bodyContentType": "json", "body": { "values": {...} }  ← формат старой версии
+
+ПЕРЕД ВОЗВРАТОМ ОТВЕТА проверь каждую ноду:
+✓ interval / conditions.conditions / assignments.assignments — массивы?
+✓ параметры соответствуют typeVersion?
+✓ у каждой ноды есть type, typeVersion, position ([x,y]), parameters?
+✓ все узлы в connections существуют в nodes?
+
+═══════════════════════════════════════════════════════════
 СТРОГАЯ СТРУКТУРА ОТВЕТА (JSON Schema)
 ═══════════════════════════════════════════════════════════
 
