@@ -56,3 +56,10 @@ data_flow. Разрыв «концептуальный data_flow → конкр�
 6. Укажи error_handling[] для внешних HTTP-вызовов (retry) и идемпотентность.
 7. Короткие имена типов нод: scheduleTrigger, webhook, nocoDb, httpRequest, if,
    switch, set, code, telegram, noOp.
+8. КОНТЕКСТ ПЕРЕД HTTP-ВЫЗОВАМИ: если после HTTP-ноды нужен id из предыдущей ноды
+   (например NocoDB row Id для последующего update), вставляй Set-ноду ДО HTTP для
+   сохранения id. После HTTP нода $json содержит ответ HTTP, а не данные источника.
+   Обязательно добавляй в nodes[] такую ноду и отражай её в connections[].
+   Пример: { "name": "Set Save noco_id", "type": "set",
+              "purpose": "Сохранить Id NocoDB до HTTP-вызова",
+              "key_params": { "noco_id": "{{ $json.Id }}" } }

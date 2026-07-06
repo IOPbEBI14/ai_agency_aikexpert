@@ -587,7 +587,28 @@ class Orchestrator:
                         {"status": "failed", "qa_feedback": "Пропущено по решению PM"},
                     )
 
-            return pm_deadlock.solution != "stop_project"
+            # need_human_review и stop_project — оба останавливают цикл.
+            # need_human_review: выставляем статус проекта, чтобы дашборд показал ручное вмешательство.
+            # Если вернуть True при need_human_review — цикл продолжается, тупик повторяется бесконечно.
+            if pm_deadlock.solution == "need_human_review":
+                logger.warning("🛑 PM решил: need_human_review — останавливаем цикл")
+                self.projects_db.update_project(
+                    project_id,
+                    {"status": "needs_human_review"},
+                )
+                self.current_project["status"] = "needs_human_review"
+                return False
+
+            if pm_deadlock.solution == "stop_project":
+                logger.warning("🛑 PM решил: stop_project — останавливаем цикл")
+                self.projects_db.update_project(
+                    project_id,
+                    {"status": "stopped"},
+                )
+                self.current_project["status"] = "stopped"
+                return False
+
+            return True
 
         except Exception as e:
             logger.error(f"❌ Ошибка разрешения тупика: {e}", exc_info=True)

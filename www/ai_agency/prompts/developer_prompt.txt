@@ -66,7 +66,20 @@
      и создавай запись только если результат пустой.
    - Для webhook-триггеров: добавляй поле "idempotency_key" из входящих данных и проверяй его в Static Data.
 
-3. ИЗОЛЯЦИЯ КОНТЕКСТА:
+3. СОХРАНЕНИЕ КОНТЕКСТА ПЕРЕД HTTP-ВЫЗОВАМИ (context preservation):
+   - КРИТИЧНО: после любого HTTP Request нода `$json` содержит ответ ЭТОГО запроса,
+     а НЕ данные предыдущей ноды (NocoDB, Webhook и т.д.).
+   - Если тебе нужен id или любое другое поле из ноды A ПОСЛЕ ноды B (HTTP),
+     ОБЯЗАТЕЛЬНО сохрани его в Set-ноде между A и B:
+     Ноды A → Set "Save Context" (assignments: noco_id = {{ $json.Id }}) → HTTP B → Update A (используй {{ $('Set Save Context').item.json.noco_id }})
+   - Пример ошибки: NocoDB Get → HTTP Create Bpium → NocoDB Update с {{ $json.id }}
+     (НЕПРАВИЛЬНО: $json.id = bpium_id, а не noco_id!)
+   - Пример правильно:
+     NocoDB Get → Set Save noco_id (noco_id = {{ $json.Id }}) → HTTP Create Bpium → NocoDB Update (rowId = {{ $('Set Save noco_id').item.json.noco_id }})
+   - Это правило относится ко ВСЕМ полям: id, phone, status, external_id — любые данные,
+     которые нужны после HTTP-вызова, сохраняй в Set-ноде ДО него.
+
+4. ИЗОЛЯЦИЯ КОНТЕКСТА:
    - ВНИМАТЕЛЬНО читай task_description — там указано, ЧТО именно нужно автоматизировать.
    - НЕ копируй код из соседних задач и НЕ предполагай контекст из других задач.
    - Все параметры (URL, поля, маппинг) бери только из input_data текущей задачи.
@@ -231,6 +244,8 @@
 ✓ NocoDB update использует "fieldsUi.fieldValues", НЕ "data":{}?
 ✓ credentials ключи — camelCase ("nocoDbApiToken", "telegramApi", etc.)?
 ✓ IF-ноды имеют заполненные условия в conditions.conditions?
+✓ Перед каждым HTTP-вызовом сохранены нужные upstream-ID в Set-ноде?
+  ($json после HTTP = ответ HTTP, а не данные исходной записи!)
 
 ═══════════════════════════════════════════════════════════
 СТРОГАЯ СТРУКТУРА ОТВЕТА (JSON Schema)
