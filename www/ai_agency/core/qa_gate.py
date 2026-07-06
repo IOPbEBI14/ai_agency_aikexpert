@@ -17,11 +17,50 @@ if TYPE_CHECKING:
 logger = logging.getLogger("QAGate")
 
 
+_AGENT_QA_CHECKLISTS: dict = {
+    "architect": """
+СПЕЦИФИКА ПРОВЕРКИ АРХИТЕКТУРЫ:
+- workflow_blueprint должен содержать nodes[] со ВСЕМИ нодами (включая Set-ноды для сохранения контекста перед HTTP)
+- connections[] должны описывать ВСЕ связи; ни одна нода не должна быть изолированной
+- Каждая IF-нода должна иметь явное condition (не пустое)
+- Если после HTTP-вызова нужен id исходной записи (NocoDB rowId и т.п.) — ОБЯЗАТЕЛЬНА Set-нода ДО HTTP для сохранения этого id
+- field_mapping[] должен описывать, какие поля откуда берутся (source → target)
+- Указаны error_handling и идемпотентность для HTTP-вызовов
+""",
+    "developer": """
+СПЕЦИФИКА ПРОВЕРКИ n8n WORKFLOW:
+- Каждая нода в nodes[] должна иметь type, typeVersion, position, parameters
+- connections используют поле "index" (НЕ "inputIndex")
+- Ни одна нода не должна быть изолированной (не подключённой ни к чему)
+- IF-ноды: conditions.conditions — непустой массив с реальными выражениями leftValue
+- nocoDb update: использует fieldsUi.fieldValues, НЕ data:{}
+- credentials ключи: nocoDbApiToken, telegramApi (не "NocoDB", не "Telegram")
+- После HTTP Request $json содержит ответ HTTP — upstream id должен быть сохранён в Set-ноде ДО HTTP
+""",
+    "analyst": """
+СПЕЦИФИКА ПРОВЕРКИ АНАЛИЗА:
+- roi_calculation содержит числовые значения (не строки)
+- current_pain_points не пустой
+- handoff_to_architect содержит required_integrations и constraints
+- proposed_automation соответствует реальной задаче проекта (не шаблонные данные)
+""",
+    "tech_writer": """
+СПЕЦИФИКА ПРОВЕРКИ ДОКУМЕНТАЦИИ:
+- documents[] содержат content, не пустые шаблоны
+- setup_instructions пошаговые и конкретные (не абстрактные)
+- faq[] отвечает на реальные вопросы по задаче
+""",
+}
+
+
 class QAGate:
     """Проверяет результат задачи через QA-агента с Pydantic-валидацией."""
 
     def __init__(self, orchestrator: "Orchestrator") -> None:
         self.orch = orchestrator
+        # Хранит текст последнего сформированного фидбека.
+        # Используется handle_architect (update_status=False — QA не пишет в БД сам).
+        self.last_feedback: str = ""
 
     def run(
         self,
@@ -72,6 +111,7 @@ class QAGate:
 ═══════════════════════════════════════════════════════════
 """
 
+        agent_checklist = _AGENT_QA_CHECKLISTS.get(agent_name, "")
         qa_task = f"""
 ЗАДАЧА: {task_description}
 АГЕНТ: {agent_name}
@@ -84,7 +124,7 @@ class QAGate:
 2. Нет ли ошибок или противоречий?
 3. Достаточно ли данных для следующих задач?
 4. Валиден ли JSON?
-
+{agent_checklist}
 ВАЖНО: Если результат соответствует задаче и не содержит критических ошибок,
 установи tests_failed=0 и не добавляй issues с severity=critical или high.
 """
@@ -124,6 +164,8 @@ class QAGate:
             )
 
             qa_feedback_text = self._build_feedback(qa_response)
+            # Сохраняем последний фидбек для handle_architect (update_status=False)
+            self.last_feedback = qa_feedback_text
 
             log_to_agent_logs(
                 project_id=project_id,
@@ -182,6 +224,7 @@ class QAGate:
 
         except Exception as e:
             logger.error(f"❌ Ошибка QA: {e}", exc_info=True)
+            self.last_feedback = f"Ошибка QA: {str(e)[:500]}"
             if update_status:
                 self.orch.tasks_db.update_task(
                     task_db_id,

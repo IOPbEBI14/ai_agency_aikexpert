@@ -75,30 +75,36 @@ class AgentHandlers:
         """Architect: QA-проверка, затем PM декомпозирует на подзадачи developer."""
         project_id = self.orch.current_project.get("Id")
 
-        # QA без обновления статуса задачи (контроль остаётся здесь)
-        logger.info(f"🔍 QA-проверка для architect-задачи {task_name}...")
+        # QA без обновления статуса задачи (контроль остаётся здесь).
+        # update_status=False: QA Gate не пишет в БД сам, мы делаем это ниже с реальным фидбеком.
+        # iteration_count передаём реальный, чтобы QA Gate мог в будущем использовать его.
+        iteration_count = task.get("iteration_count", 0) or 0
+        max_iter = task.get("max_iterations", 3) or 3
+        logger.info(f"🔍 QA-проверка для architect-задачи {task_name} (итерация {iteration_count}/{max_iter})...")
         qa_ok = self.qa_gate.run(
             task, task_db_id, task_name, "architect",
             agent_response, task.get("task_description", ""),
-            iteration_count=0, max_iter=3, update_status=False,
+            iteration_count=iteration_count, max_iter=max_iter, update_status=False,
         )
 
         if not qa_ok:
-            iteration_count = task.get("iteration_count", 0) or 0
-            max_iter = task.get("max_iterations", 3) or 3
+            # Берём реальный фидбек, сохранённый в qa_gate.last_feedback.
+            # Ранее здесь было "QA не прошёл, требуется доработка" — architect не знал, что исправлять.
+            real_feedback = self.qa_gate.last_feedback or "QA не прошёл, требуется доработка"
             if iteration_count + 1 >= max_iter:
                 logger.error(f"❌ Задача {task_name} провалена после {max_iter} QA-итераций")
                 self.orch.tasks_db.update_task(task_db_id, {
                     "status": "failed",
-                    "qa_feedback": "QA не прошёл после максимального количества итераций",
+                    "qa_approved": "false",
+                    "qa_feedback": real_feedback,
                 })
             else:
-                logger.warning(f"⚠️ QA не прошёл для {task_name}, возврат в pending")
+                logger.warning(f"⚠️ QA не прошёл для {task_name}, возврат в pending. Фидбек: {real_feedback[:200]}")
                 self.orch.tasks_db.update_task(task_db_id, {
                     "status": "pending",
                     "iteration_count": iteration_count + 1,
                     "qa_approved": "false",
-                    "qa_feedback": "QA не прошёл, требуется доработка",
+                    "qa_feedback": real_feedback,
                 })
             return False
 
