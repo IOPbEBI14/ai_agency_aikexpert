@@ -287,6 +287,15 @@ class ArchitectResponse(BaseModel):
     estimated_time_hours: int = Field(description="Оценочное время в часах")
     risks: List[str] = Field(description="Список рисков")
     recommendations: str = Field(description="Рекомендации")
+    handoff_to_developer: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Node-level blueprint для developer. Содержит: "
+            "workflow_blueprint (nodes[], connections[], field_mapping[], error_handling[]), "
+            "api_endpoints[], credentials_needed[], implementation_order[]. "
+            "Разработчик сериализует этот blueprint в валидный n8n JSON."
+        ),
+    )
 
 
 # ==================== DEVELOPER MODELS ====================

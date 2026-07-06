@@ -105,6 +105,18 @@ class AgentHandlers:
         logger.info(f"✅ Architect прошёл QA. Декомпозиция на подзадачи...")
         agent_response_str = _to_str(agent_response)
 
+        # Node-level blueprint от архитектора — source of truth для developer.
+        # Передаётся в КАЖДУЮ dev-подзадачу целиком (не обрезается), чтобы developer
+        # видел полную топологию нод, connections и field_mapping.
+        blueprint = None
+        if isinstance(agent_response, BaseModel):
+            blueprint = getattr(agent_response, "handoff_to_developer", None)
+        elif isinstance(agent_response, dict):
+            blueprint = agent_response.get("handoff_to_developer")
+        blueprint_str = (
+            json.dumps(blueprint, ensure_ascii=False, indent=2) if blueprint else ""
+        )
+
         decompose_prompt = f"""
 Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
 
@@ -132,6 +144,9 @@ class AgentHandlers:
 - Максимум 5-7 подзадач
 - Указывай зависимости между подзадачами
 - Передавай developer только релевантный контекст
+- Если в архитектуре есть handoff_to_developer.workflow_blueprint —
+  в поле context каждой подзадачи укажи, КАКИЕ ноды blueprint она реализует
+  (по name), и какие connections/field_mapping к ним относятся.
 - Верни ТОЛЬКО валидный JSON.
 """
 
@@ -172,6 +187,7 @@ class AgentHandlers:
                     "input_data": json.dumps({
                         "context": sd.get("context", ""),
                         "architecture_summary": agent_response_str[:2000],
+                        "workflow_blueprint": blueprint_str,
                     }, ensure_ascii=False),
                     "status": "pending",
                     "depends_on": json.dumps(sd.get("depends_on", []), ensure_ascii=False),

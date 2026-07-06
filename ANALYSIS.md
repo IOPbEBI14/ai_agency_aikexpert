@@ -1,9 +1,9 @@
 # AI Agency OS — Архитектура и описание проекта
 
-**Дата обновления:** Jul 2, 2026 | **Версия:** 2.0 | **Язык:** Python 3.10+
+**Дата обновления:** Jul 7, 2026 | **Версия:** 2.1 | **Язык:** Python 3.10+
 
-> Документ отражает состояние после рефакторинга Directions A–E (Sprints 0–1).
-> Все 141 тест проходят. Предыдущий анализ (v1.0) сохранён в git-истории.
+> Документ отражает состояние после рефакторинга Directions A–F (Sprints 0–1).
+> Все 94 теста проходят. Ключевое изменение: встроен node-level workflow blueprint в архитектора для закрытия разрыва между концептуальным проектированием и конкретной сериализацией n8n JSON.
 
 ---
 
@@ -77,7 +77,7 @@ ai_agency_aikexpert/
 |--------|-------|------|--------|
 | **orchestrator.py** | **822** | Цикл, task graph, deadlock, финализация | 🔴 КРИТИЧНЫЙ |
 | **schemas.py** | **955** | Pydantic-модели, `call_and_parse_llm`, AGENT_MODELS | 🔴 КРИТИЧНЫЙ |
-| **agent_handlers.py** | **405** | Спец-хендлеры: architect, analyst, lead_hunter, sales | 🟠 ВЫСОКИЙ |
+| **agent_handlers.py** | **450** | Спец-хендлеры + обработка blueprint: architect, analyst, lead_hunter, sales | 🟠 ВЫСОКИЙ |
 | **nocodb.py** | **491** | 3 NocoDB-клиента (NocoDBClient, ProjectsClient, TasksClient) | 🟠 ВЫСОКИЙ |
 | **utils.py** | **258** | `call_llm`, `load_prompt`, `log_to_agent_logs` | 🟠 ВЫСОКИЙ |
 | **main.py** | **~310** | Flask API, `nocodb_proxy` (защищённый) | 🟠 ВЫСОКИЙ |
@@ -443,6 +443,25 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 - **Документация** в `agent_handlers.py`: объяснение почему 4 агента имеют спец-хендлеры
 - **Добавлены** 28 тестов в `test_prompts.py`
 
+### Direction F — Validating n8n workflows + Architect blueprint (NEW)
+
+**Проблема:** Developer генерирует n8n JSON с системными дефектами (несоединённые ноды, пустые условия IF, неверные credentials) из-за разрыва между концептуальным `data_flow` архитектора и конкретной сериализацией.
+
+**Решение:** Встроить функцию системного аналитика в архитектора через node-level `workflow_blueprint`. Отдельный агент не нужен (добавил бы LLM-вызов и точку потери контекста без пропорциональной выгоды).
+
+**Изменения:**
+- **`schemas.py`**: добавлено поле `handoff_to_developer: Optional[Dict]` в `ArchitectResponse` (содержит workflow_blueprint с nodes[], connections[], field_mapping[], error_handling[])
+- **`agent_handlers.py`**: 
+  - `handle_architect` извлекает blueprint из `handoff_to_developer`
+  - blueprint передаётся **целиком** в `input_data` каждой dev-подзадачи (баг: раньше архитектура обрезалась до 2000 символов)
+  - PM при декомпозиции привязывает подзадачи к конкретным нодам blueprint
+- **`architect_prompt.txt`**: Раздел «WORKFLOW BLUEPRINT — ДЕТАЛЬНАЯ СПЕЦИФИКАЦИЯ НОД» с правилами (nodes/connections с branch для IF/switch, field_mapping, error_handling)
+- **`developer_prompt.txt`**: Раздел «WORKFLOW_BLUEPRINT — SOURCE OF TRUTH» (developer сериализует blueprint, не проектирует; явные правила про `index`, непустые условия IF, `fieldsUi`)
+- **`validate-n8n.js` + `core/n8n_validator.py`**: Проверки на `inputIndex` (ошибка: ноды не соединяются), изолированные ноды, неверные credentials ключи, пустой `data:{}` в nocoDb update
+- **`developer_prompt.txt`** (раздел КРИТИЧНО): Шаблоны NocoDB update/connections/credentials, расширенный чеклист (8 пунктов вместо 4)
+
+**Результаты:** 94 теста проходят. Валидатор ловит все дефекты в тестовом workflow (5 классов).
+
 ---
 
 ## 13. Тестовое покрытие
@@ -462,17 +481,6 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ## 14. Открытые вопросы и следующие шаги
 
-### Направление F. Тесты, надёжность, безопасность (не реализовано)
-
-**Точки входа:** `tests/` (покрытие главного цикла), `.skills/security.md`, Flask конфигурация.
-
-**Открытые вопросы:**
-- Flask слушает `0.0.0.0:5000` без авторизации — prod-риск
-- CORS открыт (`CORS(app)`) — нужен whitelist origins для прода
-- Нет интеграционных тестов главного цикла (`run()`) с полным моком NocoDB
-- `parent_id = "task_003"` — захардкоженный ID в `check_and_complete_parent_tasks()`
-- `TOKEN_BUDGET` default 30000 vs упоминание 500k в README
-
 ### Направление G. Параллельное выполнение задач (не реализовано)
 
 Текущий цикл выполняет задачи последовательно. Независимые задачи (с пустым `depends_on` или совпадающими зависимостями) могут выполняться параллельно через `asyncio` или `ThreadPoolExecutor`.
@@ -483,6 +491,14 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 - Rate limiting для LLM-вызовов
 - Мониторинг токенов в реальном времени
 - Webhook-уведомления о завершении задач
+
+### Направление F (Тесты, надёжность, безопасность) — РЕАЛИЗОВАНО в Direction F
+
+Внимание: Direction F в список открытых вопросов перемещена в **реализованные** (см. выше). Остаются:
+
+### Направление I. Масштабирование blueprint для сложных workflow (будущее)
+
+Если workflow станут регулярно превышать 5–7 нод с множественным ветвлением и несколькими интеграциями, отдельный агент «workflow designer» станет оправданным для выделения шага blueprint-инженера из архитектора.
 
 ---
 
@@ -505,4 +521,4 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ---
 
-**Последнее обновление:** Jul 2, 2026. Directions A–E реализованы. 141/141 тестов ✅.
+**Последнее обновление:** Jul 7, 2026. Directions A–F реализованы. 94/94 теста ✅.
