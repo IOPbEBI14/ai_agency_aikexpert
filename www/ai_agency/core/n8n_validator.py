@@ -53,26 +53,34 @@ _runtime_checked: bool = False
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _find_runtime_binary() -> Optional[str]:
-    """Ищет бинарник n8n-workflow-validator (кэшируется на процесс).
+    """Ищет исполняемый файл валидатора (кэшируется на процесс).
 
     Порядок поиска:
-      1. ./node_modules/.bin/n8n-workflow-validator  (локальная установка)
-      2. n8n-workflow-validator                       (глобальная установка)
+      1. ./validate-n8n.js           (локальный Node.js скрипт, без зависимостей)
+      2. ./node_modules/.bin/n8n-workflow-validator  (npm пакет)
+      3. n8n-workflow-validator                      (глобальная установка)
 
-    npx намеренно НЕ используется: при отсутствии пакета он скачивает
-    n8n-workflow + n8n-nodes-base (~300 МБ), что занимает несколько минут.
-    Для установки выполни: cd www/ai_agency && npm install
+    validate-n8n.js — это drop-in замена без внешних зависимостей.
+    Для upgrade на official пакет: npm install -g n8n-workflow-validator
     """
     global _runtime_bin, _runtime_checked
     if _runtime_checked:
         return _runtime_bin
+
     _runtime_checked = True
 
     if os.getenv(_ENV_DISABLE_RUNTIME, "").lower() in ("off", "0", "false"):
         logger.info("ℹ️  Runtime-валидация n8n отключена (N8N_VALIDATOR_RUNTIME=off)")
         return None
 
-    # Локальный бинарник (предпочтительный вариант)
+    # 1. Локальный Node.js скрипт (приоритет: без зависимостей)
+    local_script = os.path.join(_PROJECT_DIR, "validate-n8n.js")
+    if os.path.isfile(local_script):
+        _runtime_bin = local_script
+        logger.info(f"✅ n8n-валидатор найден локально: validate-n8n.js")
+        return _runtime_bin
+
+    # 2. npm пакет (локальная установка)
     bin_name = "n8n-workflow-validator.cmd" if sys.platform == "win32" else "n8n-workflow-validator"
     local_bin = os.path.join(_PROJECT_DIR, "node_modules", ".bin", bin_name)
     if os.path.isfile(local_bin):
@@ -80,7 +88,7 @@ def _find_runtime_binary() -> Optional[str]:
         logger.info(f"✅ n8n-workflow-validator найден локально: {local_bin}")
         return _runtime_bin
 
-    # Глобальная установка
+    # 3. Глобальная установка
     try:
         result = subprocess.run(
             ["n8n-workflow-validator", "--version"],
@@ -95,8 +103,8 @@ def _find_runtime_binary() -> Optional[str]:
         pass
 
     logger.info(
-        "ℹ️  n8n-workflow-validator не установлен — используется heuristic-валидатор. "
-        "Для включения runtime: cd www/ai_agency && npm install"
+        "ℹ️  Валидатор не установлен — используется heuristic-валидатор. "
+        "Для upgrade на official пакет: npm install -g n8n-workflow-validator"
     )
     return None
 
@@ -162,7 +170,12 @@ def validate_n8n_workflow_runtime(
             json.dump(workflow, tf, ensure_ascii=False)
             tmp_path = tf.name
 
-        cmd = [binary, tmp_path]
+        # Если это .js скрипт, добавим `node` префикс
+        if binary.endswith('.js'):
+            cmd = ["node", binary, tmp_path]
+        else:
+            cmd = [binary, tmp_path]
+
         logger.info(f"🔍 Runtime-валидация n8n: {' '.join(cmd)}")
         result = subprocess.run(
             cmd,
@@ -293,6 +306,44 @@ def _check_empty_options(node: Dict[str, Any], short_type: str, label: str, issu
             )
 
 
+def _check_nocodb_update(node: Dict[str, Any], label: str, issues: List[str]) -> None:
+    params = node.get("parameters", {})
+    if params.get("operation") != "update":
+        return
+    if isinstance(params.get("data"), dict):
+        issues.append(
+            f'[{label}] nocoDb update: поле "data":{{}} не сохраняет значения. '
+            f'Используй "fieldsUi": {{"fieldValues": [{{"fieldName":"synced","fieldValue":"true"}}]}} '
+            f'(typeVersion 2) или "updateFields": {{"fieldValues":[...]}} (typeVersion 1).'
+        )
+
+
+_KNOWN_CRED_KEYS: Dict[str, List[str]] = {
+    "nocoDb":       ["nocoDbApiToken", "nocoDbApi"],
+    "telegram":     ["telegramApi"],
+    "httpRequest":  ["httpBasicAuth", "httpHeaderAuth", "httpDigestAuth",
+                     "oAuth1Api", "oAuth2Api", "httpCustomAuth"],
+    "gmail":        ["gmailOAuth2"],
+    "slack":        ["slackOAuth2Api", "slackApi"],
+}
+
+
+def _check_credentials_keys(node: Dict[str, Any], short_type: str, label: str, issues: List[str]) -> None:
+    expected = _KNOWN_CRED_KEYS.get(short_type)
+    if not expected:
+        return
+    creds = node.get("credentials")
+    if not isinstance(creds, dict):
+        return
+    for key in creds:
+        if key not in expected:
+            issues.append(
+                f'[{label}] credentials: ключ "{key}" недопустим для {short_type}. '
+                f'Ожидается один из: {", ".join(expected)}. '
+                f'Неверный ключ = "Cannot read properties of undefined" при выполнении.'
+            )
+
+
 def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
     """Python-only структурная валидация (fallback если Node.js недоступен)."""
     issues: List[str] = []
@@ -355,27 +406,73 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
             _check_set_node(node, label, issues)
         elif short == "httpRequest":
             _check_http_request(node, label, issues)
+        elif short == "nocoDb":
+            _check_nocodb_update(node, label, issues)
         _check_empty_options(node, short, label, issues)
+        _check_credentials_keys(node, short, label, issues)
 
-    # Связность connections
+    # ── Связность connections: inputIndex, цели, изолированные ноды ──────────
+    _TRIGGER_TYPES = frozenset({
+        "scheduleTrigger", "webhook", "emailTrigger", "manualTrigger",
+        "mqttTrigger", "amqpTrigger", "kafkaTrigger", "n8nTrigger", "errorTrigger",
+    })
+
+    connected_sources: set = set()
+    connected_targets: set = set()
+
     if isinstance(connections, dict):
         for src, outputs in connections.items():
             if src not in node_names:
                 issues.append(f'connections: источник "{src}" не найден в nodes.')
+            connected_sources.add(src)
             if not isinstance(outputs, dict):
+                issues.append(f'connections["{src}"] должен быть объектом.')
                 continue
             for _okey, buckets in outputs.items():
                 if not isinstance(buckets, list):
-                    issues.append(f'connections["{src}"].main должен быть массивом.')
+                    issues.append(f'connections["{src}"].main должен быть массивом массивов.')
                     continue
                 for bucket in buckets:
                     if not isinstance(bucket, list):
                         continue
                     for link in bucket:
-                        if isinstance(link, dict) and link.get("node") not in node_names:
+                        if not isinstance(link, dict):
+                            continue
+                        # inputIndex вместо index — ноды не соединяются при импорте
+                        if "inputIndex" in link:
                             issues.append(
-                                f'connections["{src}"]: цель "{link.get("node")}" не найдена в nodes.'
+                                f'connections["{src}"]: ключ "inputIndex" должен быть "index". '
+                                f'n8n игнорирует "inputIndex" — соединение не создаётся.'
                             )
+                        target = link.get("node")
+                        if target:
+                            if target not in node_names:
+                                issues.append(
+                                    f'connections["{src}"]: цель "{target}" не найдена в nodes.'
+                                )
+                            connected_targets.add(target)
+
+    # Изолированные ноды
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        name = node.get("name")
+        if not name:
+            continue
+        short = (node.get("type") or "").split(".")[-1]
+        is_trigger = short in _TRIGGER_TYPES
+        in_src = name in connected_sources
+        in_tgt = name in connected_targets
+        if is_trigger and not in_src:
+            issues.append(
+                f'[{name}] trigger-нода не подключена ни к одной следующей ноде. '
+                f'Добавь её в "connections" как источник.'
+            )
+        elif not is_trigger and not in_src and not in_tgt:
+            issues.append(
+                f'[{name}] нода полностью изолирована — отсутствует в "connections" '
+                f'ни как источник, ни как цель. Подключи её или удали из "nodes".'
+            )
 
     return (len(issues) == 0), issues
 

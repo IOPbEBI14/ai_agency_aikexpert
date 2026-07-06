@@ -142,11 +142,71 @@
 }
 ❌ НЕПРАВИЛЬНО: "bodyContentType": "json", "body": { "values": {...} }  ← формат старой версии
 
+5) NocoDB — Update Record (typeVersion 2):
+{
+  "parameters": {
+    "operation": "update",
+    "tableId": "={{ $env.NOCODB_TABLE_ID }}",
+    "rowId": "={{ $json.Id }}",
+    "fieldsUi": {
+      "fieldValues": [
+        { "fieldName": "synced", "fieldValue": "true" },
+        { "fieldName": "bpium_id", "fieldValue": "={{ $json.bpium_id }}" }
+      ]
+    }
+  },
+  "type": "n8n-nodes-base.nocoDb",
+  "typeVersion": 2,
+  "position": [1450, 300],
+  "id": "<uuid>",
+  "name": "NocoDB Update Record",
+  "credentials": { "nocoDbApiToken": { "id": "<cred_id>", "name": "NocoDB account" } }
+}
+❌ НЕПРАВИЛЬНО: "data": { "synced": true }  ← dict вместо fieldsUi — поля НЕ сохраняются!
+❌ НЕПРАВИЛЬНО: "credentials": { "NocoDB": { ... } }  ← имя ключа должно быть "nocoDbApiToken"
+
+6) Connections — поле "index" (НЕ "inputIndex"):
+"connections": {
+  "Schedule Trigger": {
+    "main": [
+      [
+        { "node": "Get Records", "type": "main", "index": 0 }
+      ]
+    ]
+  }
+}
+❌ НЕПРАВИЛЬНО: { "node": "Get Records", "type": "main", "inputIndex": 0 }
+   n8n использует поле "index", а не "inputIndex". Неправильное имя = соединение не создаётся.
+
+ПРАВИЛА ПОДКЛЮЧЕНИЯ НОД:
+- КАЖДАЯ нода (кроме terminal) должна быть присутствовать в "connections" как источник ИЛИ цель.
+- Trigger-нода ОБЯЗАНА быть источником в "connections".
+- Если нода есть в "nodes", но не присутствует в "connections" — это ошибка (изолированная нода).
+- В connections обязательны ВСЕ ветки IF: true-ветка (индекс 0) и false-ветка (индекс 1).
+  Пример: "main": [ [ {true-branch} ], [ {false-branch} ] ]
+
+ПРАВИЛА CREDENTIALS:
+- nocoDb       → "credentials": { "nocoDbApiToken": { "id": "...", "name": "..." } }
+- telegram     → "credentials": { "telegramApi": { ... } }
+- httpRequest  → "credentials": { "httpBasicAuth" / "httpHeaderAuth" / "oAuth2Api": { ... } }
+❌ НИКОГДА не используй ключ "NocoDB", "Telegram", "HTTP Basic Auth" — только camelCase имена выше.
+
+ПРАВИЛА IF-УСЛОВИЙ:
+- Каждое условие в conditions.conditions ДОЛЖНО содержать реальные выражения leftValue и rightValue.
+- НЕ оставляй пустые массив "conditions.conditions": [] — это неработающий IF.
+- Примеры правильных leftValue: "={{ $json.statusCode }}", "={{ $json.id }}", "={{ $json.error }}"
+- Оператор задаётся как объект: "operator": { "type": "number", "operation": "equals" }
+
 ПЕРЕД ВОЗВРАТОМ ОТВЕТА проверь каждую ноду:
 ✓ interval / conditions.conditions / assignments.assignments — массивы?
 ✓ параметры соответствуют typeVersion?
 ✓ у каждой ноды есть type, typeVersion, position ([x,y]), parameters?
 ✓ все узлы в connections существуют в nodes?
+✓ в connections используется "index", НЕ "inputIndex"?
+✓ каждая нода подключена (нет изолированных нод)?
+✓ NocoDB update использует "fieldsUi.fieldValues", НЕ "data":{}?
+✓ credentials ключи — camelCase ("nocoDbApiToken", "telegramApi", etc.)?
+✓ IF-ноды имеют заполненные условия в conditions.conditions?
 
 ═══════════════════════════════════════════════════════════
 СТРОГАЯ СТРУКТУРА ОТВЕТА (JSON Schema)
