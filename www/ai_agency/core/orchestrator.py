@@ -665,23 +665,35 @@ class Orchestrator:
 ═══════════════════════════════════════════════════════════
 """
 
-    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
-        """Если все dev_* подзадачи завершены — помечает task_003 как completed."""
-        dev_subtasks: List[Dict] = []
-        for task in tasks:
-            task_id = task.get("task_id", "")
-            if task_id.startswith("dev_"):
-                dev_subtasks.append({"task_id": task_id, "status": task.get("status", "")})
+    @staticmethod
+    def _find_developer_placeholder(tasks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Возвращает placeholder developer-задачу из initial task graph.
 
+        Placeholder — это задача с agent_name=developer, task_id НЕ начинающимся с "dev_".
+        Создаётся PM в initial task graph (например task_003) и позже заменяется dev_* подзадачами.
+        """
+        for t in tasks:
+            tid = t.get("task_id", "")
+            if t.get("agent_name") == "developer" and not tid.startswith("dev_"):
+                return t
+        return None
+
+    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
+        """Если все dev_* подзадачи завершены — помечает placeholder developer-задачу как completed.
+
+        Ранее метод был жёстко привязан к "task_003". Теперь placeholder ищется динамически:
+        agent_name=developer, task_id не начинается с "dev_".
+        """
+        dev_subtasks = [t for t in tasks if t.get("task_id", "").startswith("dev_")]
         if not dev_subtasks:
             return
-        if not all(st["status"] == "completed" for st in dev_subtasks):
+        if not all(t.get("status") == "completed" for t in dev_subtasks):
             return
 
-        parent_id = "task_003"
-        parent_task = next((t for t in tasks if t.get("task_id") == parent_id), None)
+        parent_task = self._find_developer_placeholder(tasks)
         if parent_task and parent_task.get("status") != "completed":
-            logger.info(f"✅ Все подзадачи {parent_id} завершены. Помечаем родителя.")
+            parent_id = parent_task.get("task_id")
+            logger.info(f"✅ Все {len(dev_subtasks)} dev_* подзадач завершены. Помечаем '{parent_id}' как completed.")
             self.tasks_db.update_task(
                 parent_task.get("Id"),
                 {
@@ -694,7 +706,12 @@ class Orchestrator:
     def _expand_completed_with_parents(
         self, tasks: List[Dict[str, Any]], completed_ids: List[str]
     ) -> List[str]:
-        """Добавляет task_003 в completed_ids, если все его dev_* подзадачи завершены."""
+        """Добавляет placeholder developer-задачу в completed_ids, если все dev_* завершены.
+
+        Используется в _find_ready_tasks для разблокировки qa/tech_writer ДО того, как
+        check_and_complete_parent_tasks успеет записать completed в БД (оба вызова в одном цикле).
+        Ранее было жёстко задано "task_003" — теперь ищется динамически.
+        """
         expanded = set(completed_ids)
         dev_statuses = [
             t.get("status", "")
@@ -702,7 +719,9 @@ class Orchestrator:
             if t.get("task_id", "").startswith("dev_")
         ]
         if dev_statuses and all(s == "completed" for s in dev_statuses):
-            expanded.add("task_003")
+            placeholder = self._find_developer_placeholder(tasks)
+            if placeholder:
+                expanded.add(placeholder.get("task_id"))
         return list(expanded)
 
     def _find_ready_tasks(

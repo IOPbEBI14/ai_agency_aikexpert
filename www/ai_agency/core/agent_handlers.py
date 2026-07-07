@@ -204,6 +204,35 @@ class AgentHandlers:
                 })
                 logger.info(f"  → Подзадача создана: {sd.get('subtask_id')}")
 
+            # Помечаем placeholder developer-задачу из initial task graph как "пропущена".
+            # Проблема: после завершения architect в pending остаётся задача с agent_name=developer
+            # (например task_003) с depends_on=[task_architect]. Оркестратор выбирал её ПЕРВОЙ,
+            # developer выполнял весь workflow сразу, а dev_001/dev_002 запускались ПОСЛЕ qa/tech_writer.
+            # Решение: находим placeholder-задачу и сразу помечаем её failed (не pending → не выполняется).
+            # check_and_complete_parent_tasks позже переведёт её в completed, когда все dev_* готовы.
+            try:
+                all_project_tasks = self.orch.tasks_db.get_tasks_by_project(project_id)
+                for pt in all_project_tasks:
+                    pt_task_id = pt.get("task_id", "")
+                    if (
+                        pt.get("agent_name") == "developer"
+                        and pt.get("status") == "pending"
+                        and not pt_task_id.startswith("dev_")
+                    ):
+                        self.orch.tasks_db.update_task(pt.get("Id"), {
+                            "status": "failed",
+                            "qa_feedback": (
+                                f"Placeholder: заменена подзадачами {', '.join(subtask_ids)}. "
+                                f"Будет помечена completed автоматически после выполнения всех dev_*."
+                            ),
+                        })
+                        logger.info(
+                            f"⏭️ Placeholder developer-задача '{pt_task_id}' переведена в failed "
+                            f"(заменена {len(subtasks)} подзадачами)"
+                        )
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось пометить placeholder developer-задачу: {e}")
+
             self.orch.tasks_db.update_task(task_db_id, {
                 "status": "completed",
                 "qa_approved": "true",
