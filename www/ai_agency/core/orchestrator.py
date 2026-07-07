@@ -415,14 +415,14 @@ class Orchestrator:
                 "description": t.get("task_description"),
                 "output":      (t.get("output_data") or "")[:500],
                 "status":      t.get("status"),
-                "iterations":  t.get("iteration_count", 0),
-                "tokens":      t.get("tokens_used", 0),
+                "iterations":  t.get("iteration_count") or 0,
+                "tokens":      t.get("tokens_used") or 0,
             }
             for t in tasks
         ]
 
-        total_tokens     = sum(t.get("tokens_used", 0) for t in tasks)
-        total_iterations = sum(t.get("iteration_count", 0) for t in tasks)
+        total_tokens     = sum(t.get("tokens_used") or 0 for t in tasks)
+        total_iterations = sum(t.get("iteration_count") or 0 for t in tasks)
         completed_count  = sum(1 for t in tasks if t.get("status") == "completed")
         tokens_per_agent = {}
         for t in tasks:
