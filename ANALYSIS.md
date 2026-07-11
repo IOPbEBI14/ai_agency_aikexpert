@@ -100,18 +100,21 @@ ai_agency_aikexpert/
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  Dashboard (index.html)                     │
-│  • Real-time статус задач и агентов                         │
+│  • Real-time статус задач (polling 3с)                      │
+│  • Human-review: комментарии при needs_human_review         │
+│  • Парсинг output_data + сохранение n8n workflows           │
 │  • Markdown-рендеринг финального отчёта                     │
 └────────────────────┬────────────────────────────────────────┘
                      │ HTTP (polling)
                      ▼
        ┌──────────────────────────────┐
        │      Flask API (main.py)     │
-       │  GET  /api/agency/status     │
+       │  GET  /api/agency/status     │  ← tasks + logs + review_tasks
        │  POST /api/agency/start      │
        │  POST /api/agency/stop       │
        │  POST /api/agency/resume     │
-       │  POST /api/agency/human-review│
+       │  POST /api/agency/human-review│ ← комментарий + resume
+       │  GET/POST /api/agency/workflows│ ← сохранение n8n JSON
        │  GET/POST/PATCH /api/nocodb  │  ← защищённый прокси
        └────────────┬─────────────────┘
                     │ threading.Thread
