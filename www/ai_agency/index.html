@@ -55,6 +55,42 @@
             border-bottom: 1px solid var(--line);
         }
 
+        .header-right {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .nav-btn {
+            font-family: var(--font);
+            font-size: 13px;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: #f7fffb;
+            padding: 8px 14px;
+            cursor: pointer;
+        }
+
+        .nav-btn:hover {
+            background: #0b463a;
+            border-color: #0b463a;
+        }
+
+        .nav-btn.ghost {
+            background: transparent;
+            color: var(--ink);
+            border-color: var(--line);
+        }
+
+        .nav-btn.ghost:hover {
+            background: var(--ink);
+            color: var(--bg);
+            border-color: var(--ink);
+        }
+
         .brand {
             font-size: 28px;
             font-weight: 600;
@@ -573,9 +609,12 @@
                     <span>Оркестрация агентов · n8n · NocoDB · real-time мониторинг</span>
                 </div>
             </div>
-            <div class="phase-pill">
-                <span class="dot" id="live-dot"></span>
-                <span id="phase-text">фаза: —</span>
+            <div class="header-right">
+                <button type="button" class="nav-btn" id="btn-history" onclick="toggleHistoryPanel()">История запусков</button>
+                <div class="phase-pill">
+                    <span class="dot" id="live-dot"></span>
+                    <span id="phase-text">фаза: —</span>
+                </div>
             </div>
         </header>
 
@@ -604,7 +643,7 @@
             <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
             <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
             <button onclick="increaseTokens()">+ Токены</button>
-            <button onclick="toggleHistoryPanel()">История запусков</button>
+            <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
         </section>
 
@@ -790,9 +829,18 @@ function renderHistoryChrome() {
 
 async function toggleHistoryPanel() {
     const panel = document.getElementById('history-panel');
+    if (!panel) {
+        toast('Панель истории не найдена — обновите страницу (Ctrl+F5)');
+        return;
+    }
     const willShow = !panel.classList.contains('visible');
     panel.classList.toggle('visible', willShow);
-    if (willShow) await loadProjectsList();
+    const btn = document.getElementById('btn-history');
+    if (btn) btn.classList.toggle('ghost', willShow);
+    if (willShow) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await loadProjectsList();
+    }
 }
 
 async function loadProjectsList() {
