@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from core.config import Config
@@ -86,10 +86,11 @@ def _build_tasks_payload(project_id: Any):
         return tasks_payload, review_tasks
     try:
         for t in tasks_db.get_tasks_by_project(project_id):
+            agent_name = t.get("agent_name")
             item = {
                 "id": t.get("Id"),
                 "task_id": t.get("task_id"),
-                "agent_name": t.get("agent_name"),
+                "agent_name": agent_name,
                 "task_description": (t.get("task_description") or "")[:600],
                 "status": t.get("status"),
                 "qa_approved": t.get("qa_approved"),
@@ -102,6 +103,7 @@ def _build_tasks_payload(project_id: Any):
                 "has_n8n_json": False,
                 "workflow_name": None,
                 "output_preview": None,
+                "artifact": None,
             }
             parsed = _try_parse_json(t.get("output_data"))
             if parsed:
@@ -119,17 +121,261 @@ def _build_tasks_payload(project_id: Any):
                         or n8n.get("name")
                         or t.get("task_id")
                     )
+                item["artifact"] = _build_agent_artifact(agent_name, parsed)
             tasks_payload.append(item)
             if t.get("status") in ("needs_human_review", "failed"):
                 review_tasks.append({
                     "task_id": t.get("task_id"),
-                    "agent_name": t.get("agent_name"),
+                    "agent_name": agent_name,
                     "status": t.get("status"),
                     "qa_feedback": (t.get("qa_feedback") or "")[:500],
                 })
     except Exception as e:
         logger.warning(f"⚠️ Не удалось загрузить задачи проекта {project_id}: {e}")
     return tasks_payload, review_tasks
+
+
+def _build_agent_artifact(agent_name: Optional[str], parsed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Структурированный артефакт для карточек architect / tech_writer / crm_customizer."""
+    if not agent_name or not parsed:
+        return None
+
+    if agent_name == "architect":
+        systems = []
+        for s in parsed.get("systems") or []:
+            if isinstance(s, dict):
+                systems.append({
+                    "name": s.get("name") or "",
+                    "role": s.get("role") or "",
+                    "api_available": s.get("api_available"),
+                    "limitations": s.get("limitations"),
+                })
+        data_flow = []
+        for step in parsed.get("data_flow") or []:
+            if isinstance(step, dict):
+                data_flow.append({
+                    "step": step.get("step"),
+                    "from": step.get("from") or step.get("from_"),
+                    "to": step.get("to"),
+                    "trigger": step.get("trigger"),
+                    "data": step.get("data"),
+                    "transformation": step.get("transformation"),
+                })
+        handoff = parsed.get("handoff_to_developer") or {}
+        blueprint = handoff.get("workflow_blueprint") if isinstance(handoff, dict) else None
+        nodes = (blueprint or {}).get("nodes") if isinstance(blueprint, dict) else []
+        return {
+            "kind": "architecture",
+            "title": parsed.get("summary") or "Архитектура",
+            "summary": parsed.get("summary") or "",
+            "approach": parsed.get("approach") or "",
+            "systems": systems,
+            "data_flow": data_flow,
+            "tech_stack": parsed.get("tech_stack") or [],
+            "estimated_complexity": parsed.get("estimated_complexity"),
+            "estimated_time_hours": parsed.get("estimated_time_hours"),
+            "risks": parsed.get("risks") or [],
+            "recommendations": parsed.get("recommendations") or "",
+            "blueprint_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
+            "downloadable": True,
+            "download_name": "architecture",
+        }
+
+    if agent_name == "tech_writer":
+        documents = []
+        for doc in parsed.get("documents") or []:
+            if not isinstance(doc, dict):
+                continue
+            sections = doc.get("sections") or []
+            documents.append({
+                "title": doc.get("title") or "Документ",
+                "type": doc.get("type") or "",
+                "audience": doc.get("audience") or "",
+                "sections_count": len(sections) if isinstance(sections, list) else 0,
+                "preview": (
+                    (sections[0].get("content") or "")[:280]
+                    if isinstance(sections, list) and sections and isinstance(sections[0], dict)
+                    else ""
+                ),
+            })
+        return {
+            "kind": "documents",
+            "title": parsed.get("summary") or "Документация",
+            "summary": parsed.get("summary") or "",
+            "documents": documents,
+            "checklist": parsed.get("checklist") or [],
+            "faq": [
+                {"question": f.get("question"), "answer": f.get("answer")}
+                for f in (parsed.get("faq") or [])
+                if isinstance(f, dict)
+            ][:20],
+            "downloadable": True,
+            "download_name": "tech_writer_docs",
+        }
+
+    if agent_name == "crm_customizer":
+        entities = []
+        for e in parsed.get("entities") or []:
+            if isinstance(e, dict):
+                entities.append(e.get("name") or e.get("entity_name") or str(e))
+        pipelines = []
+        for p in parsed.get("pipelines") or []:
+            if isinstance(p, dict):
+                pipelines.append(p.get("name") or p.get("pipeline_name") or str(p))
+        return {
+            "kind": "crm_setup",
+            "title": parsed.get("summary") or "Настройка CRM",
+            "summary": parsed.get("summary") or "",
+            "platform": parsed.get("platform") or "",
+            "setup_steps": parsed.get("setup_steps") or [],
+            "entities": entities,
+            "pipelines": pipelines,
+            "field_mapping_count": len(parsed.get("field_mapping") or []),
+            "notes": parsed.get("notes") or "",
+            "downloadable": True,
+            "download_name": "crm_setup_guide",
+        }
+
+    return None
+
+
+def _artifact_to_markdown(agent_name: str, parsed: Dict[str, Any]) -> str:
+    """Собирает markdown-файл из output_data агента."""
+    lines: list = []
+
+    if agent_name == "architect":
+        lines.append(f"# {parsed.get('summary') or 'Архитектура'}")
+        lines.append("")
+        if parsed.get("approach"):
+            lines.append("## Подход")
+            lines.append(str(parsed["approach"]))
+            lines.append("")
+        if parsed.get("tech_stack"):
+            lines.append("## Стек")
+            for item in parsed["tech_stack"]:
+                lines.append(f"- {item}")
+            lines.append("")
+        if parsed.get("systems"):
+            lines.append("## Системы")
+            for s in parsed["systems"]:
+                if not isinstance(s, dict):
+                    continue
+                lim = f" — {s.get('limitations')}" if s.get("limitations") else ""
+                lines.append(
+                    f"- **{s.get('name')}** ({s.get('role')})"
+                    f"{', API' if s.get('api_available') else ''}{lim}"
+                )
+            lines.append("")
+        if parsed.get("data_flow"):
+            lines.append("## Поток данных")
+            for step in parsed["data_flow"]:
+                if not isinstance(step, dict):
+                    continue
+                fr = step.get("from") or step.get("from_")
+                lines.append(
+                    f"{step.get('step')}. {fr} → {step.get('to')} "
+                    f"(триггер: {step.get('trigger')})"
+                )
+                if step.get("data"):
+                    lines.append(f"   - Данные: {step['data']}")
+                if step.get("transformation"):
+                    lines.append(f"   - Трансформация: {step['transformation']}")
+            lines.append("")
+        if parsed.get("risks"):
+            lines.append("## Риски")
+            for r in parsed["risks"]:
+                lines.append(f"- {r}")
+            lines.append("")
+        if parsed.get("recommendations"):
+            lines.append("## Рекомендации")
+            lines.append(str(parsed["recommendations"]))
+            lines.append("")
+        handoff = parsed.get("handoff_to_developer")
+        if isinstance(handoff, dict) and handoff.get("workflow_blueprint"):
+            bp = handoff["workflow_blueprint"]
+            lines.append("## Workflow blueprint")
+            for node in bp.get("nodes") or []:
+                if isinstance(node, dict):
+                    lines.append(
+                        f"- `{node.get('name')}` ({node.get('type')}): {node.get('purpose') or ''}"
+                    )
+            lines.append("")
+
+    elif agent_name == "tech_writer":
+        lines.append(f"# {parsed.get('summary') or 'Документация'}")
+        lines.append("")
+        for doc in parsed.get("documents") or []:
+            if not isinstance(doc, dict):
+                continue
+            lines.append(f"## {doc.get('title') or 'Документ'}")
+            lines.append(f"*Тип: {doc.get('type') or '—'} · Аудитория: {doc.get('audience') or '—'}*")
+            lines.append("")
+            for sec in doc.get("sections") or []:
+                if not isinstance(sec, dict):
+                    continue
+                lines.append(f"### {sec.get('title') or 'Раздел'}")
+                lines.append(str(sec.get("content") or ""))
+                lines.append("")
+        if parsed.get("faq"):
+            lines.append("## FAQ")
+            for item in parsed["faq"]:
+                if isinstance(item, dict):
+                    lines.append(f"**Q:** {item.get('question')}")
+                    lines.append(f"**A:** {item.get('answer')}")
+                    lines.append("")
+        if parsed.get("checklist"):
+            lines.append("## Чек-лист")
+            for step in parsed["checklist"]:
+                lines.append(f"- [ ] {step}")
+            lines.append("")
+
+    elif agent_name == "crm_customizer":
+        lines.append(f"# {parsed.get('summary') or 'Настройка CRM'}")
+        lines.append("")
+        lines.append(f"**Платформа:** {parsed.get('platform') or '—'}")
+        lines.append("")
+        if parsed.get("setup_steps"):
+            lines.append("## Инструкция по настройке")
+            for i, step in enumerate(parsed["setup_steps"], 1):
+                lines.append(f"{i}. {step}")
+            lines.append("")
+        if parsed.get("entities"):
+            lines.append("## Сущности")
+            for e in parsed["entities"]:
+                if isinstance(e, dict):
+                    lines.append(f"- {e.get('name') or e}")
+                else:
+                    lines.append(f"- {e}")
+            lines.append("")
+        if parsed.get("pipelines"):
+            lines.append("## Воронки")
+            for p in parsed["pipelines"]:
+                if isinstance(p, dict):
+                    lines.append(f"- {p.get('name') or p}")
+                else:
+                    lines.append(f"- {p}")
+            lines.append("")
+        if parsed.get("field_mapping"):
+            lines.append("## Маппинг полей")
+            for m in parsed["field_mapping"]:
+                if isinstance(m, dict):
+                    lines.append(
+                        f"- {m.get('source') or m.get('from') or '?'} → "
+                        f"{m.get('target') or m.get('to') or '?'}"
+                    )
+            lines.append("")
+        if parsed.get("notes"):
+            lines.append("## Заметки")
+            lines.append(str(parsed["notes"]))
+            lines.append("")
+
+    else:
+        lines.append("# Результат агента")
+        lines.append("```json")
+        lines.append(json.dumps(parsed, ensure_ascii=False, indent=2))
+        lines.append("```")
+
+    return "\n".join(lines).strip() + "\n"
 
 
 def _build_pm_payload(project: Dict[str, Any], tasks_payload: list, review_tasks: list) -> Dict[str, Any]:
@@ -279,6 +525,48 @@ def get_project(project_id: int):
     view["is_current"] = project_id == current_id
     view["view_mode"] = "history"
     return jsonify(view)
+
+
+@app.route("/api/agency/artifacts/download", methods=["GET"])
+def download_artifact():
+    """Скачать markdown-артефакт задачи (architect / tech_writer / crm_customizer).
+
+    Query:
+      project_id: int
+      task_id: str
+    """
+    project_id = request.args.get("project_id", type=int)
+    task_id = request.args.get("task_id", type=str)
+    if not project_id or not task_id:
+        return jsonify({"error": "project_id и task_id обязательны"}), 400
+
+    tasks = tasks_db.get_tasks_by_project(project_id)
+    task = next((t for t in tasks if t.get("task_id") == task_id), None)
+    if not task:
+        return jsonify({"error": f"Задача {task_id} не найдена"}), 404
+
+    agent_name = task.get("agent_name") or ""
+    if agent_name not in ("architect", "tech_writer", "crm_customizer"):
+        return jsonify({"error": f"Скачивание не поддерживается для агента {agent_name}"}), 400
+
+    parsed = _try_parse_json(task.get("output_data"))
+    if not parsed:
+        return jsonify({"error": "У задачи нет валидного output_data"}), 400
+
+    markdown = _artifact_to_markdown(agent_name, parsed)
+    names = {
+        "architect": "architecture",
+        "tech_writer": "tech_writer_docs",
+        "crm_customizer": "crm_setup_guide",
+    }
+    filename = f"{names.get(agent_name, agent_name)}_{task_id}.md"
+    return Response(
+        markdown,
+        mimetype="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @app.route("/api/agency/start", methods=["POST"])

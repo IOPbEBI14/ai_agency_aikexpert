@@ -432,6 +432,53 @@
             max-height: 480px;
         }
 
+        .artifact {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .artifact h4 {
+            font-size: 12px;
+            font-weight: 600;
+            margin: 8px 0 4px;
+            color: var(--ink);
+        }
+
+        .artifact ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .artifact li {
+            margin: 2px 0;
+        }
+
+        .artifact .muted {
+            color: var(--muted);
+        }
+
+        .artifact-box {
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-top: 6px;
+            max-height: 140px;
+            overflow: auto;
+        }
+
+        .card.expanded .artifact-box {
+            max-height: 420px;
+        }
+
+        .flow-step {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .flow-step:last-child { border-bottom: none; }
+
         .card-footer {
             display: flex;
             justify-content: space-between;
@@ -1041,12 +1088,19 @@ function renderTasks() {
         card.onclick = (e) => toggleCardExpand(e, card, task);
 
         const preview = task.output_preview || task.task_description || '';
+        const artifactHtml = renderArtifact(task);
         const actions = [];
         if (!historyProjectId && ['failed', 'needs_human_review'].includes(task.status)) {
             actions.push(`<button type="button" onclick="prefillReview('${escapeHtml(task.task_id)}')">Комментарий</button>`);
         }
         if (task.has_n8n_json) {
             actions.push(`<button type="button" class="primary" onclick="saveWorkflow('${escapeHtml(task.task_id)}')">Сохранить workflow</button>`);
+        }
+        if (task.artifact && task.artifact.downloadable) {
+            actions.push(
+                `<button type="button" class="primary" onclick="downloadArtifact('${escapeHtml(task.task_id)}')">` +
+                `${artifactDownloadLabel(task.agent_name)}</button>`
+            );
         }
 
         card.innerHTML = `
@@ -1056,6 +1110,7 @@ function renderTasks() {
             </div>
             <div class="card-body">
                 <div class="card-desc">${escapeHtml(preview)}</div>
+                ${artifactHtml}
                 ${task.qa_feedback ? `<div class="feedback">${escapeHtml(task.qa_feedback)}</div>` : ''}
                 ${actions.length ? `<div class="card-actions" style="margin-top:10px">${actions.join('')}</div>` : ''}
             </div>
@@ -1066,6 +1121,101 @@ function renderTasks() {
         `;
         grid.appendChild(card);
     });
+}
+
+function artifactDownloadLabel(agent) {
+    if (agent === 'architect') return 'Скачать архитектуру (.md)';
+    if (agent === 'tech_writer') return 'Скачать инструкции (.md)';
+    if (agent === 'crm_customizer') return 'Скачать инструкцию CRM (.md)';
+    return 'Скачать (.md)';
+}
+
+function renderArtifact(task) {
+    const a = task.artifact;
+    if (!a || !a.kind) return '';
+
+    if (a.kind === 'architecture') {
+        const systems = (a.systems || []).map(s =>
+            `<li><strong>${escapeHtml(s.name)}</strong> <span class="muted">(${escapeHtml(s.role || '—')})</span>` +
+            `${s.limitations ? ` — ${escapeHtml(s.limitations)}` : ''}</li>`
+        ).join('');
+        const flow = (a.data_flow || []).map(step =>
+            `<div class="flow-step">` +
+            `<strong>${escapeHtml(step.step ?? '')}.</strong> ` +
+            `${escapeHtml(step.from || '?')} → ${escapeHtml(step.to || '?')}` +
+            `<div class="muted">${escapeHtml(step.trigger || '')}` +
+            `${step.transformation ? ` · ${escapeHtml(step.transformation)}` : ''}</div>` +
+            `</div>`
+        ).join('');
+        const stack = (a.tech_stack || []).map(escapeHtml).join(', ');
+        return `
+            <div class="artifact">
+                <h4>Архитектура</h4>
+                ${a.approach ? `<div>${escapeHtml(a.approach)}</div>` : ''}
+                ${stack ? `<div class="muted" style="margin-top:4px">Стек: ${stack}</div>` : ''}
+                ${systems ? `<h4>Системы</h4><ul>${systems}</ul>` : ''}
+                ${flow ? `<h4>Поток данных</h4><div class="artifact-box">${flow}</div>` : ''}
+                ${a.blueprint_nodes_count ? `<div class="muted">Blueprint: ${a.blueprint_nodes_count} нод</div>` : ''}
+                ${a.recommendations ? `<h4>Рекомендации</h4><div>${escapeHtml(a.recommendations)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    if (a.kind === 'documents') {
+        const docs = (a.documents || []).map(d =>
+            `<li><strong>${escapeHtml(d.title)}</strong> ` +
+            `<span class="muted">(${escapeHtml(d.type || 'doc')} · ${escapeHtml(d.audience || '—')})</span>` +
+            `${d.preview ? `<div class="muted">${escapeHtml(d.preview)}</div>` : ''}` +
+            `</li>`
+        ).join('');
+        const checklist = (a.checklist || []).slice(0, 8).map(s =>
+            `<li>${escapeHtml(s)}</li>`
+        ).join('');
+        return `
+            <div class="artifact">
+                <h4>Готовые инструкции</h4>
+                ${docs ? `<ul>${docs}</ul>` : '<div class="muted">Документы ещё не сформированы</div>'}
+                ${checklist ? `<h4>Чек-лист</h4><ul>${checklist}</ul>` : ''}
+                ${(a.faq || []).length ? `<div class="muted">FAQ: ${a.faq.length} пунктов</div>` : ''}
+            </div>
+        `;
+    }
+
+    if (a.kind === 'crm_setup') {
+        const steps = (a.setup_steps || []).map((s, i) =>
+            `<li><strong>${i + 1}.</strong> ${escapeHtml(s)}</li>`
+        ).join('');
+        const entities = (a.entities || []).map(escapeHtml).join(', ');
+        const pipelines = (a.pipelines || []).map(escapeHtml).join(', ');
+        return `
+            <div class="artifact">
+                <h4>Инструкция по настройке CRM</h4>
+                ${a.platform ? `<div><strong>Платформа:</strong> ${escapeHtml(a.platform)}</div>` : ''}
+                ${entities ? `<div class="muted">Сущности: ${entities}</div>` : ''}
+                ${pipelines ? `<div class="muted">Воронки: ${pipelines}</div>` : ''}
+                ${steps ? `<h4>Шаги</h4><div class="artifact-box"><ul>${steps}</ul></div>` : ''}
+                ${a.notes ? `<div class="muted">${escapeHtml(a.notes)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    return '';
+}
+
+function downloadArtifact(taskId) {
+    const projectId = state.project_id || historyProjectId;
+    if (!projectId || !taskId) {
+        toast('Нет project_id или task_id');
+        return;
+    }
+    const url = `${API}/artifacts/download?project_id=${encodeURIComponent(projectId)}&task_id=${encodeURIComponent(taskId)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Скачивание…');
 }
 
 function toggleCardExpand(e, card, task) {

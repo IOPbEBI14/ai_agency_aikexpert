@@ -102,6 +102,7 @@ ai_agency_aikexpert/
 │                  Dashboard (index.html)                     │
 │  • Real-time статус задач (polling 10с)                     │
 │  • История запусков: список проектов → карточки + отчёт     │
+│  • Артефакты: architecture / tech_writer / crm → скачать.md │
 │  • Human-review: комментарии при needs_human_review         │
 │  • Парсинг output_data + сохранение n8n workflows           │
 │  • Markdown-рендеринг финального отчёта                     │
