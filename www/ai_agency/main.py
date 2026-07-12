@@ -66,6 +66,118 @@ def _try_parse_json(raw: Any) -> Optional[Dict[str, Any]]:
             return None
 
 
+def _parse_metrics(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _build_tasks_payload(project_id: Any):
+    """Собирает tasks_payload и review_tasks для проекта."""
+    tasks_payload = []
+    review_tasks = []
+    if not project_id:
+        return tasks_payload, review_tasks
+    try:
+        for t in tasks_db.get_tasks_by_project(project_id):
+            item = {
+                "id": t.get("Id"),
+                "task_id": t.get("task_id"),
+                "agent_name": t.get("agent_name"),
+                "task_description": (t.get("task_description") or "")[:600],
+                "status": t.get("status"),
+                "qa_approved": t.get("qa_approved"),
+                "qa_feedback": (t.get("qa_feedback") or "")[:6000],
+                "iteration_count": t.get("iteration_count") or 0,
+                "max_iterations": t.get("max_iterations") or 3,
+                "tokens_used": t.get("tokens_used") or 0,
+                "depends_on": t.get("depends_on") or "[]",
+                "updated_at": t.get("updated_at") or "",
+                "has_n8n_json": False,
+                "workflow_name": None,
+                "output_preview": None,
+            }
+            parsed = _try_parse_json(t.get("output_data"))
+            if parsed:
+                item["output_preview"] = (
+                    parsed.get("summary")
+                    or parsed.get("pm_comment")
+                    or parsed.get("approach")
+                    or ""
+                )[:1500]
+                n8n = parsed.get("n8n_json")
+                if isinstance(n8n, dict) and n8n.get("nodes"):
+                    item["has_n8n_json"] = True
+                    item["workflow_name"] = (
+                        parsed.get("workflow_name")
+                        or n8n.get("name")
+                        or t.get("task_id")
+                    )
+            tasks_payload.append(item)
+            if t.get("status") in ("needs_human_review", "failed"):
+                review_tasks.append({
+                    "task_id": t.get("task_id"),
+                    "agent_name": t.get("agent_name"),
+                    "status": t.get("status"),
+                    "qa_feedback": (t.get("qa_feedback") or "")[:500],
+                })
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось загрузить задачи проекта {project_id}: {e}")
+    return tasks_payload, review_tasks
+
+
+def _build_pm_payload(project: Dict[str, Any], tasks_payload: list, review_tasks: list) -> Dict[str, Any]:
+    reasoning = project.get("reasoning") or ""
+    if isinstance(reasoning, str) and len(reasoning) > 1200:
+        reasoning = reasoning[:1200]
+    return {
+        "project_name": project.get("project_name") or "",
+        "phase": project.get("current_phase") or "",
+        "status": project.get("status") or "",
+        "client": project.get("client_name") or "",
+        "tokens_used": project.get("tokens_used") or 0,
+        "token_budget": project.get("token_budget") or Config.TOKEN_BUDGET,
+        "reasoning": reasoning,
+        "goal": (project.get("goal") or "")[:800],
+        "active_agents": [
+            t.get("agent_name") for t in tasks_payload if t.get("status") == "in_progress"
+        ],
+        "tasks_total": len(tasks_payload),
+        "tasks_completed": sum(1 for t in tasks_payload if t.get("status") == "completed"),
+        "tasks_failed": sum(1 for t in tasks_payload if t.get("status") == "failed"),
+        "review_count": len(review_tasks),
+    }
+
+
+def _project_view_payload(project: Dict[str, Any]) -> Dict[str, Any]:
+    """Единый payload для live status и просмотра истории."""
+    project_id = project.get("Id")
+    tasks_payload, review_tasks = _build_tasks_payload(project_id)
+    metrics = _parse_metrics(project.get("metrics"))
+    return {
+        "project_id": project_id,
+        "project_name": project.get("project_name") or "",
+        "client": project.get("client_name") or "—",
+        "status": project.get("status") or "",
+        "phase": project.get("current_phase") or "",
+        "tokens_used": project.get("tokens_used") or 0,
+        "token_budget": project.get("token_budget") or Config.TOKEN_BUDGET,
+        "final_report": project.get("final_report") or "",
+        "metrics": metrics,
+        "completed_at": project.get("completed_at") or "",
+        "goal": project.get("goal") or "",
+        "tasks": tasks_payload,
+        "review_tasks": review_tasks,
+        "pm": _build_pm_payload(project, tasks_payload, review_tasks),
+    }
+
+
 def _safe_filename(name: str) -> str:
     name = (name or "workflow").strip().replace(" ", "_")
     name = re.sub(r"[^\w.\-а-яА-ЯёЁ]+", "", name, flags=re.UNICODE)
@@ -82,119 +194,91 @@ def serve_dashboard():
 
 @app.route("/api/agency/status", methods=["GET"])
 def get_status():
-    """Статус агентства + задачи + логи текущего проекта."""
+    """Статус агентства + задачи текущего проекта."""
     current_project = orchestrator.current_project
 
     if current_project:
-        tokens_used = current_project.get("tokens_used", 0) or 0
-        token_budget = current_project.get("token_budget", Config.TOKEN_BUDGET) or Config.TOKEN_BUDGET
-        status = current_project.get("status", "in_progress")
-        client = current_project.get("client_name", "—")
-        final_report = current_project.get("final_report", "") or ""
-        metrics_str = current_project.get("metrics", "{}") or "{}"
-        completed_at = current_project.get("completed_at", "") or ""
-        phase = current_project.get("current_phase", "") or ""
-        project_id = current_project.get("Id")
-        project_name = current_project.get("project_name", "") or ""
-        try:
-            metrics = (
-                json.loads(metrics_str)
-                if isinstance(metrics_str, str) and metrics_str.strip()
-                else (metrics_str if isinstance(metrics_str, dict) else {})
-            )
-        except json.JSONDecodeError:
-            metrics = {}
-    else:
-        tokens_used = 0
-        token_budget = Config.TOKEN_BUDGET
-        status = "idle"
-        client = Config.DEFAULT_CLIENT_NAME
-        final_report = ""
-        metrics = {}
-        completed_at = ""
-        phase = ""
-        project_id = None
-        project_name = ""
-
-    tasks_payload = []
-    review_tasks = []
-    if project_id:
-        try:
-            for t in tasks_db.get_tasks_by_project(project_id):
-                item = {
-                    "id": t.get("Id"),
-                    "task_id": t.get("task_id"),
-                    "agent_name": t.get("agent_name"),
-                    "task_description": (t.get("task_description") or "")[:300],
-                    "status": t.get("status"),
-                    "qa_approved": t.get("qa_approved"),
-                    "qa_feedback": (t.get("qa_feedback") or "")[:800],
-                    "iteration_count": t.get("iteration_count") or 0,
-                    "max_iterations": t.get("max_iterations") or 3,
-                    "tokens_used": t.get("tokens_used") or 0,
-                    "depends_on": t.get("depends_on") or "[]",
-                    "updated_at": t.get("updated_at") or "",
-                    "has_n8n_json": False,
-                    "workflow_name": None,
-                    "output_preview": None,
-                }
-                parsed = _try_parse_json(t.get("output_data"))
-                if parsed:
-                    item["output_preview"] = (
-                        parsed.get("summary")
-                        or parsed.get("pm_comment")
-                        or parsed.get("approach")
-                        or ""
-                    )[:240]
-                    n8n = parsed.get("n8n_json")
-                    if isinstance(n8n, dict) and n8n.get("nodes"):
-                        item["has_n8n_json"] = True
-                        item["workflow_name"] = (
-                            parsed.get("workflow_name")
-                            or n8n.get("name")
-                            or t.get("task_id")
-                        )
-                tasks_payload.append(item)
-                if t.get("status") in ("needs_human_review", "failed"):
-                    review_tasks.append({
-                        "task_id": t.get("task_id"),
-                        "agent_name": t.get("agent_name"),
-                        "status": t.get("status"),
-                        "qa_feedback": (t.get("qa_feedback") or "")[:500],
-                    })
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось загрузить задачи для status: {e}")
-
-    logs_payload = []
-    try:
-        for fields in db.get_recent_records(limit=40):
-            logs_payload.append({
-                "agent_name": fields.get("agent_name"),
-                "status": fields.get("status"),
-                "task_description": (fields.get("task_description") or "")[:200],
-                "tokens_used": fields.get("tokens_used") or 0,
-                "timestamp": fields.get("timestamp") or fields.get("created_at") or "",
-                "full_response": fields.get("full_response") or "",
-            })
-    except Exception as e:
-        logger.debug(f"Логи недоступны: {e}")
+        view = _project_view_payload(current_project)
+        view["running"] = orchestrator.agency_running
+        return jsonify(view)
 
     return jsonify({
         "running": orchestrator.agency_running,
-        "tokens_used": tokens_used,
-        "token_budget": token_budget,
-        "status": status,
-        "client": client,
-        "project_id": project_id,
-        "project_name": project_name,
-        "phase": phase,
-        "final_report": final_report,
-        "metrics": metrics,
-        "completed_at": completed_at,
-        "tasks": tasks_payload,
-        "review_tasks": review_tasks,
-        "logs": logs_payload,
+        "tokens_used": 0,
+        "token_budget": Config.TOKEN_BUDGET,
+        "status": "idle",
+        "client": Config.DEFAULT_CLIENT_NAME,
+        "project_id": None,
+        "project_name": "",
+        "phase": "",
+        "final_report": "",
+        "metrics": {},
+        "completed_at": "",
+        "goal": "",
+        "tasks": [],
+        "review_tasks": [],
+        "pm": {
+            "project_name": "",
+            "phase": "",
+            "status": "idle",
+            "client": Config.DEFAULT_CLIENT_NAME,
+            "tokens_used": 0,
+            "token_budget": Config.TOKEN_BUDGET,
+            "reasoning": "",
+            "goal": "",
+            "active_agents": [],
+            "tasks_total": 0,
+            "tasks_completed": 0,
+            "tasks_failed": 0,
+            "review_count": 0,
+        },
     })
+
+
+@app.route("/api/agency/projects", methods=["GET"])
+def list_projects():
+    """Список проектов для просмотра истории запусков."""
+    limit = request.args.get("limit", 50, type=int) or 50
+    limit = max(1, min(limit, 100))
+    projects = projects_db.list_projects(limit=limit)
+    current_id = None
+    if orchestrator.current_project:
+        current_id = orchestrator.current_project.get("Id")
+
+    items = []
+    for p in projects:
+        pid = p.get("Id")
+        items.append({
+            "id": pid,
+            "project_name": p.get("project_name") or f"project-{pid}",
+            "client_name": p.get("client_name") or "—",
+            "status": p.get("status") or "",
+            "phase": p.get("current_phase") or "",
+            "tokens_used": p.get("tokens_used") or 0,
+            "token_budget": p.get("token_budget") or 0,
+            "completed_at": p.get("completed_at") or "",
+            "updated_at": p.get("updated_at") or p.get("UpdatedAt") or p.get("updateTime") or "",
+            "has_final_report": bool((p.get("final_report") or "").strip()),
+            "is_current": pid is not None and pid == current_id,
+            "goal": (p.get("goal") or "")[:200],
+        })
+    return jsonify({"projects": items, "current_project_id": current_id})
+
+
+@app.route("/api/agency/projects/<int:project_id>", methods=["GET"])
+def get_project(project_id: int):
+    """Детали выбранного проекта: задачи, PM, итоговый отчёт."""
+    project = projects_db.find_project_by_id(project_id)
+    if not project:
+        return jsonify({"error": f"Проект {project_id} не найден"}), 404
+    view = _project_view_payload(project)
+    current_id = None
+    if orchestrator.current_project:
+        current_id = orchestrator.current_project.get("Id")
+    view["running"] = False
+    view["is_current"] = project_id == current_id
+    view["view_mode"] = "history"
+    return jsonify(view)
 
 
 @app.route("/api/agency/start", methods=["POST"])
@@ -433,13 +517,15 @@ def save_workflow():
 
     try:
         if task_id:
-            if not orchestrator.current_project:
-                return jsonify({"error": "Нет активного проекта"}), 400
-            project_id = orchestrator.current_project.get("Id")
+            project_id = data.get("project_id")
+            if not project_id:
+                if not orchestrator.current_project:
+                    return jsonify({"error": "Нет активного проекта"}), 400
+                project_id = orchestrator.current_project.get("Id")
             tasks = tasks_db.get_tasks_by_project(project_id)
             task = next((t for t in tasks if t.get("task_id") == task_id), None)
             if not task:
-                return jsonify({"error": f"Задача {task_id} не найдена"}), 404
+                return jsonify({"error": f"Задача {task_id} не найдена в проекте {project_id}"}), 404
             parsed = _try_parse_json(task.get("output_data"))
             if not parsed:
                 return jsonify({"error": "output_data задачи не является валидным JSON"}), 400

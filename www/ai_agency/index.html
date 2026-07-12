@@ -287,12 +287,17 @@
             color: var(--muted);
             margin-bottom: 8px;
             display: -webkit-box;
-            -webkit-line-clamp: 3;
+            -webkit-line-clamp: 6;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
 
-        .card.expanded .card-desc { -webkit-line-clamp: unset; }
+        .card.expanded .card-desc {
+            -webkit-line-clamp: unset;
+            max-height: none;
+            overflow: visible;
+            color: var(--ink);
+        }
 
         .feedback {
             margin-top: 8px;
@@ -302,8 +307,75 @@
             font-size: 12px;
             color: var(--warn);
             white-space: pre-wrap;
-            max-height: 120px;
+            max-height: 160px;
             overflow: auto;
+        }
+
+        .card.expanded .feedback {
+            max-height: none;
+            overflow: visible;
+            color: var(--ink);
+            border-left-color: var(--accent);
+        }
+
+        .pm-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 16px;
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 16px;
+        }
+
+        .pm-card h2 {
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+
+        .pm-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .pm-text {
+            font-size: 13px;
+            color: var(--muted);
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+
+        .pm-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .pm-stat {
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .pm-stat span {
+            display: block;
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .pm-stat strong {
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        @media (max-width: 640px) {
+            .pm-card { grid-template-columns: 1fr; }
         }
 
         .json-box {
@@ -318,6 +390,10 @@
             overflow: auto;
             white-space: pre-wrap;
             word-break: break-word;
+        }
+
+        .card.expanded .json-box {
+            max-height: 480px;
         }
 
         .card-footer {
@@ -408,6 +484,73 @@
 
         .toast.show { opacity: 1; }
 
+        .history-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: var(--accent-soft);
+            border: 1px solid #9fc9b8;
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .history-banner.visible { display: flex; }
+
+        .history-panel {
+            display: none;
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 14px;
+            margin-bottom: 20px;
+        }
+
+        .history-panel.visible { display: block; }
+
+        .history-panel h2 {
+            font-size: 15px;
+            margin-bottom: 10px;
+        }
+
+        .project-list {
+            display: grid;
+            gap: 8px;
+            max-height: 360px;
+            overflow: auto;
+        }
+
+        .project-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            cursor: pointer;
+            text-align: left;
+            font-family: var(--font);
+            color: var(--ink);
+        }
+
+        .project-item:hover { border-color: var(--accent); }
+
+        .project-item.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .project-item .meta {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
         @media (max-width: 960px) {
             .metrics { grid-template-columns: repeat(2, 1fr); }
             .grid { grid-template-columns: 1fr 1fr; }
@@ -461,7 +604,26 @@
             <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
             <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
             <button onclick="increaseTokens()">+ Токены</button>
+            <button onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
+        </section>
+
+        <section class="history-banner" id="history-banner">
+            <div>
+                <strong>Просмотр истории:</strong>
+                <span id="history-banner-text">—</span>
+            </div>
+            <button class="primary" onclick="exitHistoryView()">К текущему запуску</button>
+        </section>
+
+        <section class="history-panel" id="history-panel">
+            <h2>Предыдущие запуски</h2>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+                Выберите проект, чтобы увидеть карточки агентов, статусы и итоговый отчёт.
+            </p>
+            <div class="project-list" id="project-list">
+                <div class="workflow-item"><span>Загрузка…</span></div>
+            </div>
         </section>
 
         <section class="panel" id="review-panel">
@@ -486,8 +648,28 @@
         </section>
 
         <div class="section-title">
+            <span>Project Manager</span>
+        </div>
+        <section class="pm-card" id="pm-card">
+            <div>
+                <h2>PM</h2>
+                <div class="pm-meta">
+                    <span class="pill" id="pm-status">—</span>
+                    <span class="pill" id="pm-phase">фаза: —</span>
+                </div>
+                <div class="pm-text" id="pm-text">Ожидание данных проекта…</div>
+            </div>
+            <div class="pm-stats">
+                <div class="pm-stat"><span>Задач</span><strong id="pm-tasks">0</strong></div>
+                <div class="pm-stat"><span>Готово</span><strong id="pm-done">0</strong></div>
+                <div class="pm-stat"><span>Провалы</span><strong id="pm-failed">0</strong></div>
+                <div class="pm-stat"><span>На review</span><strong id="pm-review">0</strong></div>
+            </div>
+        </section>
+
+        <div class="section-title">
             <span>Задачи агентов</span>
-            <span id="poll-hint">обновление каждые 3 с</span>
+            <span id="poll-hint">обновление каждые 10 с</span>
         </div>
         <section class="grid" id="task-grid">
             <div class="card">
@@ -516,10 +698,16 @@ let state = {
     running: false,
     tasks: [],
     review_tasks: [],
-    logs: [],
+    pm: {},
     final_report: '',
     metrics: {},
 };
+/** Открытые карточки: task_id → замороженный innerHTML (не обновляется при poll) */
+const expandedFreeze = new Map();
+/** Режим истории: null = live, иначе id выбранного проекта */
+let historyProjectId = null;
+let liveRunning = false;
+let projectsCache = [];
 
 function toast(msg) {
     const el = document.getElementById('toast');
@@ -549,10 +737,27 @@ function statusLabel(s) {
 
 async function refreshData() {
     try {
+        // В режиме истории не затираем просмотр live-статусом,
+        // но обновляем кнопки управления по текущему агентству.
+        if (historyProjectId) {
+            const res = await fetch(`${API}/status`);
+            if (res.ok) {
+                const live = await res.json();
+                liveRunning = !!live.running;
+                document.getElementById('btn-start').disabled = liveRunning;
+                document.getElementById('btn-stop').disabled = !liveRunning;
+                document.getElementById('btn-resume').disabled =
+                    liveRunning || !['stopped', 'needs_human_review'].includes(live.status);
+            }
+            renderHistoryChrome();
+            return;
+        }
+
         const res = await fetch(`${API}/status`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         state = { ...state, ...data };
+        liveRunning = !!data.running;
         renderAll();
     } catch (e) {
         console.error(e);
@@ -562,19 +767,128 @@ async function refreshData() {
 
 function renderAll() {
     renderMetrics();
+    renderPm();
     renderReviewPanel();
     renderTasks();
     renderFinalReport();
+    renderHistoryChrome();
+}
+
+function renderHistoryChrome() {
+    const banner = document.getElementById('history-banner');
+    const pollHint = document.getElementById('poll-hint');
+    if (historyProjectId) {
+        banner.classList.add('visible');
+        document.getElementById('history-banner-text').textContent =
+            `#${historyProjectId} · ${state.project_name || '—'} · ${statusLabel(state.status)}`;
+        pollHint.textContent = 'режим истории (live-poll на паузе)';
+    } else {
+        banner.classList.remove('visible');
+        pollHint.textContent = 'обновление каждые 10 с';
+    }
+}
+
+async function toggleHistoryPanel() {
+    const panel = document.getElementById('history-panel');
+    const willShow = !panel.classList.contains('visible');
+    panel.classList.toggle('visible', willShow);
+    if (willShow) await loadProjectsList();
+}
+
+async function loadProjectsList() {
+    const list = document.getElementById('project-list');
+    list.innerHTML = `<div class="workflow-item"><span>Загрузка…</span></div>`;
+    try {
+        const res = await fetch(`${API}/projects?limit=50`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
+        projectsCache = data.projects || [];
+        if (!projectsCache.length) {
+            list.innerHTML = `<div class="workflow-item"><span>Проектов пока нет</span></div>`;
+            return;
+        }
+        list.innerHTML = projectsCache.map(p => {
+            const active = historyProjectId === p.id ? 'active' : '';
+            const mark = p.is_current ? ' · текущий' : '';
+            const report = p.has_final_report ? ' · отчёт' : '';
+            const when = (p.completed_at || p.updated_at || '').replace('T', ' ').slice(0, 19);
+            return `
+                <button type="button" class="project-item ${active}" onclick="openProjectHistory(${Number(p.id)})">
+                    <div>
+                        <strong>${escapeHtml(p.project_name)}</strong>
+                        <div class="meta">
+                            #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}
+                            ${when ? ` · ${escapeHtml(when)}` : ''}
+                        </div>
+                        ${p.goal ? `<div class="meta">${escapeHtml(p.goal)}</div>` : ''}
+                    </div>
+                    <span class="pill status-${escapeHtml(p.status || '')}">${escapeHtml(statusLabel(p.status))}</span>
+                </button>
+            `;
+        }).join('');
+    } catch (e) {
+        list.innerHTML = `<div class="workflow-item"><span>${escapeHtml(e.message || e)}</span></div>`;
+    }
+}
+
+async function openProjectHistory(projectId) {
+    try {
+        const res = await fetch(`${API}/projects/${projectId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        historyProjectId = projectId;
+        expandedFreeze.clear();
+        state = { ...state, ...data, running: false };
+        document.getElementById('history-panel').classList.remove('visible');
+        renderAll();
+        toast(`Открыт проект #${projectId}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+        toast(String(e.message || e));
+    }
+}
+
+function exitHistoryView() {
+    historyProjectId = null;
+    expandedFreeze.clear();
+    toast('Вернулись к текущему запуску');
+    refreshData();
+}
+
+function renderPm() {
+    const pm = state.pm || {};
+    const status = pm.status || state.status;
+    document.getElementById('pm-status').textContent = (!historyProjectId && state.running)
+        ? 'Работает'
+        : statusLabel(status);
+    document.getElementById('pm-status').className = `pill status-${escapeHtml(status || '')}`;
+    document.getElementById('pm-phase').textContent = `фаза: ${pm.phase || state.phase || '—'}`;
+    document.getElementById('pm-tasks').textContent = String(pm.tasks_total ?? (state.tasks || []).length);
+    document.getElementById('pm-done').textContent = String(pm.tasks_completed ?? 0);
+    document.getElementById('pm-failed').textContent = String(pm.tasks_failed ?? 0);
+    document.getElementById('pm-review').textContent = String(pm.review_count ?? (state.review_tasks || []).length);
+
+    const active = (pm.active_agents || []).filter(Boolean);
+    const parts = [];
+    if (historyProjectId) parts.push(`Режим истории · проект #${historyProjectId}`);
+    if (pm.project_name) parts.push(`Проект: ${pm.project_name}`);
+    if (pm.client) parts.push(`Клиент: ${pm.client}`);
+    if (pm.goal) parts.push(`Цель: ${pm.goal}`);
+    if (active.length) parts.push(`Сейчас: ${active.join(', ')}`);
+    if (pm.reasoning) parts.push(pm.reasoning);
+    else if (!parts.length) parts.push('PM координирует task graph, deadlock и финализацию.');
+    document.getElementById('pm-text').textContent = parts.join('\n');
 }
 
 function renderMetrics() {
     const d = state;
-    document.getElementById('btn-start').disabled = !!d.running;
-    document.getElementById('btn-stop').disabled = !d.running;
-    document.getElementById('btn-resume').disabled = !!d.running || !['stopped', 'needs_human_review'].includes(d.status);
+    const running = historyProjectId ? liveRunning : !!d.running;
+    document.getElementById('btn-start').disabled = running;
+    document.getElementById('btn-stop').disabled = !running;
+    document.getElementById('btn-resume').disabled = running || !['stopped', 'needs_human_review'].includes(d.status);
 
     const statusEl = document.getElementById('system-status');
-    statusEl.textContent = d.running ? 'Работает' : statusLabel(d.status);
+    statusEl.textContent = (!historyProjectId && d.running) ? 'Работает' : statusLabel(d.status);
 
     const used = d.tokens_used || 0;
     const budget = d.token_budget || 1;
@@ -594,13 +908,17 @@ function renderMetrics() {
 
     const dot = document.getElementById('live-dot');
     dot.className = 'dot';
-    if (d.running) dot.classList.add('live');
+    if (!historyProjectId && d.running) dot.classList.add('live');
     else if (d.status === 'needs_human_review') dot.classList.add('warn');
     else if (d.status === 'completed') dot.classList.add('ok');
 }
 
 function renderReviewPanel() {
     const panel = document.getElementById('review-panel');
+    if (historyProjectId) {
+        panel.classList.remove('visible');
+        return;
+    }
     const needsProject = state.status === 'needs_human_review';
     const reviewTasks = state.review_tasks || [];
     const show = needsProject || reviewTasks.length > 0;
@@ -643,49 +961,44 @@ function renderTasks() {
     const tasks = [...(state.tasks || [])];
     if (!tasks.length) {
         grid.innerHTML = `<div class="card"><div class="card-header"><span class="pill">Система</span></div><div class="card-body">Задач пока нет.</div></div>`;
+        expandedFreeze.clear();
         return;
     }
 
-    // Sort: in_progress first, then needs_human_review/failed, then pending, then completed
     const order = { in_progress: 0, needs_human_review: 1, failed: 2, pending: 3, completed: 4 };
     tasks.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
 
-    // Enrich with latest log preview if no output_preview
-    const logByAgent = {};
-    (state.logs || []).forEach(l => {
-        if (l.agent_name && !logByAgent[l.agent_name]) logByAgent[l.agent_name] = l;
-    });
+    // Удаляем freeze для задач, которых больше нет
+    const ids = new Set(tasks.map(t => t.task_id));
+    for (const id of [...expandedFreeze.keys()]) {
+        if (!ids.has(id)) expandedFreeze.delete(id);
+    }
 
     grid.innerHTML = '';
     tasks.forEach(task => {
         const card = document.createElement('div');
         card.className = 'card';
-        card.onclick = (e) => {
-            if (e.target.closest('button, select, a')) return;
-            card.classList.toggle('expanded');
-        };
+        card.dataset.taskId = task.task_id || '';
 
-        const log = logByAgent[task.agent_name];
-        let preview = task.output_preview || task.task_description || '';
-        let jsonSnippet = '';
-        if (log && log.full_response) {
-            try {
-                const parsed = JSON.parse(log.full_response);
-                if (!task.output_preview) {
-                    preview = parsed.summary || parsed.pm_comment || parsed.approach || preview;
-                }
-                if (card.classList.contains('expanded') || true) {
-                    jsonSnippet = JSON.stringify(parsed, null, 2).slice(0, 1200);
-                }
-            } catch (_) {}
+        const frozen = expandedFreeze.get(task.task_id);
+        if (frozen) {
+            // Открытая карточка: не обновляем содержимое при poll
+            card.classList.add('expanded');
+            card.innerHTML = frozen.html;
+            card.onclick = (e) => toggleCardExpand(e, card, task);
+            grid.appendChild(card);
+            return;
         }
 
+        card.onclick = (e) => toggleCardExpand(e, card, task);
+
+        const preview = task.output_preview || task.task_description || '';
         const actions = [];
-        if (['failed', 'needs_human_review'].includes(task.status)) {
-            actions.push(`<button onclick="prefillReview('${escapeHtml(task.task_id)}')">Комментарий</button>`);
+        if (!historyProjectId && ['failed', 'needs_human_review'].includes(task.status)) {
+            actions.push(`<button type="button" onclick="prefillReview('${escapeHtml(task.task_id)}')">Комментарий</button>`);
         }
         if (task.has_n8n_json) {
-            actions.push(`<button class="primary" onclick="saveWorkflow('${escapeHtml(task.task_id)}')">Сохранить workflow</button>`);
+            actions.push(`<button type="button" class="primary" onclick="saveWorkflow('${escapeHtml(task.task_id)}')">Сохранить workflow</button>`);
         }
 
         card.innerHTML = `
@@ -696,7 +1009,6 @@ function renderTasks() {
             <div class="card-body">
                 <div class="card-desc">${escapeHtml(preview)}</div>
                 ${task.qa_feedback ? `<div class="feedback">${escapeHtml(task.qa_feedback)}</div>` : ''}
-                ${jsonSnippet ? `<div class="json-box">${escapeHtml(jsonSnippet)}</div>` : ''}
                 ${actions.length ? `<div class="card-actions" style="margin-top:10px">${actions.join('')}</div>` : ''}
             </div>
             <div class="card-footer">
@@ -706,6 +1018,24 @@ function renderTasks() {
         `;
         grid.appendChild(card);
     });
+}
+
+function toggleCardExpand(e, card, task) {
+    if (e.target.closest('button, select, a')) return;
+    const id = task.task_id;
+    if (!id) return;
+
+    if (expandedFreeze.has(id)) {
+        // Повторный клик — свернуть, следующий poll обновит карточку
+        expandedFreeze.delete(id);
+        card.classList.remove('expanded');
+        // Перерисуем эту карточку свежими данными сразу
+        renderTasks();
+        return;
+    }
+
+    card.classList.add('expanded');
+    expandedFreeze.set(id, { html: card.innerHTML });
 }
 
 function prefillReview(taskId) {
@@ -744,7 +1074,10 @@ async function saveWorkflow(taskId) {
         const res = await fetch(`${API}/workflows/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task_id: taskId }),
+            body: JSON.stringify({
+                task_id: taskId,
+                project_id: state.project_id || historyProjectId || null,
+            }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
@@ -783,7 +1116,7 @@ async function loadSavedWorkflows() {
 
 function renderFinalReport() {
     const box = document.getElementById('final-report');
-    if (state.status === 'completed' && state.final_report) {
+    if (state.final_report && String(state.final_report).trim()) {
         box.classList.add('visible');
         document.getElementById('report-content').innerHTML = simpleMarkdown(state.final_report);
     } else {
@@ -845,7 +1178,7 @@ async function increaseTokens() {
 
 refreshData();
 loadSavedWorkflows();
-setInterval(refreshData, 3000);
+setInterval(refreshData, 10000);
     </script>
 </body>
 </html>

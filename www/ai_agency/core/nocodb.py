@@ -53,7 +53,7 @@ class NocoDBClient:
                 fields["Id"] = r.get("Id")
                 records.append(fields)
 
-            logger.info(f"📥 Получено {len(records)} записей из NocoDB")
+            logger.debug(f"📥 Получено {len(records)} записей из NocoDB")
             return records
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка чтения: {e}")
@@ -104,6 +104,27 @@ class ProjectsClient:
             url += f"&sort={quote(sort_json)}"
 
         return url  # Bug fix: was inside if-block → returned None when sort_field=None
+
+    def list_projects(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Возвращает список проектов (новые сверху)."""
+        try:
+            sort_json = json.dumps([{"field": "UpdatedAt", "direction": "desc"}])
+            url = f"{self.projects_url}?limit={limit}&sort={quote(sort_json)}"
+            response = requests.get(url, headers=self.headers, timeout=120)
+            if response.status_code != 200:
+                # Fallback без sort (поле UpdatedAt может отсутствовать)
+                url = f"{self.projects_url}?limit={limit}"
+                response = requests.get(url, headers=self.headers, timeout=120)
+            if response.status_code != 200:
+                logger.error(f"❌ list_projects: {response.status_code} — {response.text[:200]}")
+                return []
+            data = response.json()
+            records = [self._unpack_record(r) for r in data.get("records", [])]
+            logger.debug(f"📥 list_projects: {len(records)} проектов")
+            return records
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка list_projects: {e}")
+            return []
 
     def find_project_by_status(self, status: str) -> Optional[Dict[str, Any]]:
         """Ищет проект по статусу, сортируя по дате обновления (новейший первый)."""

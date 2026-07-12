@@ -100,7 +100,8 @@ ai_agency_aikexpert/
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  Dashboard (index.html)                     │
-│  • Real-time статус задач (polling 3с)                      │
+│  • Real-time статус задач (polling 10с)                     │
+│  • История запусков: список проектов → карточки + отчёт     │
 │  • Human-review: комментарии при needs_human_review         │
 │  • Парсинг output_data + сохранение n8n workflows           │
 │  • Markdown-рендеринг финального отчёта                     │
@@ -109,7 +110,9 @@ ai_agency_aikexpert/
                      ▼
        ┌──────────────────────────────┐
        │      Flask API (main.py)     │
-       │  GET  /api/agency/status     │  ← tasks + logs + review_tasks
+       │  GET  /api/agency/status     │  ← tasks + pm + review_tasks
+       │  GET  /api/agency/projects   │  ← история запусков
+       │  GET  /api/agency/projects/<id>│ ← детали выбранного проекта
        │  POST /api/agency/start      │
        │  POST /api/agency/stop       │
        │  POST /api/agency/resume     │
