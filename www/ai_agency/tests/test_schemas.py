@@ -664,7 +664,7 @@ class TestAgentModelsMapping:
         from core.schemas import AGENT_MODELS
         required_agents = {
             "analyst", "architect", "developer", "qa",
-            "tech_writer", "lead_hunter", "sales", "crm_customizer",
+            "tech_writer", "client_hunter", "lead_hunter", "sales", "crm_customizer",
         }
         missing = required_agents - set(AGENT_MODELS.keys())
         assert not missing, f"Агенты без Pydantic-модели: {missing}"

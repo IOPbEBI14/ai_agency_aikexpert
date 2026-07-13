@@ -5,5 +5,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "done"
+  },
+  {
+    "id": 2,
+    "desc": "Монетизация: агент client_hunter — Google-only поиск клиентов + персональное УТП, интеграция в PM/task graph",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

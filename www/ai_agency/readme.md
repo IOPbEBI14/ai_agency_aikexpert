@@ -190,6 +190,10 @@ LLM_MODEL=yandexgpt
 
 # Project Configuration
 TOKEN_BUDGET=500000
+
+# Google Custom Search (агент client_hunter — монетизация)
+GOOGLE_API_KEY=your_google_api_key
+GOOGLE_CX=your_custom_search_engine_id
 MAX_TASK_ITERATIONS=3
 DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)

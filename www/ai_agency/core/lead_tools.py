@@ -31,8 +31,11 @@ class LeadSearchTools:
         Поиск через Google Custom Search API.
         Требует API ключ в .env: GOOGLE_API_KEY, GOOGLE_CX
         """
-        if not hasattr(Config, 'GOOGLE_API_KEY') or not hasattr(Config, 'GOOGLE_CX'):
-            logger.warning("Google API ключи не настроены")
+        if not hasattr(Config, 'GOOGLE_API_KEY') or not Config.GOOGLE_API_KEY:
+            logger.warning("Google API ключи не настроены (GOOGLE_API_KEY)")
+            return []
+        if not hasattr(Config, 'GOOGLE_CX') or not Config.GOOGLE_CX:
+            logger.warning("Google CX не настроен (GOOGLE_CX)")
             return []
         
         try:
@@ -41,7 +44,7 @@ class LeadSearchTools:
                 'key': Config.GOOGLE_API_KEY,
                 'cx': Config.GOOGLE_CX,
                 'q': query,
-                'num': num_results
+                'num': min(num_results, 10),
             }
             
             response = self.session.get(url, params=params, timeout=30)

@@ -18,6 +18,14 @@ logger = logging.getLogger("QAGate")
 
 
 _AGENT_QA_CHECKLISTS: dict = {
+    "client_hunter": """
+СПЕЦИФИКА ПРОВЕРКИ CLIENT HUNTER (МОНЕТИЗАЦИЯ):
+- Источник каждого клиента должен быть только "google" (открытый поиск)
+- Не должно быть выдуманных телефонов/email/Telegram без URL из Google
+- У каждого клиента есть usp с headline, value_proposition, differentiators, call_to_action
+- clients согласованы с google_search_results во входных данных (если они были)
+- search_queries не пустой, если total_found > 0
+""",
     "architect": """
 СПЕЦИФИКА ПРОВЕРКИ АРХИТЕКТУРЫ:
 - workflow_blueprint должен содержать nodes[] со ВСЕМИ нодами (включая Set-ноды для сохранения контекста перед HTTP)

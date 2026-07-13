@@ -444,7 +444,7 @@ class TasksClient:
 
     # Допустимые имена агентов — защита от попадания посторонних строк в agent_name
     _VALID_AGENT_NAMES = frozenset({
-        "PM", "lead_hunter", "sales", "analyst", "architect",
+        "PM", "client_hunter", "lead_hunter", "sales", "analyst", "architect",
         "developer", "crm_customizer", "qa", "tech_writer",
     })
 

@@ -277,6 +277,7 @@ class Orchestrator:
 4. Построй оптимальный граф задач только с нужными агентами
 
 ДОСТУПНЫЕ АГЕНТЫ:
+- client_hunter: монетизация — поиск клиентов ТОЛЬКО через Google + персональное УТП
 - lead_hunter: поиск потенциальных клиентов (селлеров WB/Ozon)
 - sales: написание холодных сообщений и квалификация лидов
 - analyst: расчёт ROI и подготовка презентации
@@ -344,7 +345,7 @@ class Orchestrator:
             )
 
             VALID_AGENTS = {
-                "lead_hunter", "sales", "analyst", "architect",
+                "client_hunter", "lead_hunter", "sales", "analyst", "architect",
                 "developer", "crm_customizer", "qa", "tech_writer",
             }
 
@@ -770,7 +771,14 @@ class Orchestrator:
             ):
                 if key not in input_data:
                     input_data[key] = self.current_project.get(field, "")
-            for ctx_key in ("leads_context", "sales_context", "analyst_context"):
+            for ctx_key in (
+                "leads_context",
+                "sales_context",
+                "analyst_context",
+                "client_hunter_context",
+                "client_hunter_handoff_to_sales",
+                "leads_handoff_to_sales",
+            ):
                 if ctx_key in self.current_project:
                     input_data[ctx_key] = self.current_project[ctx_key]
 
@@ -861,6 +869,11 @@ class Orchestrator:
 
     def _handle_lead_hunter(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
         return self.agent_handlers.handle_lead_hunter(
+            task, task_db_id, task_name, agent_response, pm_prompt
+        )
+
+    def _handle_client_hunter(self, task, task_db_id, task_name, agent_response, pm_prompt) -> bool:
+        return self.agent_handlers.handle_client_hunter(
             task, task_db_id, task_name, agent_response, pm_prompt
         )
 

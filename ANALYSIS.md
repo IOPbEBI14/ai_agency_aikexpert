@@ -9,7 +9,7 @@
 
 ## 1. Назначение проекта
 
-**AI Agency OS** — оркестратор из 9 специализированных ИИ-агентов (паттерн Supervisor-Workers) для автоматизации e-commerce (селлеры Wildberries/Ozon).
+**AI Agency OS** — оркестратор из 10 специализированных ИИ-агентов (паттерн Supervisor-Workers) для автоматизации e-commerce (селлеры Wildberries/Ozon) и монетизации (поиск клиентов через Google + УТП).
 
 **Основной сценарий:**
 1. **PM** (Project Manager) анализирует цель проекта и строит Task Graph с зависимостями
@@ -508,6 +508,21 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 Контракт JSON для дашборда сохранён (`{"error": "..."}` через exception handler).
 Блокирующие I/O (NocoDB, LLM) обёрнуты в `asyncio.to_thread`, чтобы не блокировать event loop.
 
+### Direction J — Монетизация: агент `client_hunter` (NEW)
+
+Отдельный агент поиска клиентов для продаж услуг агентства:
+
+| Правило | Реализация |
+|---------|------------|
+| Только открытые источники | Google Custom Search API (`GOOGLE_API_KEY`, `GOOGLE_CX`) |
+| Запрет Telegram/Avito/scrape | `client_hunter_tools.run_google_only_search` |
+| УТП на каждого клиента | `ClientUSP` в `ClientHunterResponse.clients[]` |
+| Контекст для sales | `client_hunter_context` + `handoff_to_sales` |
+
+Поток: `TaskExecutor` → inject `google_search_results` → LLM готовит УТП → `handle_client_hunter` сохраняет контекст.
+
+`lead_hunter` сохранён для сценариев WB/Ozon/Telegram; для монетизации через открытый web используйте `client_hunter`.
+
 ### Направление H. UI на React + WebSocket (ТЗ №5) — СЛЕДУЮЩИЙ ЭТАП
 
 После стабилизации FastAPI:
@@ -555,4 +570,4 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ---
 
-**Последнее обновление:** Jul 13, 2026. Direction G (FastAPI). Парные `qa_dev_*` откатаны — QA Gate на каждую `dev_*`.
+**Последнее обновление:** Jul 14, 2026. Агент `client_hunter` (Google + УТП) для монетизации.

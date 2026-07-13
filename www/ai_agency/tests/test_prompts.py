@@ -381,7 +381,7 @@ class TestLeadHunterHandoff:
 class TestAgentDispatch:
     """Проверяет, что правильные агенты получают спец-хендлеры, а не QA Gate."""
 
-    SPEC_HANDLER_AGENTS = {"architect", "lead_hunter", "sales", "analyst"}
+    SPEC_HANDLER_AGENTS = {"architect", "client_hunter", "lead_hunter", "sales", "analyst"}
     QA_GATE_AGENTS = {"developer", "crm_customizer", "tech_writer"}
 
     def test_spec_handler_agents_are_documented(self):

@@ -68,6 +68,10 @@ class TaskExecutor:
             all_tasks = self.orch.tasks_db.get_tasks_by_project(project_id) if project_id else []
         input_data = self.orch._build_enriched_input_data(task, all_tasks)
 
+        # client_hunter: перед LLM подмешиваем РЕАЛЬНЫЕ результаты Google (единственный источник)
+        if agent_name == "client_hunter":
+            input_data = self._inject_google_search(task, input_data)
+
         logger.info(f"📥 Входные данные для {agent_name}: {json.dumps(input_data, ensure_ascii=False)[:300]}")
 
         # Проверка лимита итераций
@@ -208,6 +212,10 @@ class TaskExecutor:
                 return self.orch._handle_lead_hunter(
                     task, task_db_id, task_name, validated_response, pm_prompt
                 )
+            if agent_name == "client_hunter":
+                return self.orch._handle_client_hunter(
+                    task, task_db_id, task_name, validated_response, pm_prompt
+                )
             if agent_name == "sales":
                 return self.orch._handle_sales(
                     task, task_db_id, task_name, validated_response, pm_prompt
@@ -246,6 +254,33 @@ class TaskExecutor:
     # ──────────────────────────────────────────────────────────────────────────
     # Вспомогательные методы
     # ──────────────────────────────────────────────────────────────────────────
+
+    def _inject_google_search(self, task: Dict, input_data: Dict) -> Dict:
+        """Подмешивает результаты Google Custom Search для client_hunter."""
+        from .client_hunter_tools import build_search_queries, run_google_only_search
+
+        goal = ""
+        if self.orch.current_project:
+            goal = self.orch.current_project.get("goal") or ""
+        queries = build_search_queries(
+            goal=goal,
+            task_description=task.get("task_description") or "",
+            llm_queries=input_data.get("search_queries")
+            if isinstance(input_data.get("search_queries"), list)
+            else None,
+        )
+        results = run_google_only_search(queries)
+        input_data["google_search_results"] = results
+        input_data["google_search_queries"] = queries
+        input_data["search_source_policy"] = (
+            "ONLY_GOOGLE_OPEN_SOURCES — запрещены Telegram, Avito, scrape, закрытые базы"
+        )
+        if not results:
+            input_data["google_search_warning"] = (
+                "Google не вернул результатов или GOOGLE_API_KEY/GOOGLE_CX не настроены. "
+                "Не выдумывай клиентов — верни clients=[] и опиши причину в notes."
+            )
+        return input_data
 
     def _call_with_validation(self, agent_name: str, system_prompt: str, user_task: str):
         """Вызывает агента через call_and_parse_llm, выбирая модель по имени."""

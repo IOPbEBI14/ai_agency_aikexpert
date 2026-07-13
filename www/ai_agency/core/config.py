@@ -29,6 +29,10 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+    # Google Custom Search API (client_hunter)
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+    GOOGLE_CX = os.getenv("GOOGLE_CX", "")
+
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")
     DEFAULT_CLIENT_NAME = os.getenv("DEFAULT_CLIENT_NAME", "ООО 'Ромашка' (Селлер WB)")

@@ -57,7 +57,7 @@ class PMDecision(BaseModel):
     @classmethod
     def validate_next_agent(cls, v):
         if v is not None and v not in [
-            "lead_hunter", "sales", "analyst", "architect", 
+            "client_hunter", "lead_hunter", "sales", "analyst", "architect",
             "developer", "crm_customizer", "qa", "tech_writer", None
         ]:
             raise ValueError(f"Неизвестный агент: {v}")
@@ -402,6 +402,64 @@ class TechWriterResponse(BaseModel):
     notes: Optional[str] = Field(default=None, description="Дополнительные рекомендации")
 
 
+# ==================== CLIENT HUNTER (МОНЕТИЗАЦИЯ) ====================
+
+class ClientUSP(BaseModel):
+    """Уникальное торговое предложение для найденного клиента."""
+
+    headline: str = Field(description="Короткий заголовок УТП (1 предложение)")
+    value_proposition: str = Field(
+        description="Уникальное торговое предложение: чем агентство полезно именно этому клиенту"
+    )
+    differentiators: List[str] = Field(
+        description="2–5 пунктов отличия от типовых офферов конкурентов"
+    )
+    call_to_action: str = Field(description="Призыв к действию / следующий шаг")
+
+
+class ClientProspect(BaseModel):
+    """Потенциальный клиент из открытых источников (Google)."""
+
+    company_name: str = Field(description="Название компании / бренда")
+    website: Optional[str] = Field(default=None, description="URL из Google")
+    snippet: Optional[str] = Field(default=None, description="Сниппет Google")
+    niche: str = Field(description="Ниша / отрасль")
+    pain_hypothesis: List[str] = Field(
+        description="Гипотезы болей на основе открытых данных"
+    )
+    usp: ClientUSP = Field(description="Персональное УТП для этого клиента")
+    source: Literal["google"] = Field(
+        default="google", description="Источник — только Google (открытый поиск)"
+    )
+    source_query: Optional[str] = Field(
+        default=None, description="Поисковый запрос Google, по которому найден клиент"
+    )
+
+
+class ClientHunterResponse(BaseModel):
+    """Ответ агента монетизации: поиск клиентов через Google + УТП."""
+
+    summary: str = Field(description="Краткий итог поиска и офферов")
+    search_queries: List[str] = Field(
+        description="Запросы, которые нужно/были выполнены в Google"
+    )
+    clients: List[ClientProspect] = Field(
+        description="Найденные клиенты с персональным УТП"
+    )
+    total_found: int = Field(description="Количество клиентов с УТП")
+    notes: Optional[str] = Field(
+        default=None,
+        description="Ограничения поиска, качество источников, рекомендации",
+    )
+    handoff_to_sales: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Хэндофф для sales: recommended_approach, priority_clients[], "
+            "usp_highlights[]. Только на основе открытых Google-данных."
+        ),
+    )
+
+
 # ==================== LEAD HUNTER MODELS ====================
 
 class Lead(BaseModel):
@@ -523,6 +581,7 @@ AGENT_MODELS: dict = {
     "developer": DeveloperResponse,
     "qa": QAResponse,
     "tech_writer": TechWriterResponse,
+    "client_hunter": ClientHunterResponse,
     "lead_hunter": LeadHunterResponse,
     "sales": SalesResponse,
     "crm_customizer": CRMCustomizerResponse,
@@ -739,6 +798,42 @@ def _build_examples() -> dict:
             ],
             "total_found": 1,
             "notes": "Найден 1 качественный лид",
+        },
+        ClientHunterResponse: {
+            "summary": "Найдено 2 клиента через Google; подготовлены персональные УТП",
+            "search_queries": [
+                "селлер Wildberries автоматизация отзывов",
+                "интернет-магазин CRM интеграция заявки",
+            ],
+            "clients": [
+                {
+                    "company_name": "ТехноФикс",
+                    "website": "https://example.com",
+                    "snippet": "Магазин запчастей, 500+ SKU",
+                    "niche": "e-commerce / автозапчасти",
+                    "pain_hypothesis": ["Ручной разбор заявок из мессенджеров"],
+                    "usp": {
+                        "headline": "Заявки из Telegram и сайта — в CRM за 1 день",
+                        "value_proposition": (
+                            "Автоматизируем сбор обращений и постановку задач "
+                            "без найма операторов"
+                        ),
+                        "differentiators": [
+                            "Готовый blueprint под ваш стек",
+                            "Окупаемость < 2 месяцев",
+                        ],
+                        "call_to_action": "15-мин демо на ваших каналах",
+                    },
+                    "source": "google",
+                    "source_query": "интернет-магазин CRM интеграция заявки",
+                }
+            ],
+            "total_found": 1,
+            "notes": "Только открытые результаты Google Custom Search",
+            "handoff_to_sales": {
+                "recommended_approach": "Короткое сообщение с УТП headline",
+                "priority_clients": ["ТехноФикс"],
+            },
         },
         SalesResponse: {
             "messages": [

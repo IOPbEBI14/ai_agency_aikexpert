@@ -21,6 +21,8 @@ QA Gate — отдельный LLM-вызов, который проверяет
      в current_project["analyst_context"] → передаётся architect
    - lead_hunter → сохраняет список лидов + handoff_to_sales
      в current_project["leads_context"] → передаётся sales
+   - client_hunter → Google-only поиск + УТП в client_hunter_context
+     → handoff_to_sales
    - sales → сохраняет сообщения и qualification
      в current_project["sales_context"] → передаётся analyst
 
@@ -30,6 +32,8 @@ QA Gate — отдельный LLM-вызов, который проверяет
 
 3. ИМЕЕТ FALLBACK-ЛОГИКУ РЕАЛЬНОГО ИНСТРУМЕНТА:
    - lead_hunter → если LLM не вернул лидов, вызывает Telegram search API
+   - client_hunter → перед LLM подмешивает Google Custom Search;
+     сохраняет клиентов + УТП в client_hunter_context
 
 Агенты со спец-хендлерами авто-подтверждают QA ("qa_approved": "true")
 и сами проставляют статус "completed", не используя QA Gate.
@@ -44,6 +48,7 @@ from pydantic import BaseModel
 
 from .schemas import (
     AnalystResponse,
+    ClientHunterResponse,
     LeadHunterResponse,
     PMDecomposition,
     SalesResponse,
@@ -260,6 +265,98 @@ class AgentHandlers:
         except Exception as e:
             logger.error(f"❌ Ошибка декомпозиции: {e}", exc_info=True)
             self.orch.tasks_db.update_task(task_db_id, {"status": "failed"})
+            return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # CLIENT HUNTER: Google-only + УТП → контекст монетизации
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def handle_client_hunter(
+        self, task: Dict, task_db_id: Any, task_name: str, agent_response: Any, pm_prompt: str
+    ) -> bool:
+        """Сохраняет клиентов и УТП; источник — только Google (открытый поиск)."""
+        try:
+            if isinstance(agent_response, ClientHunterResponse):
+                response = agent_response
+            elif isinstance(agent_response, str) and agent_response.strip().startswith("{"):
+                response = ClientHunterResponse(**json.loads(agent_response))
+            else:
+                response = ClientHunterResponse(
+                    summary="Нет структурированного ответа",
+                    search_queries=[],
+                    clients=[],
+                    total_found=0,
+                    notes="LLM не вернул ClientHunterResponse",
+                )
+
+            # Жёстко: source только google
+            clients_payload = []
+            for c in response.clients:
+                usp = c.usp
+                clients_payload.append({
+                    "company_name": c.company_name,
+                    "website": c.website,
+                    "snippet": c.snippet,
+                    "niche": c.niche,
+                    "pain_hypothesis": list(c.pain_hypothesis or []),
+                    "usp": {
+                        "headline": usp.headline,
+                        "value_proposition": usp.value_proposition,
+                        "differentiators": list(usp.differentiators or []),
+                        "call_to_action": usp.call_to_action,
+                    },
+                    "source": "google",
+                    "source_query": c.source_query,
+                })
+
+            self.orch.current_project["client_hunter_context"] = clients_payload
+            if response.handoff_to_sales:
+                self.orch.current_project["client_hunter_handoff_to_sales"] = (
+                    response.handoff_to_sales
+                )
+                logger.info(
+                    "client_hunter handoff_to_sales: %s",
+                    list(response.handoff_to_sales.keys()),
+                )
+
+            # Также кладём в leads_context упрощённый вид — sales может использовать оба
+            if "leads_context" not in self.orch.current_project:
+                self.orch.current_project["leads_context"] = []
+            for c in clients_payload:
+                self.orch.current_project["leads_context"].append({
+                    "company_name": c["company_name"],
+                    "marketplace": "open_web",
+                    "category": c.get("niche") or "",
+                    "pain_points": c.get("pain_hypothesis") or [],
+                    "contact_telegram": None,
+                    "contact_email": None,
+                    "contact_phone": None,
+                    "source": "google",
+                    "website": c.get("website"),
+                    "usp": c.get("usp"),
+                })
+
+            if task_db_id:
+                self.orch.tasks_db.update_task(task_db_id, {
+                    "status": "completed",
+                    "qa_approved": "true",
+                    "qa_feedback": (
+                        f"Google: {response.total_found} клиентов с УТП "
+                        f"(queries={len(response.search_queries)})"
+                    ),
+                })
+            logger.info(
+                "✅ Client Hunter: %s клиентов с УТП сохранено",
+                response.total_found,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка Client Hunter: {e}", exc_info=True)
+            if task_db_id:
+                self.orch.tasks_db.update_task(task_db_id, {
+                    "status": "failed",
+                    "qa_feedback": f"Ошибка client_hunter: {str(e)[:400]}",
+                })
             return False
 
     # ──────────────────────────────────────────────────────────────────────────
