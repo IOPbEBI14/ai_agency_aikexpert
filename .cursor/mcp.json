@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agency-dev-assistant": {
+      "command": "D:/Users/Алексей/AppData/Local/Programs/Python/Python312/python.exe",
+      "args": [
+        "d:/AndroidSDK/Projects/ai_agency_aikexpert/agency_dev_mcp.py"
+      ],
+      "env": {}
+    }
+  }
+}

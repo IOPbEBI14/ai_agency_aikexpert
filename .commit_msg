@@ -1,0 +1,8 @@
+Direction F: Architect blueprint + n8n workflow validation
+
+- Add handoff_to_developer (workflow_blueprint) to ArchitectResponse
+- Extract and pass blueprint to dev-subtasks (fix: removed 2000-char truncation bug)
+- Architect blueprint: nodes[], connections[] with branch for IF/switch, field_mapping[], error_handling[]
+- Validator checks: inputIndex vs index, isolated nodes, credentials keys, empty data:{} in nocoDb update
+- Developer serialization enforces blueprint compliance (reduces n8n generation defects)
+- Updated ANALYSIS.md: Direction F complete, v2.1, 141/141 tests passing

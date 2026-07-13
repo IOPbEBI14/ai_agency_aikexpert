@@ -6,7 +6,6 @@ from datetime import datetime
 from urllib.parse import quote
 from .config import Config
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NocoDBClient")
 
 
@@ -25,7 +24,7 @@ class NocoDBClient:
         """Создаёт запись в agent_logs"""
         try:
             payload = [{"fields": data}]
-            response = requests.post(self.records_url, json=payload, headers=self.headers, timeout=30)
+            response = requests.post(self.records_url, json=payload, headers=self.headers, timeout=120)
             response.raise_for_status()
             result = response.json()
             logger.info(f"✅ Сохранена запись: {data.get('agent_name')}")
@@ -43,7 +42,7 @@ class NocoDBClient:
         """
         try:
             url = f"{self.records_url}?limit={limit}"
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])
@@ -54,7 +53,7 @@ class NocoDBClient:
                 fields["Id"] = r.get("Id")
                 records.append(fields)
 
-            logger.info(f"📥 Получено {len(records)} записей из NocoDB")
+            logger.debug(f"📥 Получено {len(records)} записей из NocoDB")
             return records
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка чтения: {e}")
@@ -95,28 +94,50 @@ class ProjectsClient:
 
     def _build_where_url(self, field: str, value: str, limit: int = 1, sort_field: str = None) -> str:
         """Строит URL с фильтрацией для NocoDB API v3.
-           Синтаксис: ?where=(field,eq,value)&limit=N&sort=[{"field":"...","direction":"..."}]
+        Синтаксис: ?where=(field,eq,value)&limit=N&sort=[{"field":"...","direction":"..."}]
         """
-        # Старый синтаксис where через запятые в скобках
         where_value = f"({field},eq,{value})"
         url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
-    
+
         if sort_field:
-            # API v3 требует JSON-массив для sort
-            # [{"field": "updateTime", "direction": "desc"}]
             sort_json = json.dumps([{"field": sort_field, "direction": "desc"}])
             url += f"&sort={quote(sort_json)}"
-    
-            return url
+
+        return url  # Bug fix: was inside if-block → returned None when sort_field=None
+
+    def list_projects(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Возвращает список проектов (новые сверху)."""
+        try:
+            sort_json = json.dumps([{"field": "UpdatedAt", "direction": "desc"}])
+            url = f"{self.projects_url}?limit={limit}&sort={quote(sort_json)}"
+            response = requests.get(url, headers=self.headers, timeout=120)
+            if response.status_code != 200:
+                # Fallback без sort (поле UpdatedAt может отсутствовать)
+                url = f"{self.projects_url}?limit={limit}"
+                response = requests.get(url, headers=self.headers, timeout=120)
+            if response.status_code != 200:
+                logger.error(f"❌ list_projects: {response.status_code} — {response.text[:200]}")
+                return []
+            data = response.json()
+            records = [self._unpack_record(r) for r in data.get("records", [])]
+            logger.debug(f"📥 list_projects: {len(records)} проектов")
+            return records
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка list_projects: {e}")
+            return []
 
     def find_project_by_status(self, status: str) -> Optional[Dict[str, Any]]:
-        """Ищет проект по статусу."""
+        """Ищет проект по статусу, сортируя по дате обновления (новейший первый)."""
         try:
-            where_value = f"({field},eq,{status})" if False else f"(status,eq,{status})"
-            url = f"{self.projects_url}?where={quote(where_value)}&limit=1&sort={quote(json.dumps([{'field': 'UpdatedAt', 'direction': 'desc'}]))}"
-            logger.info(f"?? Поиск проекта: {url}")
+            url = self._build_where_url(
+                field="status",
+                value=status,
+                limit=1,
+                sort_field="UpdatedAt",
+            )
+            logger.info(f"🔍 Поиск проекта со статусом '{status}': {url}")
             
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             
             if response.status_code != 200:
                 logger.error(f"? NocoDB вернул {response.status_code}: {response.text[:200]}")
@@ -145,7 +166,7 @@ class ProjectsClient:
             url = self._build_where_url("project_name", project_name, limit=1)
             logger.info(f"🔍 Поиск проекта по имени: {url}")
             
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             
             if response.status_code != 200:
                 logger.error(f"❌ NocoDB вернул {response.status_code}: {response.text[:200]}")
@@ -184,7 +205,7 @@ class ProjectsClient:
             logger.info(f"🆕 Создание проекта: {project_name}")
             logger.debug(f"   Payload: {payload}")
             
-            response = requests.post(self.projects_url, json=payload, headers=self.headers, timeout=30)
+            response = requests.post(self.projects_url, json=payload, headers=self.headers, timeout=120)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка создания проекта: {response.status_code} — {response.text[:300]}")
@@ -256,7 +277,7 @@ class ProjectsClient:
             
             logger.debug(f"?? PATCH payload: {json.dumps(payload, ensure_ascii=False)[:200]}")
             
-            response = requests.patch(self.projects_url, json=payload, headers=self.headers, timeout=30)
+            response = requests.patch(self.projects_url, json=payload, headers=self.headers, timeout=120)
             
             if response.status_code >= 400:
                 logger.error(f"? Ошибка обновления проекта: {response.status_code} — {response.text[:300]}")
@@ -271,14 +292,14 @@ class ProjectsClient:
     def get_recent_records_by_project(self, project_id: int, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Получает последние записи для конкретного проекта.
-        Фильтрует по ProjectId.
+        Фильтрует по project_id.
         """
         try:
-            # Фильтрация по ProjectId
-            where_value = f"(ProjectId,eq,{project_id})"
-            url = f"{self.records_url}?where={quote(where_value)}&limit={limit}"
+            where_value = f"(project_id,eq,{project_id})"
+            # Bug fix: was self.records_url (AttributeError) — ProjectsClient has projects_url
+            url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
             
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])
@@ -294,7 +315,24 @@ class ProjectsClient:
         except requests.exceptions.RequestException as e:
             logger.error(f" Ошибка чтения записей проекта {project_id}: {e}")
             return []
-
+    def find_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
+        """Ищет проект по ID."""
+        try:
+            url = f"{self.projects_url}/{project_id}"
+            response = requests.get(url, headers=self.headers, timeout=120)
+            
+            if response.status_code != 200:
+                logger.error(f" NocoDB вернул {response.status_code}: {response.text[:200]}")
+                return None
+            
+            data = response.json()
+            project = self._unpack_record(data)
+            logger.info(f"📂 Найден проект по ID: {project.get('project_name')} (ID: {project.get('Id')})")
+            return project
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка поиска проекта: {e}")
+            return None            
+            
 class TasksClient:
     """Клиент для работы с таблицей tasks"""
 
@@ -331,10 +369,19 @@ class TasksClient:
     def create_task(self, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Создаёт новую задачу"""
         try:
+            # Защита от попадания лог-строк в поле agent_name при создании
+            raw_name = task_data.get("agent_name", "")
+            if not isinstance(raw_name, str) or raw_name not in self._VALID_AGENT_NAMES:
+                logger.error(
+                    f"❌ Попытка создать задачу с недопустимым agent_name: "
+                    f"{repr(str(raw_name)[:120])}. Задача НЕ создана."
+                )
+                return None
+
             payload = [{"fields": task_data}]
             logger.debug(f"📝 POST payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
-            response = requests.post(self.tasks_url, json=payload, headers=self.headers, timeout=30)
+            response = requests.post(self.tasks_url, json=payload, headers=self.headers, timeout=120)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка создания задачи: {response.status_code} — {response.text[:300]}")
@@ -364,7 +411,7 @@ class TasksClient:
             where_value = f"(project_id,eq,{project_id})"
             url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
             
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             
             if response.status_code != 200:
                 logger.error(f"❌ Ошибка чтения задач: {response.status_code} — {response.text[:200]}")
@@ -395,15 +442,31 @@ class TasksClient:
             logger.error(f"❌ Ошибка чтения задач: {e}")
             return []
 
+    # Допустимые имена агентов — защита от попадания посторонних строк в agent_name
+    _VALID_AGENT_NAMES = frozenset({
+        "PM", "lead_hunter", "sales", "analyst", "architect",
+        "developer", "crm_customizer", "qa", "tech_writer",
+    })
+
     def update_task(self, task_id: str, data: Dict[str, Any]) -> bool:
         """Обновляет задачу через NocoDB API v3"""
         try:
             if not task_id:
                 logger.error("❌ Нельзя обновить задачу без Id")
                 return False
-            
+
+            # Защита от попадания лог-строк в поле agent_name (Инцидент №4)
+            if "agent_name" in data:
+                raw_name = data["agent_name"]
+                if not isinstance(raw_name, str) or raw_name not in self._VALID_AGENT_NAMES:
+                    logger.error(
+                        f"❌ Попытка записать недопустимое значение в agent_name: "
+                        f"{repr(str(raw_name)[:120])}. Поле исключено из PATCH."
+                    )
+                    del data["agent_name"]
+
             data["updated_at"] = datetime.now().isoformat()
-            
+
             # Сериализация JSON-полей
             for field in ["input_data", "output_data", "depends_on", "qa_feedback"]:
                 if field in data and isinstance(data[field], (dict, list)):
@@ -415,7 +478,7 @@ class TasksClient:
             logger.info(f"📝 PATCH задача {task_id}: {data}")
             logger.debug(f"📝 PATCH payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
-            response = requests.patch(self.tasks_url, json=payload, headers=self.headers, timeout=30)
+            response = requests.patch(self.tasks_url, json=payload, headers=self.headers, timeout=120)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка обновления задачи {task_id}: {response.status_code} — {response.text[:300]}")
@@ -435,7 +498,7 @@ class TasksClient:
             if not task_id:
                 return None
             url = f"{self.tasks_url}/{task_id}"
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             response.raise_for_status()
             data = response.json()
             return self._unpack_task(data)
@@ -450,7 +513,7 @@ class TasksClient:
             where_value = f"(depends_on,like,%{parent_task_id}%)"
             url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
             
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=120)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])
@@ -470,3 +533,4 @@ class TasksClient:
         except Exception as e:
             logger.error(f"Ошибка проверки подзадач: {e}")
             return False
+            

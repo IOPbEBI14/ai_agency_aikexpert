@@ -6,1168 +6,1377 @@
     <title>AI Agency OS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
-    <!-- ⭐ НОВОЕ: marked.js для рендеринга markdown -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --color-paper: #ffffff;
-            --color-ink: #000000;
-            --color-graphite: #858585;
-            --color-stone: #8e8e90;
-            --font-inter: 'Inter', system-ui, -apple-system, sans-serif;
-            --text-caption: 12px;
-            --leading-caption: 1.2;
-            --tracking-caption: -0.0170em;
-            --text-subheading: 24px;
-            --leading-subheading: 1.23;
-            --tracking-subheading: -0.4px;
-            --spacing-4: 4px;
-            --spacing-6: 6px;
-            --spacing-8: 8px;
-            --spacing-10: 10px;
-            --spacing-16: 16px;
-            --spacing-28: 28px;
-            --spacing-40: 40px;
-            --spacing-120: 120px;
-            --page-max-width: 1440px;
-            --card-padding: 16px;
-            --element-gap: 10px;
-            --radius-cards: 8px;
-            --radius-tags: 40px;
-            --radius-buttons: 9999px;
+            --bg: #f3efe6;
+            --bg-elevated: #faf7f0;
+            --ink: #1c1a16;
+            --muted: #6f6a60;
+            --line: #d7d0c3;
+            --accent: #0f5c4c;
+            --accent-soft: #d8ebe4;
+            --warn: #8a4b12;
+            --warn-soft: #f3e0c8;
+            --danger: #8b2e2e;
+            --danger-soft: #f3d6d6;
+            --ok: #1f6b3a;
+            --ok-soft: #d9eadf;
+            --radius: 10px;
+            --font: "IBM Plex Sans", system-ui, sans-serif;
+            --mono: "IBM Plex Mono", ui-monospace, monospace;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            background-color: var(--color-paper);
-            color: var(--color-ink);
-            font-family: var(--font-inter);
-            font-weight: 400;
-            -webkit-font-smoothing: antialiased;
-            line-height: var(--leading-caption);
+            background:
+                radial-gradient(circle at top left, rgba(15, 92, 76, 0.08), transparent 28%),
+                linear-gradient(180deg, #f7f3ea 0%, var(--bg) 40%, #ebe4d7 100%);
+            color: var(--ink);
+            font-family: var(--font);
+            min-height: 100vh;
+            line-height: 1.4;
         }
 
         .container {
-            max-width: var(--page-max-width);
+            max-width: 1280px;
             margin: 0 auto;
-            padding: 0 var(--spacing-16);
+            padding: 20px 16px 80px;
         }
 
-        .header {
-            padding: var(--spacing-16) 0;
+        header {
             display: flex;
             justify-content: space-between;
+            align-items: flex-end;
+            gap: 16px;
+            margin-bottom: 28px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .header-right {
+            display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            gap: 10px;
+            justify-content: flex-end;
         }
 
-        .header-item {
-            font-size: var(--text-caption);
-            letter-spacing: var(--tracking-caption);
-            color: var(--color-ink);
-            text-decoration: none;
-            line-height: var(--leading-caption);
+        .nav-btn {
+            font-family: var(--font);
+            font-size: 13px;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: #f7fffb;
+            padding: 8px 14px;
+            cursor: pointer;
         }
 
-        .header-item.muted { color: var(--color-graphite); }
-
-        .intro {
-            padding-top: var(--spacing-40);
-            padding-bottom: var(--spacing-40);
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: var(--spacing-40);
+        .nav-btn:hover {
+            background: #0b463a;
+            border-color: #0b463a;
         }
 
-        .intro-email {
-            font-size: var(--text-caption);
-            color: var(--color-ink);
-            text-decoration: none;
-            letter-spacing: var(--tracking-caption);
+        .nav-btn.ghost {
+            background: transparent;
+            color: var(--ink);
+            border-color: var(--line);
         }
 
-        .intro-text {
-            font-size: var(--text-subheading);
-            color: var(--color-graphite);
-            line-height: var(--leading-subheading);
-            letter-spacing: var(--tracking-subheading);
+        .nav-btn.ghost:hover {
+            background: var(--ink);
+            color: var(--bg);
+            border-color: var(--ink);
         }
+
+        .brand {
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+        }
+
+        .brand span {
+            display: block;
+            margin-top: 4px;
+            font-size: 13px;
+            font-weight: 400;
+            color: var(--muted);
+            letter-spacing: 0;
+        }
+
+        .phase-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+        }
+        .dot.live { background: var(--accent); box-shadow: 0 0 0 4px rgba(15, 92, 76, 0.15); }
+        .dot.warn { background: var(--warn); }
+        .dot.ok { background: var(--ok); }
 
         .metrics {
-            display: flex;
-            gap: var(--spacing-40);
-            margin-bottom: var(--spacing-40);
-            padding-bottom: var(--spacing-40);
-            border-bottom: 1px solid var(--color-stone);
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
         }
 
-        .metric-item {
-            display: flex;
-            flex-direction: column;
-            gap: var(--spacing-6);
+        .metric {
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 14px 16px;
         }
 
-        .metric-label, .metric-value {
-            font-size: var(--text-caption);
-            letter-spacing: var(--tracking-caption);
-            line-height: var(--leading-caption);
+        .metric-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            margin-bottom: 6px;
         }
-        .metric-label { color: var(--color-graphite); }
-        .metric-value { color: var(--color-ink); }
 
-        .token-bar-bg {
-            width: 200px;
+        .metric-value {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .token-bar {
+            margin-top: 10px;
             height: 4px;
-            background-color: var(--color-stone);
-            border-radius: 2px;
-            margin-top: var(--spacing-4);
+            background: var(--line);
+            border-radius: 999px;
+            overflow: hidden;
         }
 
-        .token-bar-fill {
+        .token-bar > div {
             height: 100%;
-            background-color: var(--color-ink);
-            border-radius: 2px;
+            background: var(--accent);
+            width: 0%;
             transition: width 0.3s ease;
         }
 
         .controls {
             display: flex;
-            gap: var(--spacing-16);
-            margin-bottom: var(--spacing-40);
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        button, .btn {
+            font-family: var(--font);
+            font-size: 13px;
+            border-radius: 999px;
+            border: 1px solid var(--ink);
+            background: transparent;
+            color: var(--ink);
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: 0.15s ease;
+        }
+
+        button:hover:not(:disabled), .btn:hover {
+            background: var(--ink);
+            color: var(--bg);
+        }
+
+        button:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #f7fffb;
+        }
+
+        button.primary:hover:not(:disabled) {
+            background: #0b463a;
+            border-color: #0b463a;
+            color: #f7fffb;
+        }
+
+        .panel {
+            display: none;
+            background: var(--warn-soft);
+            border: 1px solid #e2c49a;
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .panel.visible { display: block; }
+
+        .panel h2 {
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .panel p {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .panel textarea,
+        .panel select {
+            width: 100%;
+            font-family: var(--font);
+            font-size: 13px;
+            border: 1px solid #d8b98a;
+            border-radius: 8px;
+            background: #fffaf2;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            color: var(--ink);
+        }
+
+        .panel textarea { min-height: 96px; resize: vertical; }
+
+        .panel-actions {
+            display: flex;
+            gap: 8px;
             flex-wrap: wrap;
         }
 
-        .control-btn {
-            padding: var(--spacing-6) var(--spacing-16);
-            border-radius: var(--radius-buttons);
-            border: 1px solid var(--color-ink);
-            background: var(--color-paper);
-            color: var(--color-ink);
-            font-family: var(--font-inter);
-            font-size: var(--text-caption);
-            font-weight: 400;
-            letter-spacing: var(--tracking-caption);
-            cursor: pointer;
-            transition: background 0.2s ease, color 0.2s ease;
-        }
-
-        .control-btn:hover:not(:disabled) {
-            background: var(--color-ink);
-            color: var(--color-paper);
-        }
-
-        .control-btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
+        .section-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin: 8px 0 12px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
         }
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: var(--spacing-16);
-            padding-bottom: var(--spacing-120);
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
         }
 
         .card {
-            background-color: var(--color-paper);
-            border-radius: var(--radius-cards);
-            padding: var(--card-padding);
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 14px;
+            min-height: 180px;
             display: flex;
             flex-direction: column;
-            gap: var(--element-gap);
-            min-height: 220px;
-            cursor: pointer;
-            transition: background-color 0.2s ease;
+            gap: 10px;
+            transition: border-color 0.15s ease, transform 0.15s ease;
         }
 
-        .card:hover { background-color: #fafafa; }
-
-        .card.expanded {
-            grid-column: span 2;
-            grid-row: span 2;
-            min-height: 440px;
-        }
+        .card:hover { border-color: #bdb4a4; }
+        .card.expanded { grid-column: span 2; min-height: 280px; }
 
         .card-header {
             display: flex;
             justify-content: space-between;
+            gap: 8px;
             align-items: flex-start;
-            gap: var(--spacing-8);
         }
 
-        .pill-label {
-            border-radius: var(--radius-tags);
-            border: 1px solid var(--color-ink);
-            padding: var(--spacing-6) var(--spacing-8);
-            font-size: var(--text-caption);
-            color: var(--color-ink);
-            letter-spacing: var(--tracking-caption);
-            white-space: nowrap;
-        }
-
-        .pill-label.status-review {
-            border-color: var(--color-graphite);
-            color: var(--color-graphite);
-        }
-
-        .pill-label.status-completed {
-            border-color: var(--color-stone);
-            color: var(--color-graphite);
-        }
-
-        .arrow-btn {
-            width: 32px;
-            height: 32px;
-            border-radius: var(--radius-buttons);
-            border: 1px solid var(--color-ink);
-            background: var(--color-paper);
-            display: flex;
+        .pill {
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background 0.2s ease;
-            flex-shrink: 0;
+            gap: 6px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            background: #fff;
         }
 
-        .arrow-btn:hover { background: var(--color-ink); }
-        .arrow-btn:hover svg { stroke: var(--color-paper); }
-
-        .arrow-btn svg {
-            width: 16px;
-            height: 16px;
-            stroke: var(--color-ink);
-            stroke-width: 1.5;
-            fill: none;
+        .status-pending { color: var(--muted); }
+        .status-in_progress { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+        .status-completed { color: var(--ok); border-color: #9fc9ae; background: var(--ok-soft); }
+        .status-failed, .status-needs_human_review {
+            color: var(--danger);
+            border-color: #e0a8a8;
+            background: var(--danger-soft);
         }
 
-        .card-content {
-            flex-grow: 1;
-            font-size: var(--text-caption);
-            color: var(--color-ink);
-            letter-spacing: var(--tracking-caption);
-            line-height: 1.4;
-            overflow: hidden;
+        .card-body {
+            flex: 1;
+            font-size: 13px;
+            color: var(--ink);
         }
 
-        .card-summary {
+        .card-desc {
+            color: var(--muted);
+            margin-bottom: 8px;
             display: -webkit-box;
-            -webkit-line-clamp: 5;
+            -webkit-line-clamp: 6;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
 
-        .card.expanded .card-summary {
+        .card.expanded .card-desc {
             -webkit-line-clamp: unset;
-            overflow-y: auto;
-            max-height: 320px;
+            max-height: none;
+            overflow: visible;
+            color: var(--ink);
         }
 
-        .card-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: auto;
-            padding-top: var(--spacing-8);
-            border-top: 1px solid var(--color-stone);
-        }
-
-        .card-meta {
-            font-size: var(--text-caption);
-            color: var(--color-graphite);
-            letter-spacing: var(--tracking-caption);
-        }
-
-        .json-content {
-            font-family: 'SF Mono', 'Courier New', monospace;
-            font-size: 11px;
-            line-height: 1.4;
-            background: #fafafa;
-            padding: var(--spacing-8);
-            border-radius: 4px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            max-height: 180px;
-            overflow-y: auto;
-        }
-
-        .leads-list { list-style: none; padding: 0; }
-        .leads-list li {
-            padding: var(--spacing-6) 0;
-            border-bottom: 1px solid var(--color-stone);
-        }
-        .leads-list li:last-child { border-bottom: none; }
-
-        .roi-table {
-            width: 100%;
-            font-size: var(--text-caption);
-            border-collapse: collapse;
-        }
-        .roi-table td {
-            padding: var(--spacing-4) 0;
-            border-bottom: 1px solid var(--color-stone);
-        }
-        .roi-table tr:last-child td { border-bottom: none; }
-        .roi-table td:first-child { color: var(--color-graphite); }
-        .roi-table td:last-child { text-align: right; color: var(--color-ink); }
-
-        .message-preview {
-            font-size: var(--text-caption);
-            line-height: 1.4;
-            padding: var(--spacing-8);
-            border-left: 1px solid var(--color-ink);
-            margin-top: var(--spacing-4);
-        }
-
-        .section-title {
-            font-size: var(--text-caption);
-            color: var(--color-graphite);
-            letter-spacing: var(--tracking-caption);
-            margin-bottom: var(--spacing-16);
-            text-transform: uppercase;
-        }
-
-        /* ⭐ НОВОЕ: Стили для финального отчета */
-        .final-report-card {
-            grid-column: span 5;
-            background-color: var(--color-paper);
-            border: 2px solid var(--color-ink);
-            border-radius: var(--radius-cards);
-            padding: var(--spacing-16);
-            margin-bottom: var(--spacing-16);
-        }
-
-        .final-report-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: var(--spacing-16);
-            padding-bottom: var(--spacing-16);
-            border-bottom: 1px solid var(--color-stone);
-        }
-
-        .final-report-title {
-            font-size: var(--text-subheading);
-            font-weight: 500;
-            letter-spacing: var(--tracking-subheading);
-        }
-
-        .final-report-actions {
-            display: flex;
-            gap: var(--spacing-8);
-        }
-
-        .final-report-content {
-            max-height: 600px;
-            overflow-y: auto;
-            padding: var(--spacing-16);
-            background: #fafafa;
-            border-radius: 4px;
-            font-size: 13px;
-            line-height: 1.6;
-        }
-
-        .final-report-content.collapsed {
-            max-height: 200px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .final-report-content.collapsed::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 80px;
-            background: linear-gradient(transparent, #fafafa);
-        }
-
-        /* Markdown стили внутри отчета */
-        .final-report-content h1 {
-            font-size: 20px;
-            font-weight: 500;
-            margin: 16px 0 8px 0;
-            border-bottom: 1px solid var(--color-stone);
-            padding-bottom: 4px;
-        }
-
-        .final-report-content h2 {
-            font-size: 16px;
-            font-weight: 500;
-            margin: 14px 0 6px 0;
-        }
-
-        .final-report-content h3 {
-            font-size: 14px;
-            font-weight: 500;
-            margin: 12px 0 4px 0;
-        }
-
-        .final-report-content p {
-            margin: 8px 0;
-        }
-
-        .final-report-content ul, .final-report-content ol {
-            margin: 8px 0;
-            padding-left: 24px;
-        }
-
-        .final-report-content li {
-            margin: 4px 0;
-        }
-
-        .final-report-content code {
-            background: #f0f0f0;
-            padding: 2px 4px;
-            border-radius: 3px;
-            font-family: 'SF Mono', monospace;
-            font-size: 11px;
-        }
-
-        .final-report-content pre {
-            background: #f0f0f0;
-            padding: 12px;
-            border-radius: 4px;
-            overflow-x: auto;
-            margin: 8px 0;
-        }
-
-        .final-report-content pre code {
-            background: transparent;
-            padding: 0;
-        }
-
-        .final-report-content table {
-            border-collapse: collapse;
-            margin: 8px 0;
-            width: 100%;
+        .feedback {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-left: 3px solid var(--warn);
+            background: rgba(255,255,255,0.55);
             font-size: 12px;
+            color: var(--warn);
+            white-space: pre-wrap;
+            max-height: 160px;
+            overflow: auto;
         }
 
-        .final-report-content th, .final-report-content td {
-            border: 1px solid var(--color-stone);
-            padding: 6px 8px;
-            text-align: left;
+        .card.expanded .feedback {
+            max-height: none;
+            overflow: visible;
+            color: var(--ink);
+            border-left-color: var(--accent);
         }
 
-        .final-report-content th {
-            background: #f0f0f0;
-            font-weight: 500;
-        }
-
-        .final-report-content blockquote {
-            border-left: 3px solid var(--color-graphite);
-            padding-left: 12px;
-            margin: 8px 0;
-            color: var(--color-graphite);
-        }
-
-        .final-report-content strong {
-            font-weight: 500;
-        }
-
-        .final-report-content hr {
-            border: none;
-            border-top: 1px solid var(--color-stone);
-            margin: 16px 0;
-        }
-
-        /* ⭐ Метрики проекта */
-        .project-metrics {
+        .pm-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 16px;
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: var(--spacing-16);
-            margin-bottom: var(--spacing-16);
-            padding: var(--spacing-16);
-            background: #fafafa;
-            border-radius: var(--radius-cards);
+            grid-template-columns: 1.2fr 1fr;
+            gap: 16px;
         }
 
-        .project-metric {
+        .pm-card h2 {
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+
+        .pm-meta {
             display: flex;
-            flex-direction: column;
-            gap: var(--spacing-4);
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
         }
 
-        .project-metric-label {
+        .pm-text {
+            font-size: 13px;
+            color: var(--muted);
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+
+        .pm-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .pm-stat {
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .pm-stat span {
+            display: block;
             font-size: 11px;
-            color: var(--color-graphite);
+            color: var(--muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
 
-        .project-metric-value {
-            font-size: 18px;
+        .pm-stat strong {
+            font-size: 16px;
             font-weight: 500;
-            color: var(--color-ink);
         }
 
-        .project-metric-sub {
+        @media (max-width: 640px) {
+            .pm-card { grid-template-columns: 1fr; }
+        }
+
+        .json-box {
+            margin-top: 8px;
+            font-family: var(--mono);
             font-size: 11px;
-            color: var(--color-graphite);
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px;
+            max-height: 160px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
-        @media (max-width: 1200px) {
-            .grid { grid-template-columns: repeat(3, 1fr); }
-            .card.expanded { grid-column: span 2; grid-row: span 2; }
-            .final-report-card { grid-column: span 3; }
+        .card.expanded .json-box {
+            max-height: 480px;
         }
-        @media (max-width: 768px) {
-            .grid { grid-template-columns: repeat(2, 1fr); }
-            .card.expanded { grid-column: span 2; grid-row: auto; }
-            .intro {
-                grid-template-columns: 1fr;
-                gap: var(--spacing-16);
-                padding-top: var(--spacing-40);
-                padding-bottom: var(--spacing-40);
-            }
-            .header {
-                flex-direction: column;
-                gap: var(--spacing-16);
-                align-items: flex-start;
-            }
-            .metrics { flex-wrap: wrap; gap: var(--spacing-28); }
-            .final-report-card { grid-column: span 2; }
+
+        .artifact {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .artifact h4 {
+            font-size: 12px;
+            font-weight: 600;
+            margin: 8px 0 4px;
+            color: var(--ink);
+        }
+
+        .artifact ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .artifact li {
+            margin: 2px 0;
+        }
+
+        .artifact .muted {
+            color: var(--muted);
+        }
+
+        .artifact-box {
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-top: 6px;
+            max-height: 140px;
+            overflow: auto;
+        }
+
+        .card.expanded .artifact-box {
+            max-height: 420px;
+        }
+
+        .flow-step {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .flow-step:last-child { border-bottom: none; }
+
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            align-items: center;
+            padding-top: 8px;
+            border-top: 1px solid var(--line);
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .card-actions button {
+            padding: 4px 10px;
+            font-size: 11px;
+        }
+
+        .final-report {
+            display: none;
+            margin-bottom: 20px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+
+        .final-report.visible { display: block; }
+
+        .final-report h2 {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .report-content {
+            max-height: 420px;
+            overflow: auto;
+            font-size: 13px;
+            line-height: 1.6;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+            padding: 14px;
+        }
+
+        .workflows {
+            margin-top: 28px;
+        }
+
+        .workflow-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .workflow-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .toast {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            background: var(--ink);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 50;
+            max-width: 360px;
+        }
+
+        .toast.show { opacity: 1; }
+
+        .history-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: var(--accent-soft);
+            border: 1px solid #9fc9b8;
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .history-banner.visible { display: flex; }
+
+        .history-panel {
+            display: none;
+            background: var(--bg-elevated);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 14px;
+            margin-bottom: 20px;
+        }
+
+        .history-panel.visible { display: block; }
+
+        .history-panel h2 {
+            font-size: 15px;
+            margin-bottom: 10px;
+        }
+
+        .project-list {
+            display: grid;
+            gap: 8px;
+            max-height: 360px;
+            overflow: auto;
+        }
+
+        .project-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            cursor: pointer;
+            text-align: left;
+            font-family: var(--font);
+            color: var(--ink);
+        }
+
+        .project-item:hover { border-color: var(--accent); }
+
+        .project-item.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .project-item .meta {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+        @media (max-width: 960px) {
+            .metrics { grid-template-columns: repeat(2, 1fr); }
+            .grid { grid-template-columns: 1fr 1fr; }
+            .card.expanded { grid-column: span 2; }
+        }
+
+        @media (max-width: 640px) {
+            .metrics, .grid { grid-template-columns: 1fr; }
+            .card.expanded { grid-column: span 1; }
+            header { flex-direction: column; align-items: flex-start; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <header class="header">
-            <a href="#" class="header-item">AI Agency OS</a>
-            <a href="#" class="header-item muted">n8n Workflows</a>
-            <a href="#" class="header-item muted">NocoDB Base</a>
-            <a href="#" class="header-item muted">System Logs</a>
-        </header>
-
-        <section class="intro">
-            <a href="mailto:admin@agency.local" class="intro-email">admin@agency.local</a>
-            <p class="intro-text">
-                Оркестрация 9 ИИ-агентов для автоматизации e-commerce.
-                Интеграции через n8n, Albato и Bpium.
-                Мониторинг состояния задач и расхода токенов YandexGPT в реальном времени.
-            </p>
-        </section>
-
-        <section class="metrics">
-            <div class="metric-item">
-                <span class="metric-label">Статус системы</span>
-                <span class="metric-value" id="system-status">—</span>
-            </div>
-            <div class="metric-item">
-                <span class="metric-label">Расход токенов</span>
-                <span class="metric-value" id="token-text">0 / 0</span>
-                <div class="token-bar-bg">
-                    <div class="token-bar-fill" id="token-bar" style="width: 0%"></div>
+        <header>
+            <div>
+                <div class="brand">
+                    AI Agency OS
+                    <span>Оркестрация агентов · n8n · NocoDB · real-time мониторинг</span>
                 </div>
             </div>
-            <div class="metric-item">
-                <span class="metric-label">Активных агентов</span>
-                <span class="metric-value" id="active-agents">0</span>
+            <div class="header-right">
+                <button type="button" class="nav-btn" id="btn-history" onclick="toggleHistoryPanel()">История запусков</button>
+                <div class="phase-pill">
+                    <span class="dot" id="live-dot"></span>
+                    <span id="phase-text">фаза: —</span>
+                </div>
             </div>
-            <div class="metric-item">
-                <span class="metric-label">Клиент</span>
-                <span class="metric-value" id="client-name">—</span>
+        </header>
+
+        <section class="metrics">
+            <div class="metric">
+                <div class="metric-label">Статус</div>
+                <div class="metric-value" id="system-status">—</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Токены</div>
+                <div class="metric-value" id="token-text">0 / 0</div>
+                <div class="token-bar"><div id="token-bar"></div></div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Задачи</div>
+                <div class="metric-value" id="tasks-summary">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Клиент</div>
+                <div class="metric-value" id="client-name">—</div>
             </div>
         </section>
 
         <section class="controls">
-            <button class="control-btn" id="btn-start" onclick="startAgency()">▶ Запустить агентство</button>
-            <button class="control-btn" id="btn-stop" onclick="stopAgency()" disabled>⏹ Остановить</button>
-            <button class="control-btn" id="btn-resume" onclick="resumeAgency()" disabled>↻ Продолжить анализ</button>
-            <button class="control-btn" id="btn-increase-tokens" onclick="increaseTokens()">+ Увеличить токены</button>
-            <button class="control-btn" onclick="refreshData()">↻ Обновить</button>
+            <button class="primary" id="btn-start" onclick="startAgency()">Запустить</button>
+            <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
+            <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
+            <button onclick="increaseTokens()">+ Токены</button>
+            <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
+            <button onclick="refreshData()">Обновить</button>
         </section>
 
-        <!-- ⭐ НОВОЕ: Контейнер для финального отчета -->
-        <div id="final-report-container"></div>
+        <section class="history-banner" id="history-banner">
+            <div>
+                <strong>Просмотр истории:</strong>
+                <span id="history-banner-text">—</span>
+            </div>
+            <button class="primary" onclick="exitHistoryView()">К текущему запуску</button>
+        </section>
 
-        <div class="section-title">Результаты работы агентов</div>
+        <section class="history-panel" id="history-panel">
+            <h2>Предыдущие запуски</h2>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+                Выберите проект, чтобы увидеть карточки агентов, статусы и итоговый отчёт.
+            </p>
+            <div class="project-list" id="project-list">
+                <div class="workflow-item"><span>Загрузка…</span></div>
+            </div>
+        </section>
 
-        <section class="grid" id="agent-grid">
-            <div class="card" style="grid-column: span 5;">
-                <div class="card-header">
-                    <span class="pill-label">Система</span>
+        <section class="panel" id="review-panel">
+            <h2>Нужен комментарий человека</h2>
+            <p id="review-hint">Проект или задача ожидают указаний. Комментарий уйдёт в PM и перезапустит процесс.</p>
+            <select id="review-task">
+                <option value="">Весь проект (без конкретной задачи)</option>
+            </select>
+            <textarea id="review-comment" placeholder="Что исправить / уточнить? Например: сохрани noco_id в Set-ноде до HTTP Create Bpium..."></textarea>
+            <div class="panel-actions">
+                <button class="primary" onclick="submitHumanReview()">Отправить и продолжить</button>
+                <button onclick="hideReviewPanel()">Скрыть</button>
+            </div>
+        </section>
+
+        <section class="final-report" id="final-report">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;">
+                <h2>Финальный отчёт</h2>
+                <button onclick="downloadReport()">Скачать .md</button>
+            </div>
+            <div class="report-content" id="report-content"></div>
+        </section>
+
+        <div class="section-title">
+            <span>Project Manager</span>
+        </div>
+        <section class="pm-card" id="pm-card">
+            <div>
+                <h2>PM</h2>
+                <div class="pm-meta">
+                    <span class="pill" id="pm-status">—</span>
+                    <span class="pill" id="pm-phase">фаза: —</span>
                 </div>
-                <div class="card-content">
-                    <div class="card-summary">Ожидание данных. Нажмите «Запустить агентство».</div>
-                </div>
-                <div class="card-footer">
-                    <span class="card-meta">Ожидание</span>
-                </div>
+                <div class="pm-text" id="pm-text">Ожидание данных проекта…</div>
+            </div>
+            <div class="pm-stats">
+                <div class="pm-stat"><span>Задач</span><strong id="pm-tasks">0</strong></div>
+                <div class="pm-stat"><span>Готово</span><strong id="pm-done">0</strong></div>
+                <div class="pm-stat"><span>Провалы</span><strong id="pm-failed">0</strong></div>
+                <div class="pm-stat"><span>На review</span><strong id="pm-review">0</strong></div>
+            </div>
+        </section>
+
+        <div class="section-title">
+            <span>Задачи агентов</span>
+            <span id="poll-hint">обновление каждые 10 с</span>
+        </div>
+        <section class="grid" id="task-grid">
+            <div class="card">
+                <div class="card-header"><span class="pill">Система</span></div>
+                <div class="card-body">Ожидание данных. Нажмите «Запустить».</div>
+            </div>
+        </section>
+
+        <section class="workflows">
+            <div class="section-title">
+                <span>Сохранённые workflows</span>
+                <button onclick="loadSavedWorkflows()">Обновить список</button>
+            </div>
+            <div class="workflow-list" id="workflow-list">
+                <div class="workflow-item"><span>Пока нет сохранённых файлов</span></div>
             </div>
         </section>
     </div>
 
-    <script>
-const NOCODB_PROXY_URL = '/api/nocodb';
-const AGENCY_API_URL = '/api/agency';
+    <div class="toast" id="toast"></div>
 
-// Глобальное состояние
-let currentProjectData = {
+    <script>
+const API = '/api/agency';
+let state = {
+    status: 'idle',
+    running: false,
+    tasks: [],
+    review_tasks: [],
+    pm: {},
     final_report: '',
     metrics: {},
-    completed_at: '',
-    status: ''
 };
+/** Открытые карточки: task_id → замороженный innerHTML (не обновляется при poll) */
+const expandedFreeze = new Map();
+/** Режим истории: null = live, иначе id выбранного проекта */
+let historyProjectId = null;
+let liveRunning = false;
+let projectsCache = [];
 
-async function fetchAgencyStatus() {
+function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function escapeHtml(text) {
+    if (text == null) return '';
+    const d = document.createElement('div');
+    d.textContent = String(text);
+    return d.innerHTML;
+}
+
+function statusLabel(s) {
+    return ({
+        pending: 'Ожидает',
+        in_progress: 'В работе',
+        completed: 'Готово',
+        failed: 'Провал',
+        needs_human_review: 'Нужен человек',
+        stopped: 'Остановлен',
+        idle: 'Ожидание',
+    })[s] || s || '—';
+}
+
+async function refreshData() {
     try {
-        const response = await fetch(`${AGENCY_API_URL}/status`);
-        if (!response.ok) return;
-        const data = await response.json();
-
-        console.log('🔍 Получены данные от API:', data);
-
-        // Обновляем кнопки
-        document.getElementById('btn-start').disabled = data.running;
-        document.getElementById('btn-stop').disabled = !data.running;
-        document.getElementById('btn-resume').disabled = data.running || 
-            (data.status !== 'stopped' && data.status !== 'needs_human_review');
-
-        // Метрики токенов
-        const percentage = Math.min((data.tokens_used / data.token_budget) * 100, 100);
-        document.getElementById('token-text').textContent =
-            `${data.tokens_used.toLocaleString('ru-RU')} / ${data.token_budget.toLocaleString('ru-RU')}`;
-        document.getElementById('token-bar').style.width = `${percentage}%`;
-
-        // Статус системы
-        const statusEl = document.getElementById('system-status');
-        if (data.status === 'completed') {
-            statusEl.textContent = '✅ Завершен';
-            statusEl.style.color = 'var(--color-ink)';
-        } else if (data.running) {
-            statusEl.textContent = 'Работает';
-            statusEl.style.color = 'var(--color-ink)';
-        } else if (data.status === 'needs_human_review') {
-            statusEl.textContent = 'Требует внимания';
-            statusEl.style.color = 'var(--color-graphite)';
-        } else {
-            statusEl.textContent = 'Ожидание';
-            statusEl.style.color = 'var(--color-graphite)';
+        // В режиме истории не затираем просмотр live-статусом,
+        // но обновляем кнопки управления по текущему агентству.
+        if (historyProjectId) {
+            const res = await fetch(`${API}/status`);
+            if (res.ok) {
+                const live = await res.json();
+                liveRunning = !!live.running;
+                document.getElementById('btn-start').disabled = liveRunning;
+                document.getElementById('btn-stop').disabled = !liveRunning;
+                document.getElementById('btn-resume').disabled =
+                    liveRunning || !['stopped', 'needs_human_review'].includes(live.status);
+            }
+            renderHistoryChrome();
+            return;
         }
 
-        document.getElementById('client-name').textContent = data.client || '—';
-
-        // ⭐ СОХРАНЯЕМ ДАННЫЕ ПРОЕКТА
-        currentProjectData = {
-            final_report: data.final_report || '',
-            metrics: data.metrics || {},
-            completed_at: data.completed_at || '',
-            status: data.status || ''
-        };
-
-        console.log('💾 Сохранены данные проекта:', currentProjectData);
-        console.log('📄 Final report есть?', !!currentProjectData.final_report);
-        console.log('📄 Final report длина:', currentProjectData.final_report.length);
-
-        // ⭐ ВЫЗЫВАЕМ РЕНДЕРИНГ ФИНАЛЬНОГО ОТЧЕТА
-        renderFinalReport();
-
-    } catch (error) {
-        console.error('❌ Ошибка получения статуса:', error);
+        const res = await fetch(`${API}/status`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        state = { ...state, ...data };
+        liveRunning = !!data.running;
+        renderAll();
+    } catch (e) {
+        console.error(e);
+        document.getElementById('system-status').textContent = 'API недоступен';
     }
 }
 
-// ⭐ ФУНКЦИЯ РЕНДЕРИНГА ФИНАЛЬНОГО ОТЧЕТА
-function renderFinalReport() {
-    const container = document.getElementById('final-report-container');
-    
-    console.log('🎨 Вызвана renderFinalReport()');
-    console.log('🎨 Контейнер:', container);
-    console.log('🎨 Статус:', currentProjectData.status);
-    console.log('🎨 Final report длина:', currentProjectData.final_report?.length);
+function renderAll() {
+    renderMetrics();
+    renderPm();
+    renderReviewPanel();
+    renderTasks();
+    renderFinalReport();
+    renderHistoryChrome();
+}
 
-    // Проверяем условия отображения
-    if (currentProjectData.status !== 'completed') {
-        console.log('⚠️ Статус не completed, скрываем отчет');
-        container.innerHTML = '';
+function renderHistoryChrome() {
+    const banner = document.getElementById('history-banner');
+    const pollHint = document.getElementById('poll-hint');
+    if (historyProjectId) {
+        banner.classList.add('visible');
+        document.getElementById('history-banner-text').textContent =
+            `#${historyProjectId} · ${state.project_name || '—'} · ${statusLabel(state.status)}`;
+        pollHint.textContent = 'режим истории (live-poll на паузе)';
+    } else {
+        banner.classList.remove('visible');
+        pollHint.textContent = 'обновление каждые 10 с';
+    }
+}
+
+async function toggleHistoryPanel() {
+    const panel = document.getElementById('history-panel');
+    if (!panel) {
+        toast('Панель истории не найдена — обновите страницу (Ctrl+F5)');
+        return;
+    }
+    const willShow = !panel.classList.contains('visible');
+    panel.classList.toggle('visible', willShow);
+    const btn = document.getElementById('btn-history');
+    if (btn) btn.classList.toggle('ghost', willShow);
+    if (willShow) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await loadProjectsList();
+    }
+}
+
+async function loadProjectsList() {
+    const list = document.getElementById('project-list');
+    list.innerHTML = `<div class="workflow-item"><span>Загрузка…</span></div>`;
+    try {
+        const res = await fetch(`${API}/projects?limit=50`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
+        projectsCache = data.projects || [];
+        if (!projectsCache.length) {
+            list.innerHTML = `<div class="workflow-item"><span>Проектов пока нет</span></div>`;
+            return;
+        }
+        list.innerHTML = projectsCache.map(p => {
+            const active = historyProjectId === p.id ? 'active' : '';
+            const mark = p.is_current ? ' · текущий' : '';
+            const report = p.has_final_report ? ' · отчёт' : '';
+            const when = (p.completed_at || p.updated_at || '').replace('T', ' ').slice(0, 19);
+            return `
+                <button type="button" class="project-item ${active}" onclick="openProjectHistory(${Number(p.id)})">
+                    <div>
+                        <strong>${escapeHtml(p.project_name)}</strong>
+                        <div class="meta">
+                            #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}
+                            ${when ? ` · ${escapeHtml(when)}` : ''}
+                        </div>
+                        ${p.goal ? `<div class="meta">${escapeHtml(p.goal)}</div>` : ''}
+                    </div>
+                    <span class="pill status-${escapeHtml(p.status || '')}">${escapeHtml(statusLabel(p.status))}</span>
+                </button>
+            `;
+        }).join('');
+    } catch (e) {
+        list.innerHTML = `<div class="workflow-item"><span>${escapeHtml(e.message || e)}</span></div>`;
+    }
+}
+
+async function openProjectHistory(projectId) {
+    try {
+        const res = await fetch(`${API}/projects/${projectId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        historyProjectId = projectId;
+        expandedFreeze.clear();
+        state = { ...state, ...data, running: false };
+        document.getElementById('history-panel').classList.remove('visible');
+        renderAll();
+        toast(`Открыт проект #${projectId}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+        toast(String(e.message || e));
+    }
+}
+
+function exitHistoryView() {
+    historyProjectId = null;
+    expandedFreeze.clear();
+    toast('Вернулись к текущему запуску');
+    refreshData();
+}
+
+function renderPm() {
+    const pm = state.pm || {};
+    const status = pm.status || state.status;
+    document.getElementById('pm-status').textContent = (!historyProjectId && state.running)
+        ? 'Работает'
+        : statusLabel(status);
+    document.getElementById('pm-status').className = `pill status-${escapeHtml(status || '')}`;
+    document.getElementById('pm-phase').textContent = `фаза: ${pm.phase || state.phase || '—'}`;
+    document.getElementById('pm-tasks').textContent = String(pm.tasks_total ?? (state.tasks || []).length);
+    document.getElementById('pm-done').textContent = String(pm.tasks_completed ?? 0);
+    document.getElementById('pm-failed').textContent = String(pm.tasks_failed ?? 0);
+    document.getElementById('pm-review').textContent = String(pm.review_count ?? (state.review_tasks || []).length);
+
+    const active = (pm.active_agents || []).filter(Boolean);
+    const parts = [];
+    if (historyProjectId) parts.push(`Режим истории · проект #${historyProjectId}`);
+    if (pm.project_name) parts.push(`Проект: ${pm.project_name}`);
+    if (pm.client) parts.push(`Клиент: ${pm.client}`);
+    if (pm.goal) parts.push(`Цель: ${pm.goal}`);
+    if (active.length) parts.push(`Сейчас: ${active.join(', ')}`);
+    if (pm.reasoning) parts.push(pm.reasoning);
+    else if (!parts.length) parts.push('PM координирует task graph, deadlock и финализацию.');
+    document.getElementById('pm-text').textContent = parts.join('\n');
+}
+
+function renderMetrics() {
+    const d = state;
+    const running = historyProjectId ? liveRunning : !!d.running;
+    document.getElementById('btn-start').disabled = running;
+    document.getElementById('btn-stop').disabled = !running;
+    document.getElementById('btn-resume').disabled = running || !['stopped', 'needs_human_review'].includes(d.status);
+
+    const statusEl = document.getElementById('system-status');
+    statusEl.textContent = (!historyProjectId && d.running) ? 'Работает' : statusLabel(d.status);
+
+    const used = d.tokens_used || 0;
+    const budget = d.token_budget || 1;
+    document.getElementById('token-text').textContent =
+        `${used.toLocaleString('ru-RU')} / ${budget.toLocaleString('ru-RU')}`;
+    document.getElementById('token-bar').style.width = `${Math.min((used / budget) * 100, 100)}%`;
+
+    const tasks = d.tasks || [];
+    const counts = tasks.reduce((acc, t) => {
+        acc[t.status] = (acc[t.status] || 0) + 1;
+        return acc;
+    }, {});
+    document.getElementById('tasks-summary').textContent =
+        `${counts.completed || 0}✓ · ${counts.in_progress || 0}▶ · ${counts.pending || 0}… · ${counts.failed || 0}✗`;
+    document.getElementById('client-name').textContent = d.client || '—';
+    document.getElementById('phase-text').textContent = `фаза: ${d.phase || '—'}`;
+
+    const dot = document.getElementById('live-dot');
+    dot.className = 'dot';
+    if (!historyProjectId && d.running) dot.classList.add('live');
+    else if (d.status === 'needs_human_review') dot.classList.add('warn');
+    else if (d.status === 'completed') dot.classList.add('ok');
+}
+
+function renderReviewPanel() {
+    const panel = document.getElementById('review-panel');
+    if (historyProjectId) {
+        panel.classList.remove('visible');
+        return;
+    }
+    const needsProject = state.status === 'needs_human_review';
+    const reviewTasks = state.review_tasks || [];
+    const show = needsProject || reviewTasks.length > 0;
+    panel.classList.toggle('visible', show);
+
+    const select = document.getElementById('review-task');
+    const current = select.value;
+    select.innerHTML = `<option value="">Весь проект (без конкретной задачи)</option>`;
+    reviewTasks.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.task_id;
+        opt.textContent = `${t.task_id} · ${t.agent_name} · ${statusLabel(t.status)}`;
+        select.appendChild(opt);
+    });
+    // Also allow selecting any failed/review task from full list
+    (state.tasks || []).filter(t => ['failed', 'needs_human_review'].includes(t.status)).forEach(t => {
+        if (![...select.options].some(o => o.value === t.task_id)) {
+            const opt = document.createElement('option');
+            opt.value = t.task_id;
+            opt.textContent = `${t.task_id} · ${t.agent_name} · ${statusLabel(t.status)}`;
+            select.appendChild(opt);
+        }
+    });
+    if ([...select.options].some(o => o.value === current)) select.value = current;
+
+    const hint = document.getElementById('review-hint');
+    if (needsProject) {
+        hint.textContent = 'Проект в статусе needs_human_review. Опишите, что сделать дальше.';
+    } else if (reviewTasks.length) {
+        hint.textContent = 'Есть задачи, требующие внимания. Выберите задачу и оставьте комментарий.';
+    }
+}
+
+function hideReviewPanel() {
+    document.getElementById('review-panel').classList.remove('visible');
+}
+
+function renderTasks() {
+    const grid = document.getElementById('task-grid');
+    const tasks = [...(state.tasks || [])];
+    if (!tasks.length) {
+        grid.innerHTML = `<div class="card"><div class="card-header"><span class="pill">Система</span></div><div class="card-body">Задач пока нет.</div></div>`;
+        expandedFreeze.clear();
         return;
     }
 
-    if (!currentProjectData.final_report || currentProjectData.final_report.trim() === '') {
-        console.log('⚠️ Final report пустой, скрываем отчет');
-        container.innerHTML = '';
+    const order = { in_progress: 0, needs_human_review: 1, failed: 2, pending: 3, completed: 4 };
+    tasks.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+
+    // Удаляем freeze для задач, которых больше нет
+    const ids = new Set(tasks.map(t => t.task_id));
+    for (const id of [...expandedFreeze.keys()]) {
+        if (!ids.has(id)) expandedFreeze.delete(id);
+    }
+
+    grid.innerHTML = '';
+    tasks.forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.dataset.taskId = task.task_id || '';
+
+        const frozen = expandedFreeze.get(task.task_id);
+        if (frozen) {
+            // Открытая карточка: не обновляем содержимое при poll
+            card.classList.add('expanded');
+            card.innerHTML = frozen.html;
+            card.onclick = (e) => toggleCardExpand(e, card, task);
+            grid.appendChild(card);
+            return;
+        }
+
+        card.onclick = (e) => toggleCardExpand(e, card, task);
+
+        const preview = task.output_preview || task.task_description || '';
+        const artifactHtml = renderArtifact(task);
+        const actions = [];
+        if (!historyProjectId && ['failed', 'needs_human_review'].includes(task.status)) {
+            actions.push(`<button type="button" onclick="prefillReview('${escapeHtml(task.task_id)}')">Комментарий</button>`);
+        }
+        if (task.has_n8n_json) {
+            actions.push(`<button type="button" class="primary" onclick="saveWorkflow('${escapeHtml(task.task_id)}')">Сохранить workflow</button>`);
+        }
+        if (task.artifact && task.artifact.downloadable) {
+            actions.push(
+                `<button type="button" class="primary" onclick="downloadArtifact('${escapeHtml(task.task_id)}')">` +
+                `${artifactDownloadLabel(task.agent_name)}</button>`
+            );
+        }
+
+        card.innerHTML = `
+            <div class="card-header">
+                <span class="pill status-${escapeHtml(task.status || '')}">${escapeHtml(task.agent_name || '—')}</span>
+                <span class="pill">${escapeHtml(task.task_id || '')}</span>
+            </div>
+            <div class="card-body">
+                <div class="card-desc">${escapeHtml(preview)}</div>
+                ${artifactHtml}
+                ${task.qa_feedback ? `<div class="feedback">${escapeHtml(task.qa_feedback)}</div>` : ''}
+                ${actions.length ? `<div class="card-actions" style="margin-top:10px">${actions.join('')}</div>` : ''}
+            </div>
+            <div class="card-footer">
+                <span>${statusLabel(task.status)} · iter ${task.iteration_count || 0}/${task.max_iterations || 3}</span>
+                <span>${task.tokens_used || 0} tok</span>
+            </div>
+        `;
+        grid.appendChild(card);
+    });
+}
+
+function artifactDownloadLabel(agent) {
+    if (agent === 'architect') return 'Скачать архитектуру (.md)';
+    if (agent === 'tech_writer') return 'Скачать инструкции (.md)';
+    if (agent === 'crm_customizer') return 'Скачать инструкцию CRM (.md)';
+    return 'Скачать (.md)';
+}
+
+function renderArtifact(task) {
+    const a = task.artifact;
+    if (!a || !a.kind) return '';
+
+    if (a.kind === 'architecture') {
+        const systems = (a.systems || []).map(s =>
+            `<li><strong>${escapeHtml(s.name)}</strong> <span class="muted">(${escapeHtml(s.role || '—')})</span>` +
+            `${s.limitations ? ` — ${escapeHtml(s.limitations)}` : ''}</li>`
+        ).join('');
+        const flow = (a.data_flow || []).map(step =>
+            `<div class="flow-step">` +
+            `<strong>${escapeHtml(step.step ?? '')}.</strong> ` +
+            `${escapeHtml(step.from || '?')} → ${escapeHtml(step.to || '?')}` +
+            `<div class="muted">${escapeHtml(step.trigger || '')}` +
+            `${step.transformation ? ` · ${escapeHtml(step.transformation)}` : ''}</div>` +
+            `</div>`
+        ).join('');
+        const stack = (a.tech_stack || []).map(escapeHtml).join(', ');
+        return `
+            <div class="artifact">
+                <h4>Архитектура</h4>
+                ${a.approach ? `<div>${escapeHtml(a.approach)}</div>` : ''}
+                ${stack ? `<div class="muted" style="margin-top:4px">Стек: ${stack}</div>` : ''}
+                ${systems ? `<h4>Системы</h4><ul>${systems}</ul>` : ''}
+                ${flow ? `<h4>Поток данных</h4><div class="artifact-box">${flow}</div>` : ''}
+                ${a.blueprint_nodes_count ? `<div class="muted">Blueprint: ${a.blueprint_nodes_count} нод</div>` : ''}
+                ${a.recommendations ? `<h4>Рекомендации</h4><div>${escapeHtml(a.recommendations)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    if (a.kind === 'documents') {
+        const docs = (a.documents || []).map(d =>
+            `<li><strong>${escapeHtml(d.title)}</strong> ` +
+            `<span class="muted">(${escapeHtml(d.type || 'doc')} · ${escapeHtml(d.audience || '—')})</span>` +
+            `${d.preview ? `<div class="muted">${escapeHtml(d.preview)}</div>` : ''}` +
+            `</li>`
+        ).join('');
+        const checklist = (a.checklist || []).slice(0, 8).map(s =>
+            `<li>${escapeHtml(s)}</li>`
+        ).join('');
+        return `
+            <div class="artifact">
+                <h4>Готовые инструкции</h4>
+                ${docs ? `<ul>${docs}</ul>` : '<div class="muted">Документы ещё не сформированы</div>'}
+                ${checklist ? `<h4>Чек-лист</h4><ul>${checklist}</ul>` : ''}
+                ${(a.faq || []).length ? `<div class="muted">FAQ: ${a.faq.length} пунктов</div>` : ''}
+            </div>
+        `;
+    }
+
+    if (a.kind === 'crm_setup') {
+        const steps = (a.setup_steps || []).map((s, i) =>
+            `<li><strong>${i + 1}.</strong> ${escapeHtml(s)}</li>`
+        ).join('');
+        const entities = (a.entities || []).map(escapeHtml).join(', ');
+        const pipelines = (a.pipelines || []).map(escapeHtml).join(', ');
+        return `
+            <div class="artifact">
+                <h4>Инструкция по настройке CRM</h4>
+                ${a.platform ? `<div><strong>Платформа:</strong> ${escapeHtml(a.platform)}</div>` : ''}
+                ${entities ? `<div class="muted">Сущности: ${entities}</div>` : ''}
+                ${pipelines ? `<div class="muted">Воронки: ${pipelines}</div>` : ''}
+                ${steps ? `<h4>Шаги</h4><div class="artifact-box"><ul>${steps}</ul></div>` : ''}
+                ${a.notes ? `<div class="muted">${escapeHtml(a.notes)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    return '';
+}
+
+function downloadArtifact(taskId) {
+    const projectId = state.project_id || historyProjectId;
+    if (!projectId || !taskId) {
+        toast('Нет project_id или task_id');
+        return;
+    }
+    const url = `${API}/artifacts/download?project_id=${encodeURIComponent(projectId)}&task_id=${encodeURIComponent(taskId)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Скачивание…');
+}
+
+function toggleCardExpand(e, card, task) {
+    if (e.target.closest('button, select, a')) return;
+    const id = task.task_id;
+    if (!id) return;
+
+    if (expandedFreeze.has(id)) {
+        // Повторный клик — свернуть, следующий poll обновит карточку
+        expandedFreeze.delete(id);
+        card.classList.remove('expanded');
+        // Перерисуем эту карточку свежими данными сразу
+        renderTasks();
         return;
     }
 
-    console.log('✅ Рендерим финальный отчет...');
+    card.classList.add('expanded');
+    expandedFreeze.set(id, { html: card.innerHTML });
+}
 
-    const metrics = currentProjectData.metrics;
-    const completedAt = currentProjectData.completed_at 
-        ? formatTimestamp(currentProjectData.completed_at) 
-        : '—';
+function prefillReview(taskId) {
+    const panel = document.getElementById('review-panel');
+    panel.classList.add('visible');
+    document.getElementById('review-task').value = taskId;
+    document.getElementById('review-comment').focus();
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
 
-    // Рендерим markdown в HTML (простая версия без marked.js)
-    const reportHtml = simpleMarkdownToHtml(currentProjectData.final_report);
+async function submitHumanReview() {
+    const human_prompt = document.getElementById('review-comment').value.trim();
+    const task_id = document.getElementById('review-task').value || null;
+    if (!human_prompt) {
+        toast('Введите комментарий');
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/human-review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ human_prompt, task_id, resume: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        document.getElementById('review-comment').value = '';
+        toast(data.pm_comment || 'Комментарий принят');
+        setTimeout(refreshData, 800);
+    } catch (e) {
+        toast(String(e.message || e));
+    }
+}
 
-    container.innerHTML = `
-        <div class="final-report-card">
-            <div class="final-report-header">
+async function saveWorkflow(taskId) {
+    try {
+        const res = await fetch(`${API}/workflows/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                task_id: taskId,
+                project_id: state.project_id || historyProjectId || null,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
+        toast(`Сохранено: ${data.filename} (${data.nodes_count} нод)`);
+        loadSavedWorkflows();
+    } catch (e) {
+        toast(String(e.message || e));
+    }
+}
+
+async function loadSavedWorkflows() {
+    try {
+        const res = await fetch(`${API}/workflows`);
+        const data = await res.json();
+        const list = document.getElementById('workflow-list');
+        const files = data.workflows || [];
+        if (!files.length) {
+            list.innerHTML = `<div class="workflow-item"><span>Пока нет сохранённых файлов</span></div>`;
+            return;
+        }
+        list.innerHTML = files.map(f => `
+            <div class="workflow-item">
                 <div>
-                    <div class="final-report-title">📋 Финальный отчет проекта</div>
-                    <div style="font-size: 11px; color: var(--color-graphite); margin-top: 4px;">
-                        Завершен: ${completedAt}
+                    <strong>${escapeHtml(f.name)}</strong>
+                    <div style="color:var(--muted);font-size:11px;margin-top:2px;">
+                        ${(f.size / 1024).toFixed(1)} KB · ${escapeHtml((f.modified || '').replace('T', ' ').slice(0, 19))}
                     </div>
                 </div>
-                <div class="final-report-actions">
-                    <button class="control-btn" onclick="toggleReportCollapse()">
-                        <span id="collapse-btn-text">Свернуть</span>
-                    </button>
-                    <button class="control-btn" onclick="downloadReport()">
-                        ⬇ Скачать .md
-                    </button>
-                </div>
+                <a class="btn" href="${API}/workflows/${encodeURIComponent(f.name)}" download>Скачать</a>
             </div>
-            
-            ${renderProjectMetrics(metrics)}
-            
-            <div class="final-report-content" id="report-content">
-                ${reportHtml}
-            </div>
-        </div>
-    `;
-
-    console.log('✅ Отчет отрендерен');
+        `).join('');
+    } catch (e) {
+        console.error(e);
+    }
 }
 
-// Простая функция конвертации markdown в HTML (без marked.js)
-function simpleMarkdownToHtml(markdown) {
-    if (!markdown) return '';
-    
-    let html = markdown
-        // Заголовки
-        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-        // Жирный текст
-        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-        // Курсив
-        .replace(/\*(.*)\*/gim, '<em>$1</em>')
-        // Списки
-        .replace(/^\- (.*$)/gim, '<li>$1</li>')
-        .replace(/^\* (.*$)/gim, '<li>$1</li>')
-        // Параграфы
-        .replace(/\n\n/g, '</p><p>')
-        // Переносы строк
-        .replace(/\n/g, '<br>');
-    
-    // Оборачиваем списки
-    html = html.replace(/(<li>.*<\/li>)/gis, '<ul>$1</ul>');
-    
-    return `<p>${html}</p>`;
-}
-
-// Рендеринг метрик
-function renderProjectMetrics(metrics) {
-    if (!metrics || Object.keys(metrics).length === 0) {
-        return '';
-    }
-
-    const items = [];
-
-    if (metrics.total_tokens_used) {
-        items.push({
-            label: 'Всего токенов',
-            value: metrics.total_tokens_used.toLocaleString('ru-RU'),
-            sub: 'использовано'
-        });
-    }
-
-    if (metrics.tasks_completed) {
-        items.push({
-            label: 'Задач выполнено',
-            value: metrics.tasks_completed,
-            sub: 'успешно'
-        });
-    }
-
-    if (metrics.total_duration_minutes) {
-        items.push({
-            label: 'Время выполнения',
-            value: `${metrics.total_duration_minutes} мин`,
-            sub: 'общее'
-        });
-    }
-
-    // Токены по агентам
-    if (metrics.tokens_per_agent && Object.keys(metrics.tokens_per_agent).length > 0) {
-        const agentEntries = Object.entries(metrics.tokens_per_agent)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 4);
-        
-        agentEntries.forEach(([agent, tokens]) => {
-            items.push({
-                label: agent,
-                value: tokens.toLocaleString('ru-RU'),
-                sub: 'токенов'
-            });
-        });
-    }
-
-    if (items.length === 0) return '';
-
-    return `
-        <div class="project-metrics">
-            ${items.map(item => `
-                <div class="project-metric">
-                    <span class="project-metric-label">${escapeHtml(item.label)}</span>
-                    <span class="project-metric-value">${escapeHtml(item.value)}</span>
-                    ${item.sub ? `<span class="project-metric-sub">${escapeHtml(item.sub)}</span>` : ''}
-                </div>
-            `).join('')}
-        </div>
-    `;
-}
-
-// Управление сворачиванием
-function toggleReportCollapse() {
-    const content = document.getElementById('report-content');
-    const btnText = document.getElementById('collapse-btn-text');
-    
-    if (content.classList.contains('collapsed')) {
-        content.classList.remove('collapsed');
-        btnText.textContent = 'Свернуть';
+function renderFinalReport() {
+    const box = document.getElementById('final-report');
+    if (state.final_report && String(state.final_report).trim()) {
+        box.classList.add('visible');
+        document.getElementById('report-content').innerHTML = simpleMarkdown(state.final_report);
     } else {
-        content.classList.add('collapsed');
-        btnText.textContent = 'Развернуть';
+        box.classList.remove('visible');
     }
 }
 
-// Скачивание отчета
+function simpleMarkdown(md) {
+    let html = escapeHtml(md)
+        .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- (.*)$/gm, '<li>$1</li>')
+        .replace(/\n\n/g, '<br><br>');
+    return html;
+}
+
 function downloadReport() {
-    if (!currentProjectData.final_report) return;
-    
-    const blob = new Blob([currentProjectData.final_report], { type: 'text/markdown' });
+    if (!state.final_report) return;
+    const blob = new Blob([state.final_report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `project-report-${new Date().toISOString().split('T')[0]}.md`;
-    document.body.appendChild(a);
+    a.download = `project-report-${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
-        async function fetchAgentData() {
-            try {
-                const response = await fetch(`${NOCODB_PROXY_URL}?limit=50`);
-                if (!response.ok) {
-                    if (response.status === 502) throw new Error('NocoDB недоступен');
-                    throw new Error(`Ошибка: ${response.status}`);
-                }
 
-                const data = await response.json();
-                let records = data.records || [];
-                records = records.map(r => r.fields || r);
+async function startAgency() {
+    const res = await fetch(`${API}/start`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || 'Ошибка запуска');
+    toast('Агентство запущено');
+    setTimeout(refreshData, 1000);
+}
 
-                records.sort((a, b) => {
-                    const timeA = new Date(a.timestamp || 0).getTime();
-                    const timeB = new Date(b.timestamp || 0).getTime();
-                    return timeB - timeA;
-                });
+async function stopAgency() {
+    await fetch(`${API}/stop`, { method: 'POST' });
+    toast('Остановлено');
+    setTimeout(refreshData, 500);
+}
 
-                updateDashboard(records);
-            } catch (error) {
-                console.error('Ошибка загрузки данных:', error);
-                showFallbackData(error.message);
-            }
-        }
+async function resumeAgency() {
+    const res = await fetch(`${API}/resume`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || 'Ошибка');
+    toast('Продолжаем');
+    setTimeout(refreshData, 1000);
+}
 
-        function updateDashboard(records) {
-            const grid = document.getElementById('agent-grid');
-            grid.innerHTML = '';
+async function increaseTokens() {
+    const res = await fetch(`${API}/increase-tokens`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || 'Ошибка');
+    toast(`Бюджет: ${data.new_budget.toLocaleString('ru-RU')}`);
+    refreshData();
+}
 
-            let activeCount = 0;
-
-            const agentMap = new Map();
-            records.forEach(record => {
-                const agentName = record.agent_name;
-                if (!agentMap.has(agentName)) {
-                    agentMap.set(agentName, record);
-                }
-            });
-
-            const agents = Array.from(agentMap.values());
-
-            if (agents.length === 0) {
-                grid.innerHTML = `
-                    <div class="card" style="grid-column: span 5;">
-                        <div class="card-header">
-                            <span class="pill-label">Система</span>
-                        </div>
-                        <div class="card-content">
-                            <div class="card-summary">Пока нет записей. Нажмите «Запустить агентство» для начала работы.</div>
-                        </div>
-                        <div class="card-footer">
-                            <span class="card-meta">Ожидание</span>
-                        </div>
-                    </div>
-                `;
-                return;
-            }
-
-            agents.forEach(record => {
-                if (record.status === 'in_progress') activeCount++;
-
-                let statusClass = '';
-                let statusText = '';
-
-                if (record.status === 'in_progress') {
-                    statusText = 'В работе';
-                } else if (record.status === 'completed') {
-                    statusClass = 'status-completed';
-                    statusText = 'Завершено';
-                } else if (record.status === 'needs_review' || record.status === 'needs_human_review') {
-                    statusClass = 'status-review';
-                    statusText = 'Требует внимания';
-                } else {
-                    statusText = record.status || '—';
-                }
-
-                const agentName = record.agent_name || 'Unknown';
-                const taskDesc = record.task_description || 'Нет описания';
-                const fullResponse = record.full_response || '';
-                const tokens = record.tokens_used || 0;
-                const timestamp = record.timestamp ? formatTimestamp(record.timestamp) : '';
-
-                const contentHtml = renderAgentContent(agentName, fullResponse, taskDesc);
-
-                const card = document.createElement('div');
-                card.className = 'card';
-                card.onclick = () => card.classList.toggle('expanded');
-                card.innerHTML = `
-                    <div class="card-header">
-                        <span class="pill-label ${statusClass}">${escapeHtml(agentName)}</span>
-                        <button class="arrow-btn" title="Подробнее" onclick="event.stopPropagation()">
-                            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                        </button>
-                    </div>
-                    ${contentHtml}
-                    <div class="card-footer">
-                        <span class="card-meta">${statusText}</span>
-                        <span class="card-meta">${tokens} tok</span>
-                        <span class="card-meta">${timestamp}</span>
-                    </div>
-                `;
-                grid.appendChild(card);
-            });
-
-            document.getElementById('active-agents').textContent = activeCount;
-        }
-
-        function renderAgentContent(agentName, fullResponse, taskDesc) {
-            let jsonData = null;
-            if (fullResponse && typeof fullResponse === 'string' && fullResponse.trim().startsWith('{')) {
-                try {
-                    jsonData = JSON.parse(fullResponse);
-                } catch (e) {
-                    jsonData = null;
-                }
-            }
-
-            if (jsonData) {
-                switch (agentName) {
-                    case 'lead_hunter': return renderLeads(jsonData);
-                    case 'analyst': return renderROI(jsonData);
-                    case 'sales': return renderMessages(jsonData);
-                    case 'architect':
-                    case 'developer':
-                    case 'qa':
-                    case 'tech_writer':
-                    case 'crm_customizer':
-                        return renderJSON(jsonData);
-                    default:
-                        return renderJSON(jsonData);
-                }
-            }
-
-            return `<div class="card-content"><div class="card-summary">${escapeHtml(taskDesc)}</div></div>`;
-        }
-
-        function renderLeads(data) {
-            const leads = data.leads_found || [];
-            if (leads.length === 0) {
-                return `<div class="card-content"><div class="card-summary">Лиды не найдены</div></div>`;
-            }
-            const leadsHtml = leads.slice(0, 5).map(lead => `
-                <li>
-                    <div class="lead-name">${escapeHtml(lead.company_name || 'N/A')}</div>
-                    <div class="lead-meta">
-                        ${escapeHtml(lead.marketplace || '')}${lead.category ? ' • ' + escapeHtml(lead.category) : ''}
-                    </div>
-                </li>
-            `).join('');
-            return `
-                <div class="card-content">
-                    <div class="card-summary">
-                        <div style="color: var(--color-graphite); margin-bottom: var(--spacing-8);">
-                            Найдено лидов: ${data.total_found || leads.length}
-                        </div>
-                        <ul class="leads-list">${leadsHtml}</ul>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderROI(data) {
-            const roi = data.roi_calculation || {};
-            const rows = [
-                ['Экономия времени (ч/мес)', roi.total_time_saved_hours_per_month || 0],
-                ['Экономия (₽/мес)', formatMoney(roi.cost_saved_per_month_rub || 0)],
-                ['Стоимость внедрения', formatMoney(roi.implementation_cost_rub || 0)],
-                ['Окупаемость (мес)', roi.payback_period_months || 0]
-            ];
-            const rowsHtml = rows.map(([label, value]) => `
-                <tr><td>${label}</td><td>${value}</td></tr>
-            `).join('');
-            return `
-                <div class="card-content">
-                    <div class="card-summary">
-                        <table class="roi-table">${rowsHtml}</table>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderMessages(data) {
-            const messages = data.messages || [];
-            if (messages.length === 0) {
-                return `<div class="card-content"><div class="card-summary">Сообщения не сгенерированы</div></div>`;
-            }
-            const msg = messages[0];
-            const messageText = msg.message_text || '';
-            const preview = messageText.length > 200 ? messageText.substring(0, 200) + '...' : messageText;
-            return `
-                <div class="card-content">
-                    <div class="card-summary">
-                        <div style="color: var(--color-graphite); margin-bottom: var(--spacing-4);">
-                            ${escapeHtml(msg.lead_name || 'N/A')} • ${escapeHtml(msg.channel || '')}
-                        </div>
-                        <div class="message-preview">${escapeHtml(preview)}</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderJSON(data) {
-            const summary = data.summary || data.pm_comment || data.approach || 'Результат готов';
-            return `
-                <div class="card-content">
-                    <div class="card-summary">
-                        <div style="margin-bottom: var(--spacing-8);">${escapeHtml(summary)}</div>
-                        <div class="json-content">${escapeHtml(JSON.stringify(data, null, 2))}</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function escapeHtml(text) {
-            if (text === null || text === undefined) return '';
-            const div = document.createElement('div');
-            div.textContent = String(text);
-            return div.innerHTML;
-        }
-
-        function formatTimestamp(ts) {
-            try {
-                const date = new Date(ts);
-                return date.toLocaleString('ru-RU', {
-                    day: '2-digit', month: '2-digit',
-                    hour: '2-digit', minute: '2-digit'
-                });
-            } catch (e) { return ''; }
-        }
-
-        function formatMoney(value) {
-            if (!value) return '0 ₽';
-            return Number(value).toLocaleString('ru-RU') + ' ₽';
-        }
-
-        function showFallbackData(errorMsg) {
-            const grid = document.getElementById('agent-grid');
-            grid.innerHTML = `
-                <div class="card" style="grid-column: span 5;">
-                    <div class="card-header">
-                        <span class="pill-label status-review">Ошибка</span>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-summary">${escapeHtml(errorMsg || 'Нет подключения к API.')}</div>
-                    </div>
-                    <div class="card-footer">
-                        <span class="card-meta">Проверьте логи</span>
-                    </div>
-                </div>
-            `;
-        }
-
-        async function startAgency() {
-            try {
-                const response = await fetch(`${AGENCY_API_URL}/start`, { method: 'POST' });
-                if (response.ok) {
-                    document.getElementById('btn-start').disabled = true;
-                    document.getElementById('btn-stop').disabled = false;
-                    setTimeout(refreshData, 2000);
-                } else {
-                    const err = await response.json();
-                    alert('Ошибка: ' + (err.error || 'неизвестно'));
-                }
-            } catch (error) {
-                alert('Не удалось связаться с API.');
-            }
-        }
-
-        async function stopAgency() {
-            try {
-                const response = await fetch(`${AGENCY_API_URL}/stop`, { method: 'POST' });
-                if (response.ok) {
-                    document.getElementById('btn-start').disabled = false;
-                    document.getElementById('btn-stop').disabled = true;
-                    setTimeout(refreshData, 1000);
-                }
-            } catch (error) {
-                alert('Не удалось остановить агентство');
-            }
-        }
-
-        async function resumeAgency() {
-            try {
-                const response = await fetch(`${AGENCY_API_URL}/resume`, { method: 'POST' });
-                if (response.ok) {
-                    document.getElementById('btn-start').disabled = true;
-                    document.getElementById('btn-stop').disabled = false;
-                    document.getElementById('btn-resume').disabled = true;
-                    setTimeout(refreshData, 2000);
-                } else {
-                    const err = await response.json();
-                    alert('Ошибка: ' + (err.error || 'неизвестно'));
-                }
-            } catch (error) {
-                alert('Не удалось возобновить агентство');
-            }
-        }
-
-        async function increaseTokens() {
-            try {
-                const response = await fetch(`${AGENCY_API_URL}/increase-tokens`, { method: 'POST' });
-                if (response.ok) {
-                    const data = await response.json();
-                    alert(`Бюджет увеличен на ${data.added.toLocaleString('ru-RU')} токенов. Новый бюджет: ${data.new_budget.toLocaleString('ru-RU')}`);
-                    setTimeout(refreshData, 1000);
-                }
-            } catch (error) {
-                alert('Не удалось увеличить бюджет');
-            }
-        }
-
-        function refreshData() {
-            fetchAgencyStatus();
-            fetchAgentData();
-        }
-
-        refreshData();
-        setInterval(refreshData, 10000);
+refreshData();
+loadSavedWorkflows();
+setInterval(refreshData, 10000);
     </script>
 </body>
 </html>
