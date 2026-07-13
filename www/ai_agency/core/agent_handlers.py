@@ -26,7 +26,8 @@ QA Gate — отдельный LLM-вызов, который проверяет
 
 2. ЗАПУСКАЕТ ДОПОЛНИТЕЛЬНЫЙ LLM-вызов после QA:
    - architect → после QA Gate просит PM декомпозировать архитектуру
-     на dev_* подзадачи (2-й LLM-вызов с PMDecomposition-моделью)
+     на dev_* подзадачи (2-й LLM-вызов с PMDecomposition-моделью);
+     для каждой dev_* система создаёт парную qa_dev_* (агент qa)
 
 3. ИМЕЕТ FALLBACK-ЛОГИКУ РЕАЛЬНОГО ИНСТРУМЕНТА:
    - lead_hunter → если LLM не вернул лидов, вызывает Telegram search API
@@ -182,11 +183,14 @@ class AgentHandlers:
             logger.info(f"📦 PM декомпозировал на {len(subtasks)} подзадач")
 
             subtask_ids = []
+            qa_subtask_ids = []
+            now_iso = datetime.now().isoformat()
             for subtask in subtasks:
                 sd = subtask.model_dump() if hasattr(subtask, "model_dump") else subtask
-                subtask_ids.append(sd.get("subtask_id", ""))
+                dev_id = sd.get("subtask_id", "")
+                subtask_ids.append(dev_id)
                 self.orch.tasks_db.create_task({
-                    "task_id": sd.get("subtask_id"),
+                    "task_id": dev_id,
                     "project_id": project_id,
                     "agent_name": "developer",
                     "task_description": sd.get("description"),
@@ -200,16 +204,43 @@ class AgentHandlers:
                     "iteration_count": 0,
                     "max_iterations": 3,
                     "qa_approved": "pending",
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": now_iso,
                 })
-                logger.info(f"  → Подзадача создана: {sd.get('subtask_id')}")
+                logger.info(f"  → Подзадача developer создана: {dev_id}")
+
+                # Каждая dev_* проверяется отдельной задачей агента qa (qa_dev_*).
+                # QA Gate уже валидирует артефакт developer; qa-агент проверяет
+                # результат подзадачи по dependency_outputs перед общим qa/tech_writer.
+                qa_id = f"qa_{dev_id}" if not str(dev_id).startswith("qa_") else f"qa_check_{dev_id}"
+                qa_subtask_ids.append(qa_id)
+                desc = sd.get("description") or ""
+                self.orch.tasks_db.create_task({
+                    "task_id": qa_id,
+                    "project_id": project_id,
+                    "agent_name": "qa",
+                    "task_description": (
+                        f"Проверить результат подзадачи {dev_id}: {desc}"
+                    ),
+                    "input_data": json.dumps({
+                        "checks_subtask": dev_id,
+                        "subtask_description": desc,
+                    }, ensure_ascii=False),
+                    "status": "pending",
+                    "depends_on": json.dumps([dev_id], ensure_ascii=False),
+                    "iteration_count": 0,
+                    "max_iterations": 3,
+                    "qa_approved": "pending",
+                    "created_at": now_iso,
+                })
+                logger.info(f"  → QA-подзадача создана: {qa_id} (depends_on={dev_id})")
 
             # Помечаем placeholder developer-задачу из initial task graph как "пропущена".
             # Проблема: после завершения architect в pending остаётся задача с agent_name=developer
             # (например task_003) с depends_on=[task_architect]. Оркестратор выбирал её ПЕРВОЙ,
             # developer выполнял весь workflow сразу, а dev_001/dev_002 запускались ПОСЛЕ qa/tech_writer.
             # Решение: находим placeholder-задачу и сразу помечаем её failed (не pending → не выполняется).
-            # check_and_complete_parent_tasks позже переведёт её в completed, когда все dev_* готовы.
+            # check_and_complete_parent_tasks позже переведёт её в completed, когда все qa_dev_* готовы.
+            # Исходную задачу qa из task graph переназначаем: depends_on = все qa_dev_*.
             try:
                 all_project_tasks = self.orch.tasks_db.get_tasks_by_project(project_id)
                 for pt in all_project_tasks:
@@ -222,22 +253,40 @@ class AgentHandlers:
                         self.orch.tasks_db.update_task(pt.get("Id"), {
                             "status": "failed",
                             "qa_feedback": (
-                                f"Placeholder: заменена подзадачами {', '.join(subtask_ids)}. "
-                                f"Будет помечена completed автоматически после выполнения всех dev_*."
+                                f"Placeholder: заменена подзадачами {', '.join(subtask_ids)} "
+                                f"и QA {', '.join(qa_subtask_ids)}. "
+                                f"Будет помечена completed после выполнения всех qa_dev_*."
                             ),
                         })
                         logger.info(
                             f"⏭️ Placeholder developer-задача '{pt_task_id}' переведена в failed "
-                            f"(заменена {len(subtasks)} подзадачами)"
+                            f"(заменена {len(subtasks)} подзадачами + QA)"
+                        )
+                    elif (
+                        pt.get("agent_name") == "qa"
+                        and pt.get("status") == "pending"
+                        and not pt_task_id.startswith("qa_dev_")
+                        and not pt_task_id.startswith("qa_check_")
+                    ):
+                        # Финальный qa ждёт проверки каждой подзадачи, а не placeholder developer.
+                        self.orch.tasks_db.update_task(pt.get("Id"), {
+                            "depends_on": json.dumps(qa_subtask_ids, ensure_ascii=False),
+                            "qa_feedback": (
+                                f"Ожидает QA всех подзадач developer: {', '.join(qa_subtask_ids)}"
+                            ),
+                        })
+                        logger.info(
+                            f"🔗 Задача qa '{pt_task_id}' зависит от: {', '.join(qa_subtask_ids)}"
                         )
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось пометить placeholder developer-задачу: {e}")
+                logger.warning(f"⚠️ Не удалось обновить placeholder/qa после декомпозиции: {e}")
 
             self.orch.tasks_db.update_task(task_db_id, {
                 "status": "completed",
                 "qa_approved": "true",
                 "qa_feedback": (
-                    f"Декомпозирована на {len(subtasks)} подзадач: {', '.join(subtask_ids)}"
+                    f"Декомпозирована на {len(subtasks)} подзадач: {', '.join(subtask_ids)}; "
+                    f"QA: {', '.join(qa_subtask_ids)}"
                 ),
             })
 

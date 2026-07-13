@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": 1,
+    "desc": "После декомпозиции developer: создавать парную qa_dev_* на каждый dev_*; финальный qa зависит от всех qa_dev_*; placeholder ждёт qa_dev_*",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "done"
+  }
+]

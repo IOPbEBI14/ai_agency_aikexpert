@@ -158,7 +158,8 @@ Orchestrator.run()
        ├─ call_and_parse_llm()            # LLM → Pydantic-валидация → retry
        └─ DISPATCH:
             ├─ "architect"    → AgentHandlers.handle_architect()
-            │                     └─ QAGate.run() + PM-декомпозиция → dev_* задачи
+            │                     └─ QAGate.run() + PM-декомпозиция →
+            │                        dev_* + парные qa_dev_* (агент qa)
             ├─ "analyst"      → AgentHandlers.handle_analyst()
             │                     └─ сохраняет ROI + handoff_to_architect в контекст
             ├─ "lead_hunter"  → AgentHandlers.handle_lead_hunter()
@@ -295,7 +296,7 @@ QAGate.run(task, agent_response, iteration_count, max_iter)
 | `analyst` | Спец-хендлер | Накапливает ROI/боли + `handoff_to_architect` в `analyst_context` |
 | `lead_hunter` | Спец-хендлер | Накапливает лиды + `handoff_to_sales`; fallback к Telegram API |
 | `sales` | Спец-хендлер | Накапливает сообщения/квалификацию в `sales_context` |
-| `architect` | Спец-хендлер | QA Gate + второй LLM-вызов: PM декомпозирует на `dev_*` подзадачи |
+| `architect` | Спец-хендлер | QA Gate + PM декомпозиция → `dev_*` + парные `qa_dev_*` |
 | `developer`, `crm_customizer`, `tech_writer` | **QA Gate** | Самодостаточные артефакты, только валидация |
 | `qa` | Прямое завершение | Не может проверять сам себя (бесконечная рекурсия) |
 
@@ -308,14 +309,18 @@ sales        →  sales_context
                      ↓
 analyst      →  analyst_context + handoff_to_architect
                      ↓
-architect    →  QA → PM декомпозиция → dev_001…dev_N
-                     ↓
-developer    →  QA Gate (output_data передаётся в qa через dependency_outputs)
-                     ↓
-qa           →  completed
-                     ↓
-tech_writer  →  QA Gate
+architect    →  QA Gate → PM декомпозиция →
+                     │
+                     ├─ dev_001 → QA Gate → qa_dev_001
+                     ├─ dev_002 → QA Gate → qa_dev_002
+                     └─ …      → QA Gate → qa_dev_N
+                                         ↓
+                              финальный qa (depends_on все qa_dev_*)
+                                         ↓
+                                   tech_writer → QA Gate
 ```
+
+После декомпозиции для **каждой** `dev_*` создаётся парная задача `qa_dev_*` (агент `qa`, `depends_on=[dev_XXX]`). Исходная задача `qa` из task graph переназначается на зависимость от всех `qa_dev_*`. Placeholder developer помечается completed только после завершения всех `qa_dev_*`.
 
 Все накопленные контексты (`leads_context`, `sales_context`, `analyst_context`) автоматически добавляются в `input_data` последующих задач через `_build_enriched_input_data`.
 
@@ -528,4 +533,4 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ---
 
-**Последнее обновление:** Jul 7, 2026. Directions A–F реализованы. 94/94 теста ✅.
+**Последнее обновление:** Jul 12, 2026. Directions A–F + per-subtask QA (`qa_dev_*`).

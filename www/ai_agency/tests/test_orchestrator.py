@@ -519,4 +519,164 @@ class TestOrchestratorNewAgents:
         )
         
         assert result is True
-        assert "leads_context" in orchestrator.current_project        
+        assert "leads_context" in orchestrator.current_project
+
+
+class TestDevSubtaskQaPairing:
+    """После декомпозиции каждая dev_* должна иметь парную qa_dev_*."""
+
+    def test_parent_waits_for_qa_dev(self, orchestrator, mock_nocodb_clients):
+        """Placeholder developer завершается только после всех qa_dev_*."""
+        tasks = [
+            {"task_id": "dev_001", "status": "completed", "agent_name": "developer", "Id": 101},
+            {"task_id": "dev_002", "status": "completed", "agent_name": "developer", "Id": 102},
+            {"task_id": "qa_dev_001", "status": "completed", "agent_name": "qa", "Id": 201},
+            {"task_id": "qa_dev_002", "status": "pending", "agent_name": "qa", "Id": 202},
+            {
+                "task_id": "task_003",
+                "status": "failed",
+                "agent_name": "developer",
+                "Id": 100,
+            },
+        ]
+        orchestrator.check_and_complete_parent_tasks(tasks)
+        mock_nocodb_clients["tasks"].update_task.assert_not_called()
+
+        tasks[3]["status"] = "completed"
+        orchestrator.check_and_complete_parent_tasks(tasks)
+        mock_nocodb_clients["tasks"].update_task.assert_called_once()
+        args = mock_nocodb_clients["tasks"].update_task.call_args[0]
+        assert args[0] == 100
+        assert args[1]["status"] == "completed"
+        assert "qa_dev_" in args[1]["qa_feedback"]
+
+    def test_expand_completed_requires_qa_dev(self, orchestrator, mock_nocodb_clients):
+        """Placeholder попадает в completed_ids только после qa_dev_*."""
+        tasks = [
+            {"task_id": "dev_001", "status": "completed", "agent_name": "developer"},
+            {"task_id": "qa_dev_001", "status": "pending", "agent_name": "qa"},
+            {"task_id": "task_003", "status": "failed", "agent_name": "developer"},
+        ]
+        expanded = orchestrator._expand_completed_with_parents(
+            tasks, ["dev_001"]
+        )
+        assert "task_003" not in expanded
+
+        tasks[1]["status"] = "completed"
+        expanded = orchestrator._expand_completed_with_parents(
+            tasks, ["dev_001", "qa_dev_001"]
+        )
+        assert "task_003" in expanded
+
+    @patch("core.agent_handlers.call_and_parse_llm")
+    @patch("core.agent_handlers.log_to_agent_logs")
+    def test_handle_architect_creates_qa_per_dev(
+        self,
+        mock_log,
+        mock_parse,
+        orchestrator,
+        mock_nocodb_clients,
+        sample_project_data,
+        sample_pydantic_responses,
+    ):
+        """Декомпозиция создаёт qa_dev_* и переназначает depends_on финального qa."""
+        from core.schemas import ArchitectResponse, SystemInfo, DataFlowStep, PMDecomposition
+
+        orchestrator.current_project = sample_project_data
+        mock_nocodb_clients["tasks"].get_tasks_by_project.return_value = [
+            {
+                "Id": 50,
+                "task_id": "task_003",
+                "agent_name": "developer",
+                "status": "pending",
+            },
+            {
+                "Id": 60,
+                "task_id": "task_004",
+                "agent_name": "qa",
+                "status": "pending",
+                "depends_on": '["task_003"]',
+            },
+        ]
+        mock_parse.return_value = (
+            PMDecomposition(
+                subtasks=[
+                    {
+                        "subtask_id": "dev_001",
+                        "description": "Webhook TG",
+                        "depends_on": [],
+                        "context": "tg",
+                    },
+                    {
+                        "subtask_id": "dev_002",
+                        "description": "Bpium",
+                        "depends_on": ["dev_001"],
+                        "context": "bpium",
+                    },
+                ],
+                pm_comment="2 подзадачи",
+            ),
+            100,
+        )
+        with patch.object(orchestrator.qa_gate, "run", return_value=True):
+            arch = ArchitectResponse(
+                summary="Тестовая архитектура",
+                approach="n8n + Bpium",
+                systems=[
+                    SystemInfo(
+                        name="n8n",
+                        role="processor",
+                        api_available=True,
+                    )
+                ],
+                data_flow=[
+                    DataFlowStep(
+                        step=1,
+                        from_system="TG",
+                        to_system="n8n",
+                        trigger="webhook",
+                        data="msg",
+                        transformation="normalize",
+                    )
+                ],
+                tech_stack=["n8n"],
+                estimated_complexity="medium",
+                estimated_time_hours=8,
+                risks=[],
+                recommendations="Начать с webhook",
+            )
+            task = {
+                "Id": 10,
+                "task_id": "task_002",
+                "agent_name": "architect",
+                "task_description": "Спроектировать",
+                "iteration_count": 0,
+                "max_iterations": 3,
+            }
+            result = orchestrator._handle_architect(
+                task, 10, "task_002", arch, "pm_prompt"
+            )
+
+        assert result is True
+        create_calls = mock_nocodb_clients["tasks"].create_task.call_args_list
+        created_ids = [c[0][0]["task_id"] for c in create_calls]
+        assert "dev_001" in created_ids
+        assert "dev_002" in created_ids
+        assert "qa_dev_001" in created_ids
+        assert "qa_dev_002" in created_ids
+
+        qa_pair = next(
+            c[0][0] for c in create_calls if c[0][0]["task_id"] == "qa_dev_001"
+        )
+        assert qa_pair["agent_name"] == "qa"
+        assert qa_pair["depends_on"] == '["dev_001"]'
+
+        update_calls = mock_nocodb_clients["tasks"].update_task.call_args_list
+        # placeholder → failed, final qa → depends_on qa_dev_*, architect → completed
+        final_qa_updates = [
+            c for c in update_calls
+            if c[0][0] == 60 and "depends_on" in c[0][1]
+        ]
+        assert final_qa_updates
+        assert '"qa_dev_001"' in final_qa_updates[0][0][1]["depends_on"]
+        assert '"qa_dev_002"' in final_qa_updates[0][0][1]["depends_on"]

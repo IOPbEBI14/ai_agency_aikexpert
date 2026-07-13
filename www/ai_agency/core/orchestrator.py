@@ -679,46 +679,71 @@ class Orchestrator:
         return None
 
     def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
-        """Если все dev_* подзадачи завершены — помечает placeholder developer-задачу как completed.
+        """Если все qa_dev_* (или dev_*, если QA ещё не созданы) завершены — placeholder → completed.
 
         Ранее метод был жёстко привязан к "task_003". Теперь placeholder ищется динамически:
         agent_name=developer, task_id не начинается с "dev_".
+        После декомпозиции каждая dev_* имеет парную qa_dev_* — parent ждёт QA всех подзадач.
         """
         dev_subtasks = [t for t in tasks if t.get("task_id", "").startswith("dev_")]
         if not dev_subtasks:
             return
-        if not all(t.get("status") == "completed" for t in dev_subtasks):
-            return
+
+        qa_subtasks = [
+            t for t in tasks
+            if t.get("task_id", "").startswith("qa_dev_")
+            or t.get("task_id", "").startswith("qa_check_")
+        ]
+        if qa_subtasks:
+            if not all(t.get("status") == "completed" for t in qa_subtasks):
+                return
+            done_label = f"Все {len(qa_subtasks)} qa_dev_* проверок завершены"
+        else:
+            if not all(t.get("status") == "completed" for t in dev_subtasks):
+                return
+            done_label = f"Все {len(dev_subtasks)} подзадач завершены успешно"
 
         parent_task = self._find_developer_placeholder(tasks)
         if parent_task and parent_task.get("status") != "completed":
             parent_id = parent_task.get("task_id")
-            logger.info(f"✅ Все {len(dev_subtasks)} dev_* подзадач завершены. Помечаем '{parent_id}' как completed.")
+            logger.info(f"✅ {done_label}. Помечаем '{parent_id}' как completed.")
             self.tasks_db.update_task(
                 parent_task.get("Id"),
                 {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Все {len(dev_subtasks)} подзадач завершены успешно",
+                    "qa_feedback": done_label,
                 },
             )
 
     def _expand_completed_with_parents(
         self, tasks: List[Dict[str, Any]], completed_ids: List[str]
     ) -> List[str]:
-        """Добавляет placeholder developer-задачу в completed_ids, если все dev_* завершены.
+        """Добавляет placeholder developer в completed_ids, если все qa_dev_* (или dev_*) готовы.
 
-        Используется в _find_ready_tasks для разблокировки qa/tech_writer ДО того, как
+        Используется в _find_ready_tasks для разблокировки финального qa/tech_writer ДО того, как
         check_and_complete_parent_tasks успеет записать completed в БД (оба вызова в одном цикле).
-        Ранее было жёстко задано "task_003" — теперь ищется динамически.
         """
         expanded = set(completed_ids)
-        dev_statuses = [
+        qa_statuses = [
             t.get("status", "")
             for t in tasks
-            if t.get("task_id", "").startswith("dev_")
+            if t.get("task_id", "").startswith("qa_dev_")
+            or t.get("task_id", "").startswith("qa_check_")
         ]
-        if dev_statuses and all(s == "completed" for s in dev_statuses):
+        if qa_statuses:
+            ready = all(s == "completed" for s in qa_statuses)
+        else:
+            ready = bool(
+                [
+                    t for t in tasks if t.get("task_id", "").startswith("dev_")
+                ]
+            ) and all(
+                t.get("status", "") == "completed"
+                for t in tasks
+                if t.get("task_id", "").startswith("dev_")
+            )
+        if ready:
             placeholder = self._find_developer_placeholder(tasks)
             if placeholder:
                 expanded.add(placeholder.get("task_id"))
