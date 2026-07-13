@@ -2,8 +2,8 @@
 
 **Дата обновления:** Jul 7, 2026 | **Версия:** 2.1 | **Язык:** Python 3.10+
 
-> Документ отражает состояние после рефакторинга Directions A–F (Sprints 0–1).
-> Все 94 теста проходят. Ключевое изменение: встроен node-level workflow blueprint в архитектора для закрытия разрыва между концептуальным проектированием и конкретной сериализацией n8n JSON.
+> Документ отражает состояние после рефакторинга Directions A–G.
+> HTTP-слой: **FastAPI** (async endpoints, OpenAPI `/docs`). Дашборд пока vanilla (ТЗ №5 — следующий этап).
 
 ---
 
@@ -21,7 +21,7 @@
 - **Хранение состояния:** NocoDB (3 таблицы: projects, tasks, agent_logs) — stateless, допускает перезапуск
 - **LLM:** Yandex AI Studio (Responses API, модель YandexGPT)
 - **Frontend:** Vanilla HTML/JS дашборд + marked.js для рендеринга отчётов
-- **Framework:** Flask + CORS, однопоточный HTTP + `threading.Thread` для оркестрации
+- **Framework:** FastAPI + uvicorn, async HTTP; Orchestrator.run() в фоне через `asyncio.to_thread`
 
 ---
 
@@ -34,14 +34,17 @@ ai_agency_aikexpert/
 ├── .cursorrules                 # Python best practices (LlamaFarm-style)
 ├── .skills/                     # Skill-файлы (patterns.md, async.md, typing.md…)
 └── www/ai_agency/
-    ├── main.py                  # Flask API (тонкий HTTP-слой + nocodb_proxy)
-    ├── index.html               # Дашборд мониторинга
+    ├── main.py                  # FastAPI API (async) + nocodb_proxy
+    ├── index.html               # Дашборд мониторинга (vanilla; ТЗ №5 → React)
+    ├── requirements.txt         # fastapi, uvicorn, …
     ├── pytest.ini
     ├── core/
     │   ├── orchestrator.py      # ⭐ Главный цикл, task graph, deadlock, финализация
-    │   ├── task_executor.py     # ★ [NEW] Выполнение одной задачи (промпт → LLM → QA)
-    │   ├── qa_gate.py           # ★ [NEW] QA-проверка результатов агентов
-    │   ├── agent_handlers.py    # ★ [NEW] Спец-хендлеры для 4 агентов
+    │   ├── task_executor.py     # Выполнение одной задачи (промпт → LLM → QA)
+    │   ├── qa_gate.py           # QA-проверка результатов агентов
+    │   ├── agent_handlers.py    # Спец-хендлеры для 4 агентов
+    │   ├── api_schemas.py       # ★ [NEW] Pydantic-схемы HTTP API
+    │   ├── api_payloads.py      # ★ [NEW] Сборка payload дашборда/артефактов
     │   ├── schemas.py           # ⭐ Pydantic-модели всех агентов + call_and_parse_llm
     │   ├── nocodb.py            # Клиенты NocoDB (3 таблицы: logs, projects, tasks)
     │   ├── utils.py             # LLM API wrapper, промпты, логирование
@@ -80,7 +83,9 @@ ai_agency_aikexpert/
 | **agent_handlers.py** | **450** | Спец-хендлеры + обработка blueprint: architect, analyst, lead_hunter, sales | 🟠 ВЫСОКИЙ |
 | **nocodb.py** | **491** | 3 NocoDB-клиента (NocoDBClient, ProjectsClient, TasksClient) | 🟠 ВЫСОКИЙ |
 | **utils.py** | **258** | `call_llm`, `load_prompt`, `log_to_agent_logs` | 🟠 ВЫСОКИЙ |
-| **main.py** | **~310** | Flask API, `nocodb_proxy` (защищённый) | 🟠 ВЫСОКИЙ |
+| **main.py** | **~700** | FastAPI HTTP-слой, `nocodb_proxy`, OpenAPI `/docs` | 🟠 ВЫСОКИЙ |
+| **api_schemas.py** | **~90** | Pydantic-схемы REST запросов/ответов | 🟢 НИЗКИЙ |
+| **api_payloads.py** | **~400** | Payload дашборда и markdown-артефактов | 🟡 СРЕДНИЙ |
 | **task_executor.py** | **234** | `TaskExecutor.execute()`, `_build_schema_prompt` | 🟠 ВЫСОКИЙ |
 | **qa_gate.py** | **201** | `QAGate.run()` — LLM-валидация результатов | 🟠 ВЫСОКИЙ |
 | **index.html** | **1037** | Дашборд (vanilla JS, real-time updates) | 🟡 СРЕДНИЙ |
@@ -110,18 +115,17 @@ ai_agency_aikexpert/
                      │ HTTP (polling)
                      ▼
        ┌──────────────────────────────┐
-       │      Flask API (main.py)     │
-       │  GET  /api/agency/status     │  ← tasks + pm + review_tasks
-       │  GET  /api/agency/projects   │  ← история запусков
-       │  GET  /api/agency/projects/<id>│ ← детали выбранного проекта
-       │  POST /api/agency/start      │
-       │  POST /api/agency/stop       │
-       │  POST /api/agency/resume     │
-       │  POST /api/agency/human-review│ ← комментарий + resume
-       │  GET/POST /api/agency/workflows│ ← сохранение n8n JSON
-       │  GET/POST/PATCH /api/nocodb  │  ← защищённый прокси
+       │   FastAPI API (main.py)      │
+       │  GET  /api/agency/status     │
+       │  GET  /api/agency/projects   │
+       │  GET  /api/agency/projects/{id}
+       │  POST /api/agency/start|stop|resume
+       │  POST /api/agency/human-review
+       │  GET/POST /api/agency/workflows
+       │  GET/POST/PATCH /api/nocodb
+       │  /docs  /redoc  (OpenAPI)
        └────────────┬─────────────────┘
-                    │ threading.Thread
+                    │ asyncio.to_thread(orchestrator.run)
                     ▼
        ┌────────────────────────────────────────────────────┐
        │                  Orchestrator                      │
@@ -158,8 +162,7 @@ Orchestrator.run()
        ├─ call_and_parse_llm()            # LLM → Pydantic-валидация → retry
        └─ DISPATCH:
             ├─ "architect"    → AgentHandlers.handle_architect()
-            │                     └─ QAGate.run() + PM-декомпозиция →
-            │                        dev_* + парные qa_dev_* (агент qa)
+            │                     └─ QAGate.run() + PM-декомпозиция → dev_* задачи
             ├─ "analyst"      → AgentHandlers.handle_analyst()
             │                     └─ сохраняет ROI + handoff_to_architect в контекст
             ├─ "lead_hunter"  → AgentHandlers.handle_lead_hunter()
@@ -296,7 +299,7 @@ QAGate.run(task, agent_response, iteration_count, max_iter)
 | `analyst` | Спец-хендлер | Накапливает ROI/боли + `handoff_to_architect` в `analyst_context` |
 | `lead_hunter` | Спец-хендлер | Накапливает лиды + `handoff_to_sales`; fallback к Telegram API |
 | `sales` | Спец-хендлер | Накапливает сообщения/квалификацию в `sales_context` |
-| `architect` | Спец-хендлер | QA Gate + PM декомпозиция → `dev_*` + парные `qa_dev_*` |
+| `architect` | Спец-хендлер | QA Gate + второй LLM-вызов: PM декомпозирует на `dev_*` подзадачи |
 | `developer`, `crm_customizer`, `tech_writer` | **QA Gate** | Самодостаточные артефакты, только валидация |
 | `qa` | Прямое завершение | Не может проверять сам себя (бесконечная рекурсия) |
 
@@ -309,18 +312,16 @@ sales        →  sales_context
                      ↓
 analyst      →  analyst_context + handoff_to_architect
                      ↓
-architect    →  QA Gate → PM декомпозиция →
-                     │
-                     ├─ dev_001 → QA Gate → qa_dev_001
-                     ├─ dev_002 → QA Gate → qa_dev_002
-                     └─ …      → QA Gate → qa_dev_N
-                                         ↓
-                              финальный qa (depends_on все qa_dev_*)
-                                         ↓
-                                   tech_writer → QA Gate
+architect    →  QA Gate → PM декомпозиция → dev_001…dev_N
+                     ↓
+developer    →  QA Gate (каждая dev_*; output_data → qa через dependency_outputs)
+                     ↓
+qa           →  completed
+                     ↓
+tech_writer  →  QA Gate
 ```
 
-После декомпозиции для **каждой** `dev_*` создаётся парная задача `qa_dev_*` (агент `qa`, `depends_on=[dev_XXX]`). Исходная задача `qa` из task graph переназначается на зависимость от всех `qa_dev_*`. Placeholder developer помечается completed только после завершения всех `qa_dev_*`.
+Каждая `dev_*` проверяется **QA Gate** в `TaskExecutor` (отдельные задачи агента `qa` на сабтаск не создаются). Финальный агент `qa` из task graph ждёт завершения placeholder developer (после всех `dev_*`).
 
 Все накопленные контексты (`leads_context`, `sales_context`, `analyst_context`) автоматически добавляются в `input_data` последующих задач через `_build_enriched_input_data`.
 
@@ -493,9 +494,30 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ## 14. Открытые вопросы и следующие шаги
 
+### Direction G — Миграция HTTP на FastAPI (ТЗ №3) — РЕАЛИЗОВАНО
+
+| До | После |
+|----|-------|
+| Flask + flask-cors | FastAPI + CORSMiddleware |
+| `threading.Thread(orchestrator.run)` | `asyncio.create_task(asyncio.to_thread(orchestrator.run))` |
+| Нет OpenAPI | `/docs` (Swagger), `/redoc` |
+| Ручной parse JSON body | Pydantic: `HumanReviewRequest`, `SaveWorkflowRequest`, … (`api_schemas.py`) |
+| Payload helpers в main.py | `core/api_payloads.py` |
+| Flask test_client | `fastapi.testclient.TestClient` + `tests/test_api.py` |
+
+Контракт JSON для дашборда сохранён (`{"error": "..."}` через exception handler).
+Блокирующие I/O (NocoDB, LLM) обёрнуты в `asyncio.to_thread`, чтобы не блокировать event loop.
+
+### Направление H. UI на React + WebSocket (ТЗ №5) — СЛЕДУЮЩИЙ ЭТАП
+
+После стабилизации FastAPI:
+1. WebSocket `/ws` в FastAPI (push статусов задач)
+2. React (Vite) дашборд: Task Graph, метрики токенов, Retry failed, syntax highlight
+3. Замена polling 10с на realtime
+
 ### Направление G. Параллельное выполнение задач (не реализовано)
 
-Текущий цикл выполняет задачи последовательно. Независимые задачи (с пустым `depends_on` или совпадающими зависимостями) могут выполняться параллельно через `asyncio` или `ThreadPoolExecutor`.
+Текущий цикл выполняет задачи последовательно. Независимые задачи могут выполняться параллельно через `asyncio` / `ThreadPoolExecutor` внутри Orchestrator.
 
 ### Направление H. Продуктовая готовность
 
@@ -533,4 +555,4 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 ---
 
-**Последнее обновление:** Jul 12, 2026. Directions A–F + per-subtask QA (`qa_dev_*`).
+**Последнее обновление:** Jul 13, 2026. Direction G (FastAPI). Парные `qa_dev_*` откатаны — QA Gate на каждую `dev_*`.

@@ -253,14 +253,16 @@ class TestNocodbProxy:
 
     @pytest.fixture
     def app_client(self):
-        """Flask test client с замокированным requests.request."""
+        """FastAPI TestClient с замокированным requests.request."""
         with patch("core.nocodb.NocoDBClient"), \
              patch("core.nocodb.ProjectsClient"), \
              patch("core.nocodb.TasksClient"), \
              patch("core.orchestrator.Orchestrator"):
+            # Переимпорт не нужен — патчим до первого импорта main в процессе.
+            # Если main уже импортирован, используем его как есть.
             import main as app_module
-            app_module.app.config["TESTING"] = True
-            with app_module.app.test_client() as client:
+            from fastapi.testclient import TestClient
+            with TestClient(app_module.app) as client:
                 yield client
 
     def test_get_allowed(self, app_client):
@@ -270,25 +272,25 @@ class TestNocodbProxy:
         mock_resp.status_code = 200
         mock_resp.headers = {"Content-Type": "application/json"}
 
-        with patch("requests.request", return_value=mock_resp):
+        with patch("main.requests.request", return_value=mock_resp):
             resp = app_client.get("/api/nocodb")
         assert resp.status_code == 200
 
     def test_delete_blocked(self, app_client):
-        """DELETE должен быть отклонён (405 от Flask — метод не зарегистрирован)."""
+        """DELETE должен быть отклонён (405 — метод не зарегистрирован)."""
         resp = app_client.delete("/api/nocodb")
         assert resp.status_code == 405
 
     def test_path_traversal_blocked(self, app_client):
         """Путь '../secret' должен вернуть 403 (не пробрасывается в NocoDB)."""
-        with patch("requests.request") as mock_req:
+        with patch("main.requests.request") as mock_req:
             resp = app_client.get("/api/nocodb/..%2Fsecret")
         assert resp.status_code in (403, 404)
         mock_req.assert_not_called()
 
     def test_path_with_alpha_blocked(self, app_client):
         """Путь с буквами блокируется — разрешены только числовые ID."""
-        with patch("requests.request") as mock_req:
+        with patch("main.requests.request") as mock_req:
             resp = app_client.get("/api/nocodb/admin")
         assert resp.status_code == 403
         mock_req.assert_not_called()
@@ -300,7 +302,7 @@ class TestNocodbProxy:
         mock_resp.status_code = 200
         mock_resp.headers = {}
 
-        with patch("requests.request", return_value=mock_resp):
+        with patch("main.requests.request", return_value=mock_resp):
             resp = app_client.get("/api/nocodb/42")
         assert resp.status_code == 200
 
@@ -316,7 +318,7 @@ class TestNocodbProxy:
             mock_resp.headers = {}
             return mock_resp
 
-        with patch("requests.request", side_effect=fake_request):
+        with patch("main.requests.request", side_effect=fake_request):
             app_client.get("/api/nocodb?limit=5&secret=hack&token=evil")
 
         assert captured_url, "requests.request не был вызван"
@@ -337,7 +339,7 @@ class TestNocodbProxy:
             mock_resp.headers = {}
             return mock_resp
 
-        with patch("requests.request", side_effect=fake_request):
+        with patch("main.requests.request", side_effect=fake_request):
             app_client.get("/api/nocodb?limit=10&offset=20")
 
         url = captured_url[0]

@@ -65,10 +65,10 @@
 | Компонент | Технология | Назначение |
 |-----------|-----------|------------|
 | **LLM** | Yandex AI Studio (YandexGPT) | Генерация ответов агентов |
-| **Оркестрация** | Python + Flask | API и цикл оркестрации |
+| **Оркестрация** | Python + FastAPI (uvicorn) | API и цикл оркестрации |
 | **База данных** | NocoDB | Хранение проектов, задач, логов |
 | **Дашборд** | HTML + JavaScript | Мониторинг и управление |
-| **Проксирование** | Flask + Requests | Безопасная работа с NocoDB |
+| **Проксирование** | FastAPI + Requests | Безопасная работа с NocoDB |
 
 ---
 
@@ -76,7 +76,9 @@
 
 ```
 ai_agency/
-├── main.py                      # Flask API и оркестратор
+├── main.py                      # FastAPI HTTP-слой (uvicorn)
+├── core/api_schemas.py          # Pydantic-схемы REST API
+├── core/api_payloads.py         # Сборка payload дашборда
 ├── core/
 │   ├── config.py                # Конфигурация (env variables)
 │   └── nocodb.py                # Клиенты для NocoDB
@@ -163,7 +165,8 @@ cd ai-agency
 ### 2. Установка зависимостей
 
 ```bash
-pip install flask flask-cors requests python-dotenv
+pip install -r requirements.txt
+# или: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
 ```
 
 ### 3. Настройка `.env`
@@ -204,6 +207,8 @@ DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и �
 
 ```bash
 python main.py
+# или: uvicorn main:app --host 0.0.0.0 --port 5000
+# Swagger UI: http://localhost:5000/docs
 ```
 
 Сервер запустится на `http://localhost:5000`
@@ -276,10 +281,10 @@ python main.py
 
 ### Логи
 
-Логи выводятся в консоль и сохраняются в `flask.log`:
+Логи выводятся в консоль:
 
 ```bash
-python main.py 2>&1 | tee flask.log
+python main.py 2>&1 | tee agency.log
 ```
 
 ### Метрики
@@ -419,7 +424,7 @@ MIT License
 
 - **Yandex AI Studio** — за мощный LLM API
 - **NocoDB** — за гибкую open-source базу данных
-- **Flask** — за простой и мощный веб-фреймворк
+- **FastAPI** — за асинхронный API и OpenAPI из коробки
 - **Сообществу** — за обратную связь и тестирование
 
 ---

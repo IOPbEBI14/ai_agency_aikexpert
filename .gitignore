@@ -1,9 +1,5 @@
 www/ai_agency/.env
+www/ai_agency/.venv/
 __pycache__
-www/ai_agency/core/__pycache__/nocodb.cpython-310.pyc
-www/ai_agency/__pycache__/main.cpython-310.pyc
-www/ai_agency/after.json
-www/ai_agency/AI_Agency - Projects (Projects) 2026-07-03_00-56.json
-www/ai_agency/AI_Agency - tasks (to analysis) 2026-07-03_00-52.json
-www/ai_agency/before.json
-www/ai_agency/core/__pycache__/config.cpython-310.pyc
+*.pyc
+.pytest_cache/
