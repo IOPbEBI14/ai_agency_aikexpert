@@ -70,6 +70,51 @@ class TestOrchestratorInitialization:
         assert result is True
         mock_nocodb_clients['projects'].create_project.assert_called_once()
 
+    def test_initialize_create_from_form(self, orchestrator, mock_nocodb_clients, sample_project_data):
+        """Создание проекта из полей формы (create=...)."""
+        active = {**sample_project_data, "Id": 7, "status": "in_progress"}
+        created = {
+            **sample_project_data,
+            "Id": 99,
+            "project_name": "New Form Project",
+            "client_name": "Form Client",
+            "goal": "Goal from dashboard form with enough length",
+            "current_phase": "sales",
+            "token_budget": 12000,
+        }
+        mock_nocodb_clients["projects"].find_project_by_status.return_value = active
+        mock_nocodb_clients["projects"].create_project.return_value = created
+
+        result = orchestrator.initialize(
+            create={
+                "project_name": "New Form Project",
+                "client_name": "Form Client",
+                "goal": "Goal from dashboard form with enough length",
+                "token_budget": 12000,
+                "current_phase": "sales",
+            }
+        )
+
+        assert result is True
+        assert orchestrator.current_project["Id"] == 99
+        mock_nocodb_clients["projects"].update_project.assert_called_with(
+            7, {"status": "stopped"}
+        )
+        mock_nocodb_clients["projects"].create_project.assert_called_once_with(
+            project_name="New Form Project",
+            client_name="Form Client",
+            goal="Goal from dashboard form with enough length",
+            token_budget=12000,
+            current_phase="sales",
+        )
+
+    def test_initialize_create_rejects_incomplete(self, orchestrator, mock_nocodb_clients):
+        result = orchestrator.initialize(
+            create={"project_name": "X", "client_name": "", "goal": "long enough goal text"}
+        )
+        assert result is False
+        mock_nocodb_clients["projects"].create_project.assert_not_called()
+
 class TestOrchestratorRun:
     """Тесты метода run()."""
     

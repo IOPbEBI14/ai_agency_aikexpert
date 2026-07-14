@@ -97,3 +97,51 @@ class TestAgencyApiContract:
             resp = c.post("/api/agency/start")
         assert resp.status_code == 200
         assert resp.json()["status"] == "started"
+
+    def test_start_create_project_422(self, client):
+        c, _ = client
+        resp = c.post("/api/agency/start", json={"project_name": "X"})
+        assert resp.status_code == 422
+
+    def test_start_create_project_goal_too_short(self, client):
+        c, _ = client
+        resp = c.post(
+            "/api/agency/start",
+            json={
+                "project_name": "Proj",
+                "client_name": "Client",
+                "goal": "short",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_start_create_project_success(self, client):
+        c, mod = client
+        mod.orchestrator.agency_running = False
+        mod.orchestrator.initialize.return_value = True
+        mod.orchestrator.current_project = {
+            "project_name": "Автоматизация ТехноФикс",
+            "client_name": "ООО ТехноФикс",
+            "current_phase": "lead_gen",
+            "tokens_used": 0,
+            "token_budget": 40000,
+            "Id": 42,
+        }
+        payload = {
+            "project_name": "Автоматизация ТехноФикс",
+            "client_name": "ООО ТехноФикс",
+            "goal": "Найти клиентов и предложить автоматизацию заявок из Telegram",
+            "token_budget": 40000,
+            "current_phase": "lead_gen",
+        }
+        with patch.object(mod, "_start_orchestrator_background"):
+            resp = c.post("/api/agency/start", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "started"
+        assert data["project_id"] == 42
+        mod.orchestrator.initialize.assert_called_once()
+        call_kw = mod.orchestrator.initialize.call_args.kwargs
+        assert call_kw["create"]["project_name"] == payload["project_name"]
+        assert call_kw["create"]["goal"] == payload["goal"]
+        assert call_kw["create"]["token_budget"] == 40000

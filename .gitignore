@@ -1,5 +1,6 @@
 www/ai_agency/.env
 www/ai_agency/.venv/
+www/ai_agency/.venv312/
 __pycache__
 *.pyc
 .pytest_cache/

@@ -238,9 +238,12 @@ Orchestrator.run()
 ### Последовательность
 
 ```
-initialize()
-  ├─ Найти in_progress/stopped проект → загрузить
-  └─ Не найден → create_project() + _create_initial_task_graph()
+initialize(project_id=… | create={…})
+  ├─ create={project_name, client_name, goal, token_budget?, current_phase?}
+  │    → предыдущий in_progress → stopped → create_project() из формы
+  ├─ project_id → загрузить конкретный проект
+  ├─ Найти in_progress/stopped/needs_human_review → загрузить / resume
+  └─ Не найден → create_project() из Config defaults
 
 _create_initial_task_graph()
   ├─ PM вызывается с PMTaskGraph (excluded_agents + reasoning + tasks)
@@ -507,6 +510,33 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 Контракт JSON для дашборда сохранён (`{"error": "..."}` через exception handler).
 Блокирующие I/O (NocoDB, LLM) обёрнуты в `asyncio.to_thread`, чтобы не блокировать event loop.
+
+### Direction I — Создание проектов с дашборда (NEW)
+
+Механизм: ввод всех полей проекта → создание в NocoDB → запуск оркестратора.
+
+| Слой | Что сделано |
+|------|-------------|
+| API | `StartProjectRequest` в `api_schemas.py`; `POST /api/agency/start` с JSON-телом |
+| Orchestrator | `initialize(create={…})` — всегда новый проект; активный → `stopped` |
+| NocoDB | `ProjectsClient.create_project(..., current_phase=)` |
+| UI | Панель «Новый проект»: name, client, goal, budget, phase → «Создать и запустить» |
+
+```http
+POST /api/agency/start
+Content-Type: application/json
+
+{
+  "project_name": "Автоматизация заявок",
+  "client_name": "ООО ТехноФикс",
+  "goal": "…(мин. 10 символов)",
+  "token_budget": 30000,
+  "current_phase": "lead_gen"
+}
+```
+
+Пустое тело — обратная совместимость (resume / defaults из `Config`).
+Если цикл уже `running` и передано тело формы — сначала `stop`, затем создание нового проекта.
 
 ### Direction J — Монетизация: агент `client_hunter` (NEW)
 

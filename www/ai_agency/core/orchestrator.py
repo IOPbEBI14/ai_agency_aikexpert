@@ -73,9 +73,54 @@ class Orchestrator:
     # ИНИЦИАЛИЗАЦИЯ
     # ══════════════════════════════════════════════════════════════════════════
 
-    def initialize(self, project_id: Optional[int] = None) -> bool:
-        """Загружает активный проект из NocoDB или создаёт новый."""
-        if project_id:
+    def initialize(
+        self,
+        project_id: Optional[int] = None,
+        *,
+        create: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Загружает активный проект из NocoDB или создаёт новый.
+
+        Args:
+            project_id: загрузить конкретный проект по Id.
+            create: словарь полей нового проекта
+                {project_name, client_name, goal, token_budget?, current_phase?}.
+                Если передан — всегда создаётся новый проект (предыдущий in_progress
+                переводится в stopped).
+        """
+        if create:
+            name = (create.get("project_name") or "").strip()
+            client = (create.get("client_name") or "").strip()
+            goal = (create.get("goal") or "").strip()
+            if not name or not client or not goal:
+                logger.error("❌ create: нужны project_name, client_name, goal")
+                return False
+            budget = create.get("token_budget") or Config.TOKEN_BUDGET
+            phase = create.get("current_phase") or "lead_gen"
+
+            # Освобождаем текущий активный проект, чтобы не путать статусы
+            try:
+                active = self.projects_db.find_project_by_status("in_progress")
+                if active and active.get("Id"):
+                    self.projects_db.update_project(
+                        active["Id"], {"status": "stopped"}
+                    )
+                    logger.info(
+                        f"⏸ Предыдущий проект #{active['Id']} "
+                        f"({active.get('project_name')}) → stopped"
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось остановить предыдущий проект: {e}")
+
+            logger.info(f"▶ Создаём новый проект из формы: {name}")
+            self.current_project = self.projects_db.create_project(
+                project_name=name,
+                client_name=client,
+                goal=goal,
+                token_budget=int(budget),
+                current_phase=phase,
+            )
+        elif project_id:
             self.current_project = self.projects_db.find_project_by_id(project_id)
             if not self.current_project:
                 logger.error(f"❌ Проект {project_id} не найден")

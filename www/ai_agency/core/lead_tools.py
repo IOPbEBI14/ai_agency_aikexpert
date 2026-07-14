@@ -48,8 +48,16 @@ class LeadSearchTools:
             }
             
             response = self.session.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            
+            if response.status_code >= 400:
+                hint = self._google_error_hint(response)
+                logger.error(
+                    "❌ Ошибка Google поиска: HTTP %s | query=%r | %s",
+                    response.status_code,
+                    query[:80],
+                    hint,
+                )
+                return []
+
             data = response.json()
             results = []
             
@@ -66,6 +74,45 @@ class LeadSearchTools:
         except Exception as e:
             logger.error(f"❌ Ошибка Google поиска: {e}")
             return []
+
+    @staticmethod
+    def _google_error_hint(response: requests.Response) -> str:
+        """Разбирает тело ошибки Google API и даёт короткую подсказку."""
+        reason = ""
+        message = ""
+        try:
+            payload = response.json()
+            err = payload.get("error") or {}
+            message = err.get("message") or ""
+            errors = err.get("errors") or []
+            if errors and isinstance(errors[0], dict):
+                reason = errors[0].get("reason") or ""
+            status = err.get("status") or ""
+        except Exception:
+            return (response.text or "")[:400]
+
+        hint = f"status={status or response.status_code} reason={reason} message={message}"
+        low = f"{reason} {message} {status}".lower()
+        if "accessnotconfigured" in low or "has not been used" in low or "disabled" in low:
+            hint += (
+                " | → Включите Custom Search API в том же GCP-проекте, "
+                "где создан ключ: APIs & Services → Library → Custom Search API → Enable"
+            )
+        elif "billing" in low:
+            hint += " | → Привяжите биллинг к GCP-проекту (Cloud Console → Billing)"
+        elif "keyinvalid" in low or "api key not valid" in low:
+            hint += " | → Проверьте GOOGLE_API_KEY и что ключ из того же проекта"
+        elif "iprefererblocked" in low or "blocked" in low or "restrict" in low:
+            hint += (
+                " | → Снимите/ослабьте Application restrictions у API key "
+                "(Credentials → Edit key), либо добавьте IP сервера"
+            )
+        elif response.status_code == 403:
+            hint += (
+                " | Типичный 403: API не включён, ключ ограничен (HTTP referrer/IP), "
+                "или ключ из другого проекта. См. docs/GOOGLE_API_SETUP.md §403"
+            )
+        return hint
     
     def search_yandex(self, query: str, num_results: int = 10) -> List[Dict[str, str]]:
         """

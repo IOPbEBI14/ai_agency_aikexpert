@@ -29,6 +29,7 @@ from core.api_schemas import (
     IncreaseTokensResponse,
     SaveWorkflowRequest,
     SaveWorkflowResponse,
+    StartProjectRequest,
     WorkflowFileInfo,
     WorkflowsListResponse,
 )
@@ -262,12 +263,42 @@ async def download_artifact(
 
 
 @app.post("/api/agency/start", response_model=AgencyActionResponse)
-async def start_agency():
-    """Запуск агентства."""
-    if orchestrator.agency_running or _agency_task_running():
-        raise HTTPException(status_code=400, detail="Already running")
+async def start_agency(body: Optional[StartProjectRequest] = None):
+    """Запуск агентства.
 
-    ok = await asyncio.to_thread(orchestrator.initialize)
+    С телом StartProjectRequest — создаёт новый проект с полями формы и запускает
+    (если цикл уже идёт — сначала stop, затем новый проект).
+    Без тела — прежнее поведение (resume активного / create из Config defaults).
+    """
+    global agency_task
+
+    create_payload = None
+    if body is not None:
+        create_payload = {
+            "project_name": body.project_name,
+            "client_name": body.client_name,
+            "goal": body.goal,
+            "token_budget": body.token_budget or Config.TOKEN_BUDGET,
+            "current_phase": body.current_phase or "lead_gen",
+        }
+
+    if orchestrator.agency_running or _agency_task_running():
+        if create_payload is None:
+            raise HTTPException(status_code=400, detail="Already running")
+        await asyncio.to_thread(orchestrator.stop)
+        if agency_task is not None and not agency_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(agency_task), timeout=45.0)
+            except asyncio.TimeoutError as e:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Previous run still stopping; retry in a few seconds",
+                ) from e
+            except Exception:
+                pass
+            agency_task = None
+
+    ok = await asyncio.to_thread(orchestrator.initialize, create=create_payload)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to initialize project")
 
@@ -275,6 +306,7 @@ async def start_agency():
     return AgencyActionResponse(
         status="started",
         project=orchestrator.current_project.get("project_name"),
+        project_id=orchestrator.current_project.get("Id"),
         phase=orchestrator.current_project.get("current_phase"),
         tokens_used=orchestrator.current_project.get("tokens_used", 0),
         token_budget=orchestrator.current_project.get("token_budget", Config.TOKEN_BUDGET),

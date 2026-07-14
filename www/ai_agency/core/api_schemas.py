@@ -29,6 +29,35 @@ class SaveWorkflowRequest(BaseModel):
     filename: Optional[str] = Field(default=None, description="Имя файла без/с .json")
 
 
+class StartProjectRequest(BaseModel):
+    """POST /api/agency/start — создание проекта и запуск оркестратора.
+
+    Если тело передано — создаётся НОВЫЙ проект с указанными полями.
+    Пустое тело (обратная совместимость) — resume/create из дефолтов Config.
+    """
+
+    project_name: str = Field(..., min_length=1, max_length=200, description="Название проекта")
+    client_name: str = Field(..., min_length=1, max_length=200, description="Клиент / компания")
+    goal: str = Field(
+        ...,
+        min_length=10,
+        max_length=20000,
+        description="Цель проекта / ТЗ (что автоматизировать, для кого, ограничения)",
+    )
+    token_budget: Optional[int] = Field(
+        default=None,
+        ge=1000,
+        le=10_000_000,
+        description="Лимит токенов (по умолчанию из Config.TOKEN_BUDGET)",
+    )
+    current_phase: Optional[str] = Field(
+        default="lead_gen",
+        description="Стартовая фаза: lead_gen | sales | analysis | …",
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
 class IncreaseTokensRequest(BaseModel):
     """POST /api/agency/increase-tokens — тело опционально (совместимость)."""
 
@@ -40,6 +69,7 @@ class IncreaseTokensRequest(BaseModel):
 class AgencyActionResponse(BaseModel):
     status: str
     project: Optional[str] = None
+    project_id: Optional[int] = None
     phase: Optional[str] = None
     tokens_used: Optional[int] = None
     token_budget: Optional[int] = None

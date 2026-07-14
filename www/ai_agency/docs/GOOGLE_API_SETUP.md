@@ -129,6 +129,56 @@ https://www.googleapis.com/customsearch/v1?key=GOOGLE_API_KEY&cx=GOOGLE_CX&q=с�
 
 ---
 
+## Часть D. Ошибка HTTP 403 / PERMISSION_DENIED
+
+### Сообщение: «This project does not have the access to Custom Search JSON API»
+
+Это **не** ошибка ключа и **не** «забыли Enable».
+
+С 2025–2026 Google **закрыл Custom Search JSON API для новых клиентов**.  
+Официально: [Custom Search JSON API Overview](https://developers.google.com/custom-search/v1/overview) —
+*«The Custom Search JSON API is closed to new customers»*.  
+Старые аккаунты могут пользоваться до **1 января 2027**.
+
+Поэтому при новом GCP-проекте вы получите:
+
+```json
+{
+  "error": {
+    "code": 403,
+    "message": "This project does not have the access to Custom Search JSON API.",
+    "status": "PERMISSION_DENIED",
+    "errors": [{ "reason": "forbidden" }]
+  }
+}
+```
+
+даже если:
+- API в Library показывает Enabled,
+- Billing привязан,
+- ключ и CX корректны.
+
+**Что делать:**
+1. Если есть **старый** GCP-проект, где CSE уже работал раньше — используйте его ключ.
+2. Иначе Custom Search JSON API **недоступен** — нужен альтернативный провайдер поиска (Serper, SerpAPI, Brave Search и т.п.).  
+   Напишите в чат — подключим fallback в `client_hunter`.
+
+### Другие 403 (если message другой)
+
+1. `accessNotConfigured` → Enable Custom Search API в том же проекте, что и ключ.
+2. Application restrictions (HTTP referrers) → для сервера поставьте None или IP.
+3. Неверный / отозванный ключ → другой `message` (`API key not valid`).
+
+### Быстрая диагностика в браузере
+
+```text
+https://www.googleapis.com/customsearch/v1?key=ВАШ_KEY&cx=ВАШ_CX&q=test
+```
+
+Смотрите `error.message` и `error.errors[0].reason`.
+
+---
+
 ## Связанные файлы в проекте
 
 | Файл | Назначение |

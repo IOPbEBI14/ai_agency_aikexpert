@@ -634,6 +634,84 @@
             margin-top: 4px;
         }
 
+        .new-project-panel {
+            display: none;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 16px;
+        }
+
+        .new-project-panel.open { display: block; }
+
+        .new-project-panel h2 {
+            margin: 0 0 6px;
+            font-size: 16px;
+        }
+
+        .new-project-panel .hint {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 14px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .form-grid .full { grid-column: 1 / -1; }
+
+        .form-field label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            margin-bottom: 4px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .form-field input,
+        .form-field select,
+        .form-field textarea {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 9px 11px;
+            font-family: var(--font);
+            font-size: 13px;
+            color: var(--ink);
+            background: #fff;
+        }
+
+        .form-field textarea {
+            min-height: 110px;
+            resize: vertical;
+            line-height: 1.45;
+        }
+
+        .form-field input:focus,
+        .form-field select:focus,
+        .form-field textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        @media (max-width: 640px) {
+            .form-grid { grid-template-columns: 1fr; }
+        }
+
         @media (max-width: 960px) {
             .metrics { grid-template-columns: repeat(2, 1fr); }
             .grid { grid-template-columns: 1fr 1fr; }
@@ -686,12 +764,52 @@
         </section>
 
         <section class="controls">
-            <button class="primary" id="btn-start" onclick="startAgency()">Запустить</button>
+            <button class="primary" id="btn-start" onclick="toggleNewProjectPanel()">Новый проект</button>
             <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
             <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
             <button onclick="increaseTokens()">+ Токены</button>
             <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
+        </section>
+
+        <section class="new-project-panel" id="new-project-panel">
+            <h2>Создание и запуск проекта</h2>
+            <p class="hint">
+                Заполните поля и нажмите «Создать и запустить». Будет создан новый проект в NocoDB,
+                предыдущий активный перейдёт в stopped.
+            </p>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="np-name">Название проекта *</label>
+                    <input id="np-name" type="text" maxlength="200" placeholder="Автоматизация заявок для ТехноФикс" />
+                </div>
+                <div class="form-field">
+                    <label for="np-client">Клиент *</label>
+                    <input id="np-client" type="text" maxlength="200" placeholder="ООО ТехноФикс" />
+                </div>
+                <div class="form-field">
+                    <label for="np-budget">Бюджет токенов</label>
+                    <input id="np-budget" type="number" min="1000" step="1000" placeholder="30000" />
+                </div>
+                <div class="form-field">
+                    <label for="np-phase">Стартовая фаза</label>
+                    <select id="np-phase">
+                        <option value="lead_gen">lead_gen — поиск клиентов</option>
+                        <option value="sales">sales — продажи</option>
+                        <option value="analysis">analysis — анализ</option>
+                        <option value="architecture">architecture — архитектура</option>
+                        <option value="development">development — разработка</option>
+                    </select>
+                </div>
+                <div class="form-field full">
+                    <label for="np-goal">Цель / ТЗ проекта *</label>
+                    <textarea id="np-goal" placeholder="Опишите, что автоматизировать, для кого, ограничения, каналы (Telegram/WB…), CRM…"></textarea>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="primary" id="btn-create-start" onclick="createAndStartProject()">Создать и запустить</button>
+                <button type="button" onclick="toggleNewProjectPanel(false)">Отмена</button>
+            </div>
         </section>
 
         <section class="history-banner" id="history-banner">
@@ -830,7 +948,8 @@ async function refreshData() {
             if (res.ok) {
                 const live = await res.json();
                 liveRunning = !!live.running;
-                document.getElementById('btn-start').disabled = liveRunning;
+                // «Новый проект» всегда доступен (остановит текущий и создаст новый)
+                document.getElementById('btn-start').disabled = false;
                 document.getElementById('btn-stop').disabled = !liveRunning;
                 document.getElementById('btn-resume').disabled =
                     liveRunning || !['stopped', 'needs_human_review'].includes(live.status);
@@ -978,7 +1097,7 @@ function renderPm() {
 function renderMetrics() {
     const d = state;
     const running = historyProjectId ? liveRunning : !!d.running;
-    document.getElementById('btn-start').disabled = running;
+    document.getElementById('btn-start').disabled = false;
     document.getElementById('btn-stop').disabled = !running;
     document.getElementById('btn-resume').disabled = running || !['stopped', 'needs_human_review'].includes(d.status);
 
@@ -1345,11 +1464,54 @@ function downloadReport() {
 }
 
 async function startAgency() {
-    const res = await fetch(`${API}/start`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) return toast(data.error || 'Ошибка запуска');
-    toast('Агентство запущено');
-    setTimeout(refreshData, 1000);
+    toggleNewProjectPanel(true);
+}
+
+function toggleNewProjectPanel(forceOpen) {
+    const panel = document.getElementById('new-project-panel');
+    if (!panel) return;
+    const open = typeof forceOpen === 'boolean' ? forceOpen : !panel.classList.contains('open');
+    panel.classList.toggle('open', open);
+    if (open) {
+        const name = document.getElementById('np-name');
+        if (name && !name.value) name.focus();
+    }
+}
+
+async function createAndStartProject() {
+    const project_name = (document.getElementById('np-name').value || '').trim();
+    const client_name = (document.getElementById('np-client').value || '').trim();
+    const goal = (document.getElementById('np-goal').value || '').trim();
+    const budgetRaw = (document.getElementById('np-budget').value || '').trim();
+    const current_phase = document.getElementById('np-phase').value || 'lead_gen';
+
+    if (!project_name || !client_name || goal.length < 10) {
+        return toast('Заполните название, клиента и цель (мин. 10 символов)');
+    }
+
+    const body = { project_name, client_name, goal, current_phase };
+    if (budgetRaw) {
+        const n = parseInt(budgetRaw, 10);
+        if (!Number.isFinite(n) || n < 1000) return toast('Бюджет токенов: число ≥ 1000');
+        body.token_budget = n;
+    }
+
+    const btn = document.getElementById('btn-create-start');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch(`${API}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) return toast(data.error || 'Ошибка запуска');
+        toggleNewProjectPanel(false);
+        toast(`Запущен: ${data.project || project_name}`);
+        setTimeout(refreshData, 800);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function stopAgency() {

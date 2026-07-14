@@ -184,14 +184,21 @@ class ProjectsClient:
             logger.error(f"❌ Ошибка поиска проекта: {e}")
             return None
 
-    def create_project(self, project_name: str, client_name: str, goal: str, token_budget: int) -> Dict[str, Any]:
+    def create_project(
+        self,
+        project_name: str,
+        client_name: str,
+        goal: str,
+        token_budget: int,
+        current_phase: str = "lead_gen",
+    ) -> Dict[str, Any]:
         """Создаёт новый проект."""
         try:
             new_project = {
                 "project_name": project_name,
                 "client_name": client_name,
                 "goal": goal,
-                "current_phase": "lead_gen",
+                "current_phase": current_phase or "lead_gen",
                 "status": "in_progress",
                 "tokens_used": 0,
                 "token_budget": token_budget,
@@ -215,7 +222,7 @@ class ProjectsClient:
                     "project_name": project_name,
                     "client_name": client_name,
                     "goal": goal,
-                    "current_phase": "lead_gen",
+                    "current_phase": current_phase or "lead_gen",
                     "status": "in_progress",
                     "tokens_used": 0,
                     "token_budget": token_budget,
@@ -243,12 +250,12 @@ class ProjectsClient:
                 "project_name": project_name,
                 "client_name": client_name,
                 "goal": goal,
-                "current_phase": "lead_gen",
+                "current_phase": current_phase or "lead_gen",
                 "status": "in_progress",
                 "tokens_used": 0,
                 "token_budget": token_budget,
                 "completed_agents": "[]",
-                "plan": json.dumps([], ensure_ascii=False),  # ← ДОБАВЛЕНО
+                "plan": json.dumps([], ensure_ascii=False),
                 "last_agent": ""
             }
 
