@@ -664,6 +664,50 @@ Content-Type: application/json
 Остальные агенты (`analyst`, `architect`, `qa`, …) не затронуты — у них
 `MAX_TASK_ITERATIONS = 3`, как раньше.
 
+### Direction M — OpenSERP: бесплатный поиск клиентов (NEW)
+
+[OpenSERP](https://github.com/karust/openserp) — self-hosted open-source SERP API
+(Google/Yandex/Bing/DuckDuckGo/Baidu/Ecosia), не требующий платных ключей.
+Интегрирован как **основной** источник поиска для `client_hunter`, заменяя
+платный Google Custom Search API в качестве primary-провайдера (Google API
+остаётся резервным сценарием — чек-лист устойчивости, п.5).
+
+**Почему именно OpenSERP, а не смена политики «только Google»:**
+Дедицированный `/google/search` эндпоинт OpenSERP бьёт по тому же Google —
+это тот же канал, что и раньше, просто без платного API-ключа и его лимитов.
+Политика client_hunter_prompt.txt («единственный канал — Google», `source:
+"google"`) не нарушается.
+
+| Слой | Что сделано |
+|------|-------------|
+| Клиент | `core/openserp_client.py` → `OpenSerpClient.search()` — HTTP GET `{base_url}/{engine}/search`, парсит `results[]`, фильтрует не-organic (реклама/related) |
+| Конфиг | `Config.OPENSERP_BASE_URL` (по умолчанию `http://localhost:7000`), `Config.OPENSERP_ENGINE` (по умолчанию `google`), `Config.OPENSERP_TIMEOUT_SEC` |
+| Резерв | `core/client_hunter_tools.py` → `run_google_only_search()`: OpenSERP пуст/недоступен для запроса → пробуем Google Custom Search API (если настроен); оба пусты → честный `[]` |
+| Промпт | `client_hunter_prompt.txt`: `google_search_results` теперь описан как «через OpenSERP или резервно Google Custom Search API» |
+| Устойчивость | Любая ошибка сети/HTTP/JSON от OpenSERP — временная, ловится внутри `OpenSerpClient.search()`, никогда не бросает исключение наружу |
+
+Запуск OpenSERP локально:
+
+```bash
+docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000
+```
+
+Приоритет источников на каждый search-запрос (не на всю пачку запросов —
+если по одному query OpenSERP пуст, а по другому ответил, второй Google-запрос
+не делается зря):
+
+```
+для каждого query из search_queries:
+    hits = OpenSERP.search(query)          # основной, бесплатный
+    если hits пуст И настроен GOOGLE_API_KEY/GOOGLE_CX:
+        hits = GoogleCustomSearchAPI.search(query)   # резерв
+    collect(hits)
+```
+
+Тесты: `tests/test_openserp.py` (11 тестов — парсинг, фильтр non-organic, timeout/connection
+error → `[]`, clamp лимита 1–100) + обновлённые `tests/test_client_hunter.py`
+(primary/fallback/оба пусты).
+
 ### Направление H. UI на React + WebSocket (ТЗ №5) — СЛЕДУЮЩИЙ ЭТАП
 
 После стабилизации FastAPI:
@@ -708,7 +752,8 @@ Content-Type: application/json
 | NocoDB прокси | `main.py` → `nocodb_proxy()` | Защищён whitelist |
 | Промпты | `prompts/*.txt` | 9 файлов |
 | Конфигурация | `config.py` → `Config` | `.env` |
+| Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
 
 ---
 
-**Последнее обновление:** Jul 14, 2026. Агент `client_hunter` (Google + УТП) для монетизации.
+**Последнее обновление:** Jul 15, 2026. OpenSERP — бесплатный поиск для `client_hunter` (Direction M).

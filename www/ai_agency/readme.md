@@ -205,7 +205,12 @@ LLM_MODEL=yandexgpt
 # Project Configuration
 TOKEN_BUDGET=500000
 
-# Google Custom Search (агент client_hunter — монетизация)
+# OpenSERP — self-hosted бесплатный SERP API (агент client_hunter, основной источник)
+# https://github.com/karust/openserp — см. раздел "🔎 OpenSERP" ниже
+OPENSERP_BASE_URL=http://localhost:7000
+OPENSERP_ENGINE=google
+
+# Google Custom Search (агент client_hunter — резервный источник, если OpenSERP недоступен)
 GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CX=your_custom_search_engine_id
 MAX_TASK_ITERATIONS=3
@@ -214,6 +219,29 @@ DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)
 DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и создание задач в Bpium для ОКК.
 ```
+
+### 🔎 OpenSERP (поиск клиентов, бесплатно, без API-ключей)
+
+[OpenSERP](https://github.com/karust/openserp) — self-hosted SERP API (Google,
+Yandex, Bing, DuckDuckGo, Baidu, Ecosia), используется агентом `client_hunter`
+как основной источник поиска клиентов вместо платного Google Custom Search API.
+
+Запуск локально через Docker:
+
+```bash
+docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000
+```
+
+Проверка, что сервер поднялся:
+
+```bash
+curl "http://127.0.0.1:7000/google/search?text=test&limit=5"
+```
+
+Если `OPENSERP_BASE_URL` недоступен или вернул пусто — `client_hunter` автоматически
+переходит на резервный Google Custom Search API (если заданы `GOOGLE_API_KEY`/`GOOGLE_CX`).
+Если недоступны оба источника — агент честно возвращает `clients=[]` и не выдумывает клиентов
+(см. `core/client_hunter_tools.py` → `run_google_only_search()`).
 
 ### 4. Создание таблиц в NocoDB
 

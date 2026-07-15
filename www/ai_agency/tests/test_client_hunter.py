@@ -21,11 +21,10 @@ class TestClientHunterTools:
         assert company_name_from_title("ТехноФикс | Официальный сайт") == "ТехноФикс"
 
     @patch("core.client_hunter_tools.lead_tools")
-    @patch("core.client_hunter_tools.Config")
-    def test_google_only_dedupes(self, mock_cfg, mock_tools):
-        mock_cfg.GOOGLE_API_KEY = "key"
-        mock_cfg.GOOGLE_CX = "cx"
-        mock_tools.search_google.side_effect = [
+    @patch("core.client_hunter_tools.openserp_client")
+    def test_openserp_primary_source_dedupes(self, mock_openserp, mock_tools):
+        """OpenSERP — основной источник; Google API не должен вызываться, если OpenSERP отвечает."""
+        mock_openserp.search.side_effect = [
             [
                 {"title": "A", "link": "https://a.example", "snippet": "s1"},
                 {"title": "B", "link": "https://b.example", "snippet": "s2"},
@@ -37,12 +36,53 @@ class TestClientHunterTools:
         results = run_google_only_search(["q1", "q2"], results_per_query=5)
         assert len(results) == 2
         assert all(r["source"] == "google" for r in results)
+        mock_tools.search_google.assert_not_called()
 
+    @patch("core.client_hunter_tools.lead_tools")
+    @patch("core.client_hunter_tools.openserp_client")
     @patch("core.client_hunter_tools.Config")
-    def test_google_missing_keys(self, mock_cfg):
+    def test_falls_back_to_google_api_when_openserp_empty(self, mock_cfg, mock_openserp, mock_tools):
+        """Резервный сценарий (чек-лист устойчивости): OpenSERP пуст → пробуем Google API."""
+        mock_cfg.GOOGLE_API_KEY = "key"
+        mock_cfg.GOOGLE_CX = "cx"
+        mock_cfg.OPENSERP_ENGINE = "google"
+        mock_cfg.OPENSERP_BASE_URL = "http://localhost:7000"
+        mock_openserp.search.return_value = []
+        mock_tools.search_google.return_value = [
+            {"title": "C", "link": "https://c.example", "snippet": "s3"},
+        ]
+        results = run_google_only_search(["q1"], results_per_query=5)
+        assert len(results) == 1
+        assert results[0]["source"] == "google"
+        mock_tools.search_google.assert_called_once()
+
+    @patch("core.client_hunter_tools.lead_tools")
+    @patch("core.client_hunter_tools.openserp_client")
+    def test_openserp_exception_falls_back_to_google(self, mock_openserp, mock_tools):
+        """Исключение из OpenSERP не должно ронять весь поиск — переходим к резерву."""
+        mock_openserp.search.side_effect = RuntimeError("connection refused")
+        mock_tools.search_google.return_value = [
+            {"title": "D", "link": "https://d.example", "snippet": "s4"},
+        ]
+        with patch("core.client_hunter_tools.Config") as mock_cfg:
+            mock_cfg.GOOGLE_API_KEY = "key"
+            mock_cfg.GOOGLE_CX = "cx"
+            results = run_google_only_search(["q1"], results_per_query=5)
+        assert len(results) == 1
+        assert results[0]["source"] == "google"
+
+    @patch("core.client_hunter_tools.lead_tools")
+    @patch("core.client_hunter_tools.openserp_client")
+    @patch("core.client_hunter_tools.Config")
+    def test_both_sources_empty_returns_empty_list(self, mock_cfg, mock_openserp, mock_tools):
+        """Ни OpenSERP, ни Google API не настроены/не ответили → честный пустой список."""
         mock_cfg.GOOGLE_API_KEY = ""
         mock_cfg.GOOGLE_CX = ""
+        mock_cfg.OPENSERP_ENGINE = "google"
+        mock_cfg.OPENSERP_BASE_URL = "http://localhost:7000"
+        mock_openserp.search.return_value = []
         assert run_google_only_search(["q"]) == []
+        mock_tools.search_google.assert_not_called()
 
 
 class TestClientHunterSchema:

@@ -280,7 +280,8 @@ class TaskExecutor:
         )
         if not results:
             input_data["google_search_warning"] = (
-                "Google не вернул результатов или GOOGLE_API_KEY/GOOGLE_CX не настроены. "
+                "Google-поиск не вернул результатов: OpenSERP недоступен/пуст, "
+                "а резервный Google Custom Search API не настроен или тоже пуст. "
                 "Не выдумывай клиентов — верни clients=[] и опиши причину в notes."
             )
         return input_data

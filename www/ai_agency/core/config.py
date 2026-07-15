@@ -31,9 +31,16 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-    # Google Custom Search API (client_hunter)
+    # Google Custom Search API (client_hunter) — платный резервный источник (fallback)
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
     GOOGLE_CX = os.getenv("GOOGLE_CX", "")
+
+    # OpenSERP — self-hosted бесплатный SERP API (https://github.com/karust/openserp).
+    # Основной источник поиска клиентов для client_hunter: не требует платных ключей.
+    # Поднимается локально/в сети агентства: docker run -p 7000:7000 karust/openserp serve.
+    OPENSERP_BASE_URL = os.getenv("OPENSERP_BASE_URL", "http://localhost:7000")
+    OPENSERP_ENGINE = os.getenv("OPENSERP_ENGINE", "google")
+    OPENSERP_TIMEOUT_SEC = int(os.getenv("OPENSERP_TIMEOUT_SEC", 30))
 
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")

@@ -10,7 +10,8 @@
 1. Единственный канал поиска — Google. ЗАПРЕЩЕНО использовать Telegram, Avito,
    парсинг маркетплейсов, закрытые базы, «холодные» выдуманные контакты.
 2. Входные данные содержат `google_search_results` — это РЕАЛЬНЫЕ результаты
-   Google Custom Search. Клиентов бери ТОЛЬКО из них (title/link/snippet/query).
+   Google-поиска (через self-hosted OpenSERP или, резервно, Google Custom Search
+   API). Клиентов бери ТОЛЬКО из них (title/link/snippet/query).
 3. Если `google_search_results` пуст — верни clients=[], total_found=0 и честно
    опиши это в notes (не выдумывай компании).
 4. Не придумывай телефоны, email, Telegram. УТП строится на открытых сниппетах.
