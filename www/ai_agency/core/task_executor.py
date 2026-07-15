@@ -60,7 +60,10 @@ class TaskExecutor:
         agent_name = task.get("agent_name")
         task_description = task.get("task_description")
         iteration_count = task.get("iteration_count", 0) or 0
-        max_iter = task.get("max_iterations") or self.orch.MAX_TASK_ITERATIONS
+        default_max_iter = (
+            Config.DEVELOPER_MAX_ITERATIONS if agent_name == "developer" else self.orch.MAX_TASK_ITERATIONS
+        )
+        max_iter = task.get("max_iterations") or default_max_iter
         qa_feedback = task.get("qa_feedback", "")
 
         # Обогащаем input_data данными из зависимых задач

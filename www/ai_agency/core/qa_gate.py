@@ -33,7 +33,10 @@ _AGENT_QA_CHECKLISTS: dict = {
 - Каждая IF-нода должна иметь явное condition (не пустое)
 - Если после HTTP-вызова нужен id исходной записи (NocoDB rowId и т.п.) — ОБЯЗАТЕЛЬНА Set-нода ДО HTTP для сохранения этого id
 - field_mapping[] должен описывать, какие поля откуда берутся (source → target)
-- Указаны error_handling и идемпотентность для HTTP-вызовов
+- ЧЕК-ЛИСТ УСТОЙЧИВОСТИ в error_handling[] (все 5 пунктов):
+  (1) тип ошибки transient vs permanent; (2) идемпотентность/что можно повторять;
+  (3) backoff + jitter; (4) maxTries / нет бесконечного цикла; (5) резерв: лог + алерт + сохранение данных
+- Rate limits API указаны в systems[].limitations заранее (не только «после 429»)
 """,
     "developer": """
 СПЕЦИФИКА ПРОВЕРКИ n8n WORKFLOW:
@@ -44,6 +47,10 @@ _AGENT_QA_CHECKLISTS: dict = {
 - nocoDb update: использует fieldsUi.fieldValues, НЕ data:{}
 - credentials ключи: nocoDbApiToken, telegramApi (не "NocoDB", не "Telegram")
 - После HTTP Request $json содержит ответ HTTP — upstream id должен быть сохранён в Set-ноде ДО HTTP
+- ЧЕК-ЛИСТ УСТОЙЧИВОСТИ (иначе issue high/critical):
+  (1) retry только для временных ошибок; (2) защита от дублей на create/send;
+  (3) пауза/backoff между попытками; (4) конечный maxTries, нет tight-loop;
+  (5) Error-ветка: лог + уведомление + сохранение данных
 """,
     "analyst": """
 СПЕЦИФИКА ПРОВЕРКИ АНАЛИЗА:

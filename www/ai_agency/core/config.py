@@ -21,6 +21,8 @@ class Config:
     # Limits
     TOKEN_BUDGET = int(os.getenv("TOKEN_BUDGET", 30000))
     MAX_TASK_ITERATIONS = int(os.getenv("MAX_TASK_ITERATIONS", 3))
+    # Developer чаще требует доработки (сложные n8n workflow) — больший лимит по умолчанию.
+    DEVELOPER_MAX_ITERATIONS = int(os.getenv("DEVELOPER_MAX_ITERATIONS", 6))
 
     # n8n version (читается из .env, используется в developer-промпте)
     N8N_VERSION = os.getenv("N8N_VERSION", "1.x")

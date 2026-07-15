@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96">
+  <title>AI Agency OS  ;>3>B8?</title>
+  <defs>
+    <linearGradient id="a-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f3b52"/>
+      <stop offset="1" stop-color="#18b2c4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- !8<2>;: 1C:20 "A" A A5B52K< C7;>< 2=CB@8 -->
+  <g transform="translate(4,4)">
+    <path d="M44 0 L88 88 L68 88 L44 38 L20 88 L0 88 Z" fill="url(#a-grad)"/>
+    <g fill="#ffffff" stroke="#0f3b52" stroke-width="1.6">
+      <circle cx="44" cy="38" r="5"/>
+      <circle cx="30" cy="64" r="5"/>
+      <circle cx="58" cy="64" r="5"/>
+    </g>
+    <g stroke="#ffffff" stroke-width="2.2" fill="none">
+      <line x1="44" y1="38" x2="30" y2="64"/>
+      <line x1="44" y1="38" x2="58" y2="64"/>
+      <line x1="30" y1="64" x2="58" y2="64"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="112" y="56" font-family="IBM Plex Sans, system-ui, sans-serif" font-weight="600"
+        font-size="34" fill="#0f3b52" letter-spacing="-0.5">AI Agency</text>
+  <text x="112" y="80" font-family="IBM Plex Sans, system-ui, sans-serif" font-weight="400"
+        font-size="15" fill="#6f6a60">@:5AB@0F8O -035=B>2</text>
+</svg>

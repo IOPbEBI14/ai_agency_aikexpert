@@ -19,6 +19,7 @@ import requests
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from core import api_payloads as payloads
@@ -108,6 +109,9 @@ app.add_middleware(
 )
 app.add_middleware(RequestLoggingMiddleware)
 
+# Статика: логотип/favicon (см. ANALYSIS.md → Branding)
+app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
+
 
 def _safe_filename(name: str) -> str:
     name = (name or "workflow").strip().replace(" ", "_")
@@ -153,6 +157,26 @@ def _agency_task_running() -> bool:
     return agency_task is not None and not agency_task.done()
 
 
+def _find_resumable_project() -> Optional[Dict[str, Any]]:
+    """Ищет проект в БД, который можно продолжить, если он не загружен в память.
+
+    Актуально после перезапуска процесса (или когда current_project был
+    перезаписан созданием другого проекта): в БД может быть проект со статусом
+    stopped/needs_human_review/in_progress, о котором /api/agency/status
+    иначе не узнал бы, и кнопка «Продолжить» оставалась бы неактивной, хотя
+    проект реально можно возобновить. Порядок совпадает с Orchestrator.initialize().
+    """
+    for status in ("in_progress", "stopped", "needs_human_review"):
+        try:
+            project = projects_db.find_project_by_status(status)
+        except Exception as e:
+            logger.warning(f"⚠️ _find_resumable_project({status}): {e}")
+            continue
+        if isinstance(project, dict) and project.get("Id"):
+            return project
+    return None
+
+
 def _start_orchestrator_background() -> None:
     """Запускает синхронный orchestrator.run() в thread pool через asyncio.Task."""
     global agency_task
@@ -179,6 +203,16 @@ async def get_status():
         view = await asyncio.to_thread(payloads._project_view_payload, current_project)
         view["running"] = orchestrator.agency_running
         return view
+
+    # current_project не загружен в память (например, после restart процесса),
+    # но в БД может быть проект, который реально можно продолжить. Отдаём его
+    # статус, чтобы кнопка «Продолжить» не выглядела неактивной без причины.
+    resumable = await asyncio.to_thread(_find_resumable_project)
+    if resumable:
+        view = await asyncio.to_thread(payloads._project_view_payload, resumable)
+        view["running"] = False
+        return view
+
     return _idle_status_payload()
 
 

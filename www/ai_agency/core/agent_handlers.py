@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Dict
 
 from pydantic import BaseModel
 
+from .config import Config
 from .schemas import (
     AnalystResponse,
     ClientHunterResponse,
@@ -203,7 +204,7 @@ class AgentHandlers:
                     "status": "pending",
                     "depends_on": json.dumps(sd.get("depends_on", []), ensure_ascii=False),
                     "iteration_count": 0,
-                    "max_iterations": 3,
+                    "max_iterations": Config.DEVELOPER_MAX_ITERATIONS,
                     "qa_approved": "pending",
                     "created_at": datetime.now().isoformat(),
                 })

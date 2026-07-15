@@ -60,6 +60,25 @@ class TestPromptIdentities:
         content = _read_prompt("developer")
         assert "developer" in content.lower() or "разработчик" in content.lower()
 
+    def test_resilience_checklist_in_workflow_agents(self):
+        """Чек-лист устойчивого процесса закреплён в architect/developer/qa."""
+        for name in ("architect", "developer", "qa"):
+            content = _read_prompt(name)
+            low = content.lower()
+            assert "ЧЕК-ЛИСТ УСТОЙЧИВОГО" in content, f"{name}: нет чек-листа устойчивости"
+            assert "временн" in low, f"{name}: нет классификации временных ошибок"
+            assert "backoff" in low or "jitter" in low, f"{name}: нет backoff/jitter"
+            assert "maxtries" in low or "попыт" in low, f"{name}: нет лимита попыток"
+            assert "резерв" in low or "алерт" in low or "уведомл" in low, (
+                f"{name}: нет резервного сценария"
+            )
+            assert (
+                "идемпотент" in low
+                or "idempotency" in low
+                or "external_id" in low
+                or "дубл" in low
+            ), f"{name}: нет защиты от дублей"
+
 
 # ══════════════════════════════════════════════════════════════════
 # Prompt ↔ Schema alignment
@@ -409,3 +428,100 @@ class TestAgentDispatch:
         source = inspect.getsource(TaskExecutor.execute)
         # Ветка `if agent_name != "qa":` перед run_qa_gate
         assert 'agent_name != "qa"' in source
+
+
+# ══════════════════════════════════════════════════════════════════
+# Developer: повышенный лимит итераций по умолчанию (замечание по эксплуатации)
+# ══════════════════════════════════════════════════════════════════
+
+class TestDeveloperMaxIterationsDefault:
+    """dev_* подзадачи должны создаваться с Config.DEVELOPER_MAX_ITERATIONS (=6),
+    остальные агенты — с обычным лимитом (=3)."""
+
+    def test_config_developer_max_iterations_is_six(self):
+        from core.config import Config
+        assert Config.DEVELOPER_MAX_ITERATIONS == 6
+        assert Config.MAX_TASK_ITERATIONS == 3
+
+    def test_handle_architect_creates_dev_subtasks_with_elevated_limit(self):
+        """handle_architect → декомпозиция создаёт dev_* задачи с повышенным лимитом."""
+        from core.agent_handlers import AgentHandlers
+        from core.config import Config
+        from core.schemas import PMDecomposition
+
+        mock_orch = MagicMock()
+        mock_orch.current_project = {"Id": 1, "tokens_used": 0, "goal": "Автоматизировать заявки"}
+        mock_orch.tasks_db = MagicMock()
+        mock_orch.tasks_db.get_tasks_by_project.return_value = []
+        mock_orch.projects_db = MagicMock()
+
+        mock_qa_gate = MagicMock()
+        mock_qa_gate.run.return_value = True
+
+        handlers = AgentHandlers(orchestrator=mock_orch, qa_gate=mock_qa_gate)
+
+        decomposition = PMDecomposition(
+            subtasks=[
+                {"subtask_id": "dev_001", "description": "Создать webhook", "depends_on": [], "context": ""},
+                {"subtask_id": "dev_002", "description": "Настроить NocoDB update", "depends_on": ["dev_001"], "context": ""},
+            ],
+            pm_comment="Разбил архитектуру на 2 подзадачи",
+        )
+
+        with patch("core.agent_handlers.call_and_parse_llm", return_value=(decomposition, 100)):
+            handlers.handle_architect(
+                task={"Id": 1, "task_id": "task_002", "task_description": ""},
+                task_db_id=1,
+                task_name="task_002",
+                agent_response={"summary": "Архитектура"},
+                pm_prompt="",
+            )
+
+        created_calls = mock_orch.tasks_db.create_task.call_args_list
+        dev_calls = [c for c in created_calls if c[0][0].get("agent_name") == "developer"]
+        assert len(dev_calls) == 2
+        for call in dev_calls:
+            created = call[0][0]
+            assert created["max_iterations"] == Config.DEVELOPER_MAX_ITERATIONS
+            assert created["max_iterations"] == 6
+
+    def test_task_executor_fallback_uses_developer_limit(self):
+        """Если у developer-задачи нет max_iterations в БД — fallback = 6, не 3.
+
+        Проверяем через искусственную ошибку в _call_with_validation: при
+        iteration_count=3 (старый лимит) итоговый статус должен быть "pending"
+        (есть ещё попытки при лимите 6), а не "failed" (как было бы со старым
+        фолбэком в 3 попытки — 3 >= 3 сразу считалось провалом).
+        """
+        from core.config import Config
+        from core.task_executor import TaskExecutor
+
+        mock_orch = MagicMock()
+        mock_orch.current_project = {"Id": 1, "tokens_used": 0}
+        mock_orch.MAX_TASK_ITERATIONS = Config.MAX_TASK_ITERATIONS
+        mock_orch.tasks_db = MagicMock()
+        mock_orch._build_enriched_input_data.return_value = {}
+
+        executor = TaskExecutor(mock_orch)
+        task = {
+            "Id": 1,
+            "task_id": "dev_001",
+            "agent_name": "developer",
+            "task_description": "desc",
+            "iteration_count": Config.MAX_TASK_ITERATIONS,  # = 3, старый лимит
+            "max_iterations": None,
+        }
+
+        with patch.object(TaskExecutor, "_call_with_validation", side_effect=RuntimeError("boom")):
+            result = executor.execute(task, pm_prompt="", all_tasks=[task])
+
+        assert result is False
+        status_calls = [
+            c for c in mock_orch.tasks_db.update_task.call_args_list if "status" in c[0][1]
+        ]
+        assert status_calls, "update_task со статусом не вызывался"
+        final_status = status_calls[-1][0][1]["status"]
+        assert final_status == "pending", (
+            f"Ожидали 'pending' (лимит=6 не достигнут при iteration_count=3), "
+            f"получили '{final_status}' — похоже, использован старый фолбэк=3"
+        )

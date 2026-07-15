@@ -96,9 +96,23 @@ ai_agency/
 │   ├── qa_prompt.txt            # QA Agent
 │   └── tech_writer_prompt.txt   # Tech Writer
 ├── index.html                   # Дашборд (монохромный дизайн)
+├── static/brand/                # Логотип, favicon, фирменные цвета (см. ниже)
 ├── .env                         # Конфигурация (не коммитить!)
 └── README.md                    # Этот файл
 ```
+
+### 🎨 Брендинг
+
+Логотип и favicon — символ «A» с сетевым узлом внутри (метафора агентов, соединяющих
+системы клиента). Файлы лежат в `static/brand/` и раздаются через
+`app.mount("/static", ...)` в `main.py`. Подробности и палитра — в `ANALYSIS.md`
+(раздел «Branding — логотип, favicon, фирменные цвета»).
+
+| Токен | HEX | |
+|---|---|---|
+| `--brand-deep` | `#0f3b52` | ██ тёмно-синий |
+| `--brand-teal` | `#0f5c4c` | ██ акцент (= `--accent` дашборда) |
+| `--brand-cyan` | `#18b2c4` | ██ вторичный акцент |
 
 ### Таблицы NocoDB
 
@@ -195,6 +209,7 @@ TOKEN_BUDGET=500000
 GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CX=your_custom_search_engine_id
 MAX_TASK_ITERATIONS=3
+DEVELOPER_MAX_ITERATIONS=6
 DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)
 DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и создание задач в Bpium для ОКК.

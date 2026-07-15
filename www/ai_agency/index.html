@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Agency OS</title>
+    <!-- Favicon: символ AI Agency (буква «A» + сетевой узел) -->
+    <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/static/brand/favicon-32.png" sizes="32x32" type="image/png">
+    <link rel="icon" href="/static/brand/favicon-16.png" sizes="16x16" type="image/png">
+    <link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -728,7 +734,8 @@
 <body>
     <div class="container">
         <header>
-            <div>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <img id="site-logo" src="/static/brand/logo.svg" alt="AI Agency" style="height:44px;display:block;">
                 <div class="brand">
                     AI Agency OS
                     <span>Оркестрация агентов · n8n · NocoDB · real-time мониторинг</span>
@@ -989,7 +996,10 @@ function renderHistoryChrome() {
         pollHint.textContent = 'режим истории (live-poll на паузе)';
     } else {
         banner.classList.remove('visible');
-        pollHint.textContent = 'обновление каждые 10 с';
+        const sec = (currentPollIntervalMs() / 1000).toFixed(0);
+        pollHint.textContent = liveRunning
+            ? `live-обновление каждые ${sec} с`
+            : `обновление каждые ${sec} с`;
     }
 }
 
@@ -1536,9 +1546,26 @@ async function increaseTokens() {
     refreshData();
 }
 
-refreshData();
+/**
+ * Адаптивный polling: пока агентство работает — опрашиваем чаще (ближе к
+ * real-time), чтобы прогресс задач и токены обновлялись почти сразу.
+ * В простое — реже, чтобы не грузить сервер зря.
+ */
+const POLL_MS_RUNNING = 2500;
+const POLL_MS_IDLE = 10000;
+let pollTimer = null;
+
+function currentPollIntervalMs() {
+    return liveRunning ? POLL_MS_RUNNING : POLL_MS_IDLE;
+}
+
+async function pollLoop() {
+    await refreshData();
+    pollTimer = setTimeout(pollLoop, currentPollIntervalMs());
+}
+
 loadSavedWorkflows();
-setInterval(refreshData, 10000);
+pollLoop();
     </script>
 </body>
 </html>

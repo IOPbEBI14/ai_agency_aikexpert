@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>AI Agency OS  7=0G>:</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f3b52"/>
+      <stop offset="1" stop-color="#0f5c4c"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="url(#bg)"/>
+  <!-- C:20 "A" -->
+  <path d="M32 12 L47 50 L39 50 L32 30 L25 50 L17 50 Z" fill="#f7fffb"/>
+  <!-- #7;K A5B8 2=CB@8 -->
+  <g fill="#18b2c4" stroke="#f7fffb" stroke-width="1.4">
+    <circle cx="32" cy="30" r="3.4"/>
+    <circle cx="25" cy="42" r="3.4"/>
+    <circle cx="39" cy="42" r="3.4"/>
+  </g>
+  <g stroke="#18b2c4" stroke-width="1.6" fill="none">
+    <line x1="32" y1="30" x2="25" y2="42"/>
+    <line x1="32" y1="30" x2="39" y2="42"/>
+    <line x1="25" y1="42" x2="39" y2="42"/>
+  </g>
+</svg>
