@@ -32,7 +32,14 @@ class OpenSerpClient:
 
     def __init__(self, base_url: Optional[str] = None, timeout: Optional[int] = None) -> None:
         self.base_url = (base_url or Config.OPENSERP_BASE_URL or "").rstrip("/")
-        self.timeout = timeout or Config.OPENSERP_TIMEOUT_SEC
+        # None → читать Config.OPENSERP_TIMEOUT_SEC на каждый запрос (дефолт 300 с / 5 мин)
+        self._timeout_override = timeout
+
+    @property
+    def timeout(self) -> int:
+        if self._timeout_override is not None:
+            return int(self._timeout_override)
+        return int(Config.OPENSERP_TIMEOUT_SEC)
 
     def is_configured(self) -> bool:
         return bool(self.base_url)
@@ -55,9 +62,10 @@ class OpenSerpClient:
         engine = engine or Config.OPENSERP_ENGINE
         url = f"{self.base_url}/{engine}/search"
         params = {"text": query, "limit": max(1, min(limit, 100))}
+        timeout_sec = self.timeout
 
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = requests.get(url, params=params, timeout=timeout_sec)
         except requests.exceptions.RequestException as e:
             logger.warning(f"⚠️ OpenSERP недоступен ({self.base_url}): {e}")
             return []

@@ -99,3 +99,17 @@ class TestOpenSerpClientSearch:
         from core.openserp_client import openserp_client
 
         assert openserp_client.base_url == Config.OPENSERP_BASE_URL.rstrip("/")
+
+    def test_default_timeout_is_five_minutes(self):
+        from core.config import Config
+
+        assert Config.OPENSERP_TIMEOUT_SEC == 300
+        client = OpenSerpClient(base_url="http://localhost:7000")
+        assert client.timeout == 300
+
+    @patch("core.openserp_client.requests.get")
+    def test_search_uses_configured_timeout(self, mock_get):
+        mock_get.return_value = _response(200, {"results": []})
+        client = OpenSerpClient(base_url="http://localhost:7000", timeout=300)
+        client.search("query")
+        assert mock_get.call_args.kwargs["timeout"] == 300

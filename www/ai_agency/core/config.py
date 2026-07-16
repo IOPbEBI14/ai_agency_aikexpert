@@ -49,7 +49,8 @@ class Config:
     # Поднимается локально/в сети агентства: docker run -p 7000:7000 karust/openserp serve.
     OPENSERP_BASE_URL = os.getenv("OPENSERP_BASE_URL", "http://localhost:7000")
     OPENSERP_ENGINE = os.getenv("OPENSERP_ENGINE", "google")
-    OPENSERP_TIMEOUT_SEC = int(os.getenv("OPENSERP_TIMEOUT_SEC", 30))
+    # OpenSERP (browser-based SERP) часто отвечает дольше обычного HTTP API — 5 мин по умолчанию.
+    OPENSERP_TIMEOUT_SEC = int(os.getenv("OPENSERP_TIMEOUT_SEC", 300))
 
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")

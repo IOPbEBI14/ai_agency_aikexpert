@@ -209,6 +209,7 @@ TOKEN_BUDGET=500000
 # https://github.com/karust/openserp — см. раздел "🔎 OpenSERP" ниже
 OPENSERP_BASE_URL=http://localhost:7000
 OPENSERP_ENGINE=google
+OPENSERP_TIMEOUT_SEC=300
 
 # Google Custom Search (агент client_hunter — резервный источник, если OpenSERP недоступен)
 GOOGLE_API_KEY=your_google_api_key

@@ -770,7 +770,7 @@ Content-Type: application/json
 | Слой | Что сделано |
 |------|-------------|
 | Клиент | `core/openserp_client.py` → `OpenSerpClient.search()` — HTTP GET `{base_url}/{engine}/search`, парсит `results[]`, фильтрует не-organic (реклама/related) |
-| Конфиг | `Config.OPENSERP_BASE_URL` (по умолчанию `http://localhost:7000`), `Config.OPENSERP_ENGINE` (по умолчанию `google`), `Config.OPENSERP_TIMEOUT_SEC` |
+| Конфиг | `OPENSERP_BASE_URL` (`http://localhost:7000`), `OPENSERP_ENGINE` (`google`), `OPENSERP_TIMEOUT_SEC` (**300 с / 5 мин** — browser SERP медленный) |
 | Резерв | `core/client_hunter_tools.py` → `run_google_only_search()`: OpenSERP пуст/недоступен для запроса → пробуем Google Custom Search API (если настроен); оба пусты → честный `[]` |
 | Промпт | `client_hunter_prompt.txt`: `google_search_results` теперь описан как «через OpenSERP или резервно Google Custom Search API» |
 | Устойчивость | Любая ошибка сети/HTTP/JSON от OpenSERP — временная, ловится внутри `OpenSerpClient.search()`, никогда не бросает исключение наружу |
