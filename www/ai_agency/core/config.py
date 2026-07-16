@@ -27,6 +27,15 @@ class Config:
     # n8n version (читается из .env, используется в developer-промпте)
     N8N_VERSION = os.getenv("N8N_VERSION", "1.x")
 
+    # n8n-validator: официальный движок (n8n-workflow + n8n-nodes-base)
+    # auto — пробуем binary/npx; on — обязателен (fail если недоступен); off — только heuristic+local
+    N8N_VALIDATOR_OFFICIAL = os.getenv("N8N_VALIDATOR_OFFICIAL", "auto").strip().lower()
+    N8N_VALIDATOR_OFFICIAL_TIMEOUT = int(os.getenv("N8N_VALIDATOR_OFFICIAL_TIMEOUT", "120"))
+    # Опционально: instance-level n8n MCP (Builder validate_workflow — для SDK/TS кода).
+    # Для JSON от developer основной путь — n8n-workflow-validator (см. n8n_validator.py).
+    N8N_MCP_URL = os.getenv("N8N_MCP_URL", "").rstrip("/")
+    N8N_MCP_ACCESS_TOKEN = os.getenv("N8N_MCP_ACCESS_TOKEN", "")
+
     # Telegram alerts (для уведомлений об ошибках оркестратора)
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")

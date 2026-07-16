@@ -1,21 +1,26 @@
 """
-Двухуровневый валидатор n8n workflow.
+Трёхуровневый валидатор n8n workflow.
 
-Уровень 1 — Runtime (n8n-workflow-validator):
-  Вызывает официальный npm-пакет «n8n-workflow-validator» через npx.
-  Использует реальный движок n8n (NodeHelpers.getNodeParameters /
-  getNodeParametersIssues) — ловит всё то же, что ловит n8n-редактор при импорте.
-  Требует Node.js на хосте; при первом запуске npx скачивает пакет автоматически.
+Уровень A — Heuristic (Python, всегда):
+  Структурные проверки без внешних зависимостей (LLM-галлюцинации импорта).
 
-Уровень 2 — Heuristic (Python-only fallback):
-  Структурные проверки без внешних зависимостей: ловит самые частые
-  LLM-галлюцинации (interval не массив, conditions.string вместо conditions.conditions,
-  values вместо assignments, пустой options в if/switch и т.д.).
-  Активируется, если Node.js недоступен или npx завершился с ошибкой.
+Уровень B — Local JS (``validate-n8n.js``, без npm):
+  Быстрый structural-gate, синхронизирован с heuristic.
+
+Уровень C — Official engine (``n8n-workflow-validator``):
+  Реальный движок n8n (`n8n-workflow` + `n8n-nodes-base`) — то же, что редактор
+  при импорте. Ищется в node_modules / global / ``npx --yes``.
+  Конфиг: ``N8N_VALIDATOR_OFFICIAL=auto|on|off``.
+
+Опционально (будущее / instance): ``N8N_MCP_URL`` + ``N8N_MCP_ACCESS_TOKEN`` —
+  официальный n8n Builder MCP (`validate_workflow` для SDK/TS кода). Для JSON
+  от developer основным внешним шагом максимальной точности остаётся Layer C.
+
+Правило: любой ERROR от A/B/C → ``is_valid=False`` (developer получает qa_feedback).
 
 Публичный API:
   validate_n8n_workflow(workflow)  → (is_valid: bool, issues: list[str])
-  build_n8n_feedback(issues)       → str  (текст для qa_feedback агенту)
+  build_n8n_feedback(issues)       → str
 """
 
 from __future__ import annotations
@@ -26,113 +31,211 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("N8NValidator")
 
 # ─── Константы ────────────────────────────────────────────────────────────────
 
-# Таймаут одного запуска валидатора (секунды).
-# Локальный бинарник запускается ~1-2с; npx как fallback — до 30с.
-_RUNTIME_TIMEOUT = 30
-
-# Переменная окружения для принудительного отключения runtime-валидации
-# (удобно в тестах: N8N_VALIDATOR_RUNTIME=off)
-_ENV_DISABLE_RUNTIME = "N8N_VALIDATOR_RUNTIME"
-
-# Директория с package.json/node_modules проекта
+_LOCAL_TIMEOUT = 30
+_ENV_DISABLE_LOCAL = "N8N_VALIDATOR_RUNTIME"  # off → не вызывать validate-n8n.js
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Кэш: путь к исполняемому файлу валидатора (str) или None если недоступен
-_runtime_bin: Optional[str] = None
-_runtime_checked: bool = False
+# Кэш discovery (сбрасывается в тестах через monkeypatch)
+_local_bin: Optional[str] = None
+_local_checked: bool = False
+_official_cmd: Optional[List[str]] = None
+_official_checked: bool = False
+
+_TRIGGER_TYPES = frozenset({
+    "scheduleTrigger", "webhook", "emailTrigger", "manualTrigger",
+    "mqttTrigger", "amqpTrigger", "kafkaTrigger", "n8nTrigger", "errorTrigger",
+})
+
+_SCHEDULE_INTERVAL_HINT = (
+    'Поле "rule.interval" у scheduleTrigger должно быть МАССИВОМ объектов, '
+    'например: "rule": {"interval": [{"field": "minutes", "minutesInterval": 10}]}. '
+    'Число или объект вместо массива вызывает ошибку импорта "is not iterable".'
+)
+
+_KNOWN_CRED_KEYS: Dict[str, List[str]] = {
+    "nocoDb":       ["nocoDbApiToken", "nocoDbApi"],
+    "telegram":     ["telegramApi"],
+    "httpRequest":  ["httpBasicAuth", "httpHeaderAuth", "httpDigestAuth",
+                     "oAuth1Api", "oAuth2Api", "httpCustomAuth"],
+    "gmail":        ["gmailOAuth2"],
+    "slack":        ["slackOAuth2Api", "slackApi"],
+}
+
+
+def _official_mode() -> str:
+    # os.environ первым — тесты/override без перезагрузки Config
+    mode = os.getenv("N8N_VALIDATOR_OFFICIAL", "").strip().lower()
+    if not mode:
+        try:
+            from core.config import Config
+            mode = (Config.N8N_VALIDATOR_OFFICIAL or "auto").strip().lower()
+        except Exception:
+            mode = "auto"
+    return mode if mode in ("auto", "on", "off") else "auto"
+
+
+def _official_timeout() -> int:
+    raw = os.getenv("N8N_VALIDATOR_OFFICIAL_TIMEOUT", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    try:
+        from core.config import Config
+        return int(Config.N8N_VALIDATOR_OFFICIAL_TIMEOUT)
+    except Exception:
+        return 120
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LAYER 1: Runtime-валидация через n8n-workflow-validator
+# LAYER B: Local validate-n8n.js
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _find_runtime_binary() -> Optional[str]:
-    """Ищет исполняемый файл валидатора (кэшируется на процесс).
+def _find_local_binary() -> Optional[str]:
+    """Локальный validate-n8n.js (без npm-зависимостей)."""
+    global _local_bin, _local_checked
+    if _local_checked:
+        return _local_bin
+    _local_checked = True
 
-    Порядок поиска:
-      1. ./validate-n8n.js           (локальный Node.js скрипт, без зависимостей)
-      2. ./node_modules/.bin/n8n-workflow-validator  (npm пакет)
-      3. n8n-workflow-validator                      (глобальная установка)
-
-    validate-n8n.js — это drop-in замена без внешних зависимостей.
-    Для upgrade на official пакет: npm install -g n8n-workflow-validator
-    """
-    global _runtime_bin, _runtime_checked
-    if _runtime_checked:
-        return _runtime_bin
-
-    _runtime_checked = True
-
-    if os.getenv(_ENV_DISABLE_RUNTIME, "").lower() in ("off", "0", "false"):
-        logger.info("ℹ️  Runtime-валидация n8n отключена (N8N_VALIDATOR_RUNTIME=off)")
+    if os.getenv(_ENV_DISABLE_LOCAL, "").lower() in ("off", "0", "false"):
+        logger.info("ℹ️  Local JS-валидация отключена (N8N_VALIDATOR_RUNTIME=off)")
         return None
 
-    # 1. Локальный Node.js скрипт (приоритет: без зависимостей)
     local_script = os.path.join(_PROJECT_DIR, "validate-n8n.js")
     if os.path.isfile(local_script):
-        _runtime_bin = local_script
-        logger.info(f"✅ n8n-валидатор найден локально: validate-n8n.js")
-        return _runtime_bin
-
-    # 2. npm пакет (локальная установка)
-    bin_name = "n8n-workflow-validator.cmd" if sys.platform == "win32" else "n8n-workflow-validator"
-    local_bin = os.path.join(_PROJECT_DIR, "node_modules", ".bin", bin_name)
-    if os.path.isfile(local_bin):
-        _runtime_bin = local_bin
-        logger.info(f"✅ n8n-workflow-validator найден локально: {local_bin}")
-        return _runtime_bin
-
-    # 3. Глобальная установка
-    try:
-        result = subprocess.run(
-            ["n8n-workflow-validator", "--version"],
-            capture_output=True, text=True, timeout=5,
-            shell=(sys.platform == "win32"),
-        )
-        if result.returncode == 0:
-            _runtime_bin = "n8n-workflow-validator"
-            logger.info("✅ n8n-workflow-validator найден глобально")
-            return _runtime_bin
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
-
-    logger.info(
-        "ℹ️  Валидатор не установлен — используется heuristic-валидатор. "
-        "Для upgrade на official пакет: npm install -g n8n-workflow-validator"
-    )
+        _local_bin = local_script
+        logger.info("✅ Local n8n-валидатор: validate-n8n.js")
+        return _local_bin
     return None
 
 
-def _parse_runtime_output(stdout: str, stderr: str) -> List[str]:
-    """Разбирает вывод n8n-workflow-validator и возвращает список замечаний."""
-    issues: List[str] = []
+# ═══════════════════════════════════════════════════════════════════════════════
+# LAYER C: Official n8n-workflow-validator (движок n8n)
+# ═══════════════════════════════════════════════════════════════════════════════
 
+def _find_official_cmd() -> Optional[List[str]]:
+    """Команда для официального валидатора (кэш на процесс).
+
+    Порядок:
+      1. ./node_modules/.bin/n8n-workflow-validator
+      2. global n8n-workflow-validator / n8n-validate
+      3. npx --yes n8n-workflow-validator  (при mode=auto|on)
+    """
+    global _official_cmd, _official_checked
+    if _official_checked:
+        return _official_cmd
+    _official_checked = True
+
+    mode = _official_mode()
+    if mode == "off":
+        logger.info("ℹ️  Official n8n-validator отключён (N8N_VALIDATOR_OFFICIAL=off)")
+        return None
+
+    bin_name = "n8n-workflow-validator.cmd" if sys.platform == "win32" else "n8n-workflow-validator"
+    local_bin = os.path.join(_PROJECT_DIR, "node_modules", ".bin", bin_name)
+    if os.path.isfile(local_bin):
+        _official_cmd = [local_bin]
+        logger.info(f"✅ Official n8n-validator (local): {local_bin}")
+        return _official_cmd
+
+    for name in ("n8n-workflow-validator", "n8n-validate"):
+        try:
+            result = subprocess.run(
+                [name, "--help"],
+                capture_output=True, text=True, timeout=8,
+                shell=(sys.platform == "win32"),
+            )
+            if result.returncode in (0, 1) and (
+                "workflow" in (result.stdout + result.stderr).lower()
+                or result.returncode == 0
+            ):
+                _official_cmd = [name]
+                logger.info(f"✅ Official n8n-validator (global): {name}")
+                return _official_cmd
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+
+    # npx — внешний шаг без постоянной установки (первый запуск дольше)
+    try:
+        result = subprocess.run(
+            ["npx", "--version"],
+            capture_output=True, text=True, timeout=8,
+            shell=(sys.platform == "win32"),
+        )
+        if result.returncode == 0:
+            _official_cmd = ["npx", "--yes", "n8n-workflow-validator"]
+            logger.info("✅ Official n8n-validator через npx --yes (первый запуск может занять время)")
+            return _official_cmd
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    if mode == "on":
+        logger.error(
+            "❌ N8N_VALIDATOR_OFFICIAL=on, но n8n-workflow-validator недоступен. "
+            "Установите: npm run install-validator  или  npm i -g n8n-workflow-validator"
+        )
+    else:
+        logger.info(
+            "ℹ️  Official n8n-validator недоступен — heuristic + local JS. "
+            "Установка: npm run install-validator"
+        )
+    return None
+
+
+def _parse_validator_output(stdout: str, stderr: str) -> List[str]:
+    """Разбирает вывод local/official валидатора → список замечаний."""
+    issues: List[str] = []
     text = stdout.strip()
-    # JSON-формат (флаг --json или новые версии пакета)
+
     if text.startswith(("[", "{")):
         try:
             data = json.loads(text)
-            items = data if isinstance(data, list) else data.get("errors", [data])
+            if isinstance(data, dict) and data.get("valid") is True and not (
+                data.get("issues") or data.get("errors")
+            ):
+                return []
+            items = data if isinstance(data, list) else (
+                data.get("issues") or data.get("errors") or ([data] if data.get("message") else [])
+            )
             for item in items:
+                if isinstance(item, str):
+                    issues.append(item)
+                    continue
                 if not isinstance(item, dict):
                     continue
-                sev = item.get("severity", "error").upper()
+                sev = str(item.get("severity", "error")).upper()
                 code = item.get("code", "")
                 msg = item.get("message") or item.get("what") or str(item)
-                node = item.get("node") or item.get("nodeName", "")
+                loc_obj = item.get("location") if isinstance(item.get("location"), dict) else {}
+                node = (
+                    item.get("node")
+                    or item.get("nodeName")
+                    or loc_obj.get("nodeName")
+                    or ""
+                )
+                # Schema hints от official engine — критичны для LLM-фикса
+                ctx = item.get("context") if isinstance(item.get("context"), dict) else {}
+                extra = ""
+                delta = ctx.get("schemaDelta") if isinstance(ctx.get("schemaDelta"), dict) else {}
+                if delta.get("missingKeys"):
+                    extra += f" missing={delta['missingKeys']}"
+                if delta.get("extraKeys"):
+                    extra += f" extra={delta['extraKeys']}"
+                if ctx.get("n8nError") and ctx["n8nError"] not in msg:
+                    extra += f" n8nError={ctx['n8nError']}"
                 loc = f" [{node}]" if node else ""
-                issues.append(f"[{sev}]{loc} {code}: {msg}")
+                prefix = f"[{sev}]{loc}"
+                body = f"{code}: {msg}" if code else msg
+                issues.append(f"{prefix} {body}{extra}".strip())
             return issues
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
 
-    # Текстовый вывод — ищем строки с маркерами ошибок
     for line in (stdout + "\n" + stderr).splitlines():
         stripped = line.strip()
         if not stripped:
@@ -141,26 +244,21 @@ def _parse_runtime_output(stdout: str, stderr: str) -> List[str]:
         if any(
             m in lower
             for m in ("error", "invalid", "missing", "is not iterable",
-                      "n8n_parameter", "deprecated", "unknown node")
+                      "n8n_parameter", "deprecated", "unknown node", "warning")
         ):
             issues.append(stripped)
     return issues
 
 
-def validate_n8n_workflow_runtime(
+def _run_cli_validator(
+    cmd: Sequence[str],
     workflow: Dict[str, Any],
+    *,
+    timeout: int,
+    label: str,
+    json_flag: bool = True,
 ) -> Tuple[Optional[bool], List[str]]:
-    """Запускает runtime-валидацию через n8n-workflow-validator.
-
-    Returns:
-        (True, [])        — workflow прошёл валидацию
-        (False, issues)   — найдены ошибки
-        (None, [])        — runtime недоступен (используй heuristic)
-    """
-    binary = _find_runtime_binary()
-    if binary is None:
-        return None, []
-
+    """Общий запуск CLI-валидатора по временному JSON-файлу."""
     tmp_path: Optional[str] = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -170,41 +268,42 @@ def validate_n8n_workflow_runtime(
             json.dump(workflow, tf, ensure_ascii=False)
             tmp_path = tf.name
 
-        # Если это .js скрипт, добавим `node` префикс
-        if binary.endswith('.js'):
-            cmd = ["node", binary, tmp_path]
+        full_cmd = list(cmd)
+        if json_flag and "--json" not in full_cmd:
+            # official: `tool --json file`; local js: `node script --json file`
+            if full_cmd[0] == "node" and len(full_cmd) >= 2:
+                full_cmd = [full_cmd[0], full_cmd[1], "--json", tmp_path]
+            else:
+                full_cmd = full_cmd + ["--json", tmp_path]
         else:
-            cmd = [binary, tmp_path]
+            full_cmd = full_cmd + [tmp_path]
 
-        logger.info(f"🔍 Runtime-валидация n8n: {' '.join(cmd)}")
+        logger.info(f"🔍 {label}: {' '.join(full_cmd)}")
         result = subprocess.run(
-            cmd,
+            full_cmd,
             capture_output=True, text=True,
-            timeout=_RUNTIME_TIMEOUT,
+            timeout=timeout,
             shell=(sys.platform == "win32"),
+            cwd=_PROJECT_DIR,
         )
-
-        issues = _parse_runtime_output(result.stdout, result.stderr)
+        issues = _parse_validator_output(result.stdout, result.stderr)
 
         if result.returncode == 0 and not issues:
-            logger.info("✅ Runtime-валидация n8n: workflow валиден")
+            logger.info(f"✅ {label}: workflow валиден")
             return True, []
-
         if result.returncode == 0 and issues:
-            logger.warning(f"⚠️  Runtime: предупреждения ({len(issues)}), импорт возможен")
-            return True, issues  # предупреждения не блокируют
+            logger.warning(f"⚠️  {label}: предупреждения ({len(issues)})")
+            return True, issues
 
-        logger.warning(f"❌ Runtime: {len(issues)} ошибок (exit {result.returncode})")
+        logger.warning(f"❌ {label}: {len(issues)} ошибок (exit {result.returncode})")
         return False, issues or [
-            f"n8n-workflow-validator завершился с кодом {result.returncode}. "
-            f"stderr: {result.stderr[:400]}"
+            f"{label} завершился с кодом {result.returncode}. stderr: {result.stderr[:400]}"
         ]
-
     except subprocess.TimeoutExpired:
-        logger.error(f"⏱️  n8n-workflow-validator: таймаут {_RUNTIME_TIMEOUT}с")
+        logger.error(f"⏱️  {label}: таймаут {timeout}с")
         return None, []
     except Exception as exc:
-        logger.error(f"❌ Ошибка runtime-валидации: {exc}", exc_info=True)
+        logger.error(f"❌ {label}: {exc}", exc_info=True)
         return None, []
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -214,19 +313,55 @@ def validate_n8n_workflow_runtime(
                 pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# LAYER 2: Heuristic-валидация (Python-only)
-# ═══════════════════════════════════════════════════════════════════════════════
+def validate_n8n_workflow_local(
+    workflow: Dict[str, Any],
+) -> Tuple[Optional[bool], List[str]]:
+    """Layer B: локальный validate-n8n.js."""
+    binary = _find_local_binary()
+    if binary is None:
+        return None, []
+    return _run_cli_validator(
+        ["node", binary], workflow, timeout=_LOCAL_TIMEOUT, label="Local JS",
+    )
 
-_SCHEDULE_INTERVAL_HINT = (
-    'Поле "rule.interval" у scheduleTrigger должно быть МАССИВОМ объектов, '
-    'например: "rule": {"interval": [{"field": "minutes", "minutesInterval": 10}]}. '
-    'Число или объект вместо массива вызывает ошибку импорта "is not iterable".'
-)
 
+def validate_n8n_workflow_official(
+    workflow: Dict[str, Any],
+) -> Tuple[Optional[bool], List[str]]:
+    """Layer C: официальный n8n-workflow-validator (движок n8n)."""
+    cmd = _find_official_cmd()
+    if cmd is None:
+        if _official_mode() == "on":
+            return False, [
+                "Official n8n-workflow-validator обязателен (N8N_VALIDATOR_OFFICIAL=on), "
+                "но недоступен. Установите: npm run install-validator"
+            ]
+        return None, []
+    return _run_cli_validator(
+        cmd, workflow, timeout=_official_timeout(), label="Official n8n-engine",
+    )
+
+
+def validate_n8n_workflow_runtime(
+    workflow: Dict[str, Any],
+) -> Tuple[Optional[bool], List[str]]:
+    """Обратная совместимость: official → local → None."""
+    official_ok, official_issues = validate_n8n_workflow_official(workflow)
+    if official_ok is not None:
+        return official_ok, official_issues
+    return validate_n8n_workflow_local(workflow)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LAYER A: Heuristic-валидация (Python-only)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _node_label(node: Dict[str, Any], idx: int) -> str:
     return node.get("name") or node.get("id") or f"#{idx}"
+
+
+def _short_type(node_type: str) -> str:
+    return node_type.split(".")[-1] if node_type else ""
 
 
 def _check_schedule_trigger(node: Dict[str, Any], label: str, issues: List[str]) -> None:
@@ -249,7 +384,14 @@ def _check_if_node(node: Dict[str, Any], label: str, issues: List[str]) -> None:
     params = node.get("parameters", {})
     conditions = params.get("conditions")
     type_version = float(node.get("typeVersion", 1) or 1)
-    if conditions is None or not isinstance(conditions, dict):
+    if conditions is None:
+        issues.append(
+            f'[{label}] if: отсутствует "parameters.conditions". '
+            f'Без условий IF всегда false/ломается.'
+        )
+        return
+    if not isinstance(conditions, dict):
+        issues.append(f'[{label}] if: "conditions" должен быть объектом.')
         return
     if type_version >= 2:
         inner = conditions.get("conditions")
@@ -260,6 +402,28 @@ def _check_if_node(node: Dict[str, Any], label: str, issues: List[str]) -> None:
                 f'(conditions.string/number). Приведи к формату v2: '
                 f'"conditions": {{"combinator":"and","conditions":[{{"leftValue":"...",...}}]}}.'
             )
+            return
+        if len(inner) == 0:
+            issues.append(
+                f'[{label}] if: "conditions.conditions" пуст — неработающий IF. '
+                f'Добавь хотя бы одно условие с leftValue/operator/rightValue.'
+            )
+            return
+        for i, cond in enumerate(inner):
+            if not isinstance(cond, dict):
+                issues.append(f'[{label}] if: conditions.conditions[{i}] должен быть объектом.')
+                continue
+            left = cond.get("leftValue")
+            if left is None or (isinstance(left, str) and not left.strip()):
+                issues.append(
+                    f'[{label}] if: conditions.conditions[{i}] имеет пустой leftValue. '
+                    f'Пример: "={{ $json.statusCode }}".'
+                )
+            if "operator" not in cond:
+                issues.append(
+                    f'[{label}] if: conditions.conditions[{i}] без operator. '
+                    f'Нужно: "operator": {{"type":"number","operation":"equals"}}.'
+                )
 
 
 def _check_set_node(node: Dict[str, Any], label: str, issues: List[str]) -> None:
@@ -294,16 +458,31 @@ def _check_http_request(node: Dict[str, Any], label: str, issues: List[str]) -> 
                 f'("body"/"bodyContentType"). В v4+ нужно: "sendBody":true, '
                 f'"specifyBody":"json", "jsonBody":"=...{{...}}..." (строка-выражение).'
             )
+    url = params.get("url")
+    if url is None or (isinstance(url, str) and not url.strip()):
+        issues.append(f'[{label}] httpRequest: отсутствует "parameters.url".')
+
+
+def _check_webhook(node: Dict[str, Any], label: str, issues: List[str]) -> None:
+    params = node.get("parameters", {})
+    path = params.get("path")
+    if path is None or (isinstance(path, str) and not path.strip()):
+        issues.append(
+            f'[{label}] webhook: отсутствует "parameters.path". '
+            f'Без path webhook не регистрируется.'
+        )
 
 
 def _check_empty_options(node: Dict[str, Any], short_type: str, label: str, issues: List[str]) -> None:
-    if short_type in ("if", "switch"):
-        params = node.get("parameters", {})
-        if params.get("options") == {}:
-            issues.append(
-                f'[{label}] {short_type}: пустой "options":{{}} ломает импорт '
-                f'("Could not find property option"). Удали ключ options.'
-            )
+    if short_type not in ("if", "switch"):
+        return
+    params = node.get("parameters", {})
+    options = params.get("options")
+    if isinstance(options, dict) and len(options) == 0:
+        issues.append(
+            f'[{label}] {short_type}: пустой "options":{{}} ломает импорт '
+            f'("Could not find property option"). Удали ключ options.'
+        )
 
 
 def _check_nocodb_update(node: Dict[str, Any], label: str, issues: List[str]) -> None:
@@ -316,16 +495,19 @@ def _check_nocodb_update(node: Dict[str, Any], label: str, issues: List[str]) ->
             f'Используй "fieldsUi": {{"fieldValues": [{{"fieldName":"synced","fieldValue":"true"}}]}} '
             f'(typeVersion 2) или "updateFields": {{"fieldValues":[...]}} (typeVersion 1).'
         )
-
-
-_KNOWN_CRED_KEYS: Dict[str, List[str]] = {
-    "nocoDb":       ["nocoDbApiToken", "nocoDbApi"],
-    "telegram":     ["telegramApi"],
-    "httpRequest":  ["httpBasicAuth", "httpHeaderAuth", "httpDigestAuth",
-                     "oAuth1Api", "oAuth2Api", "httpCustomAuth"],
-    "gmail":        ["gmailOAuth2"],
-    "slack":        ["slackOAuth2Api", "slackApi"],
-}
+        return
+    fields_ui = params.get("fieldsUi")
+    update_fields = params.get("updateFields")
+    has_fields = (
+        isinstance(fields_ui, dict) and isinstance(fields_ui.get("fieldValues"), list)
+    ) or (
+        isinstance(update_fields, dict) and isinstance(update_fields.get("fieldValues"), list)
+    )
+    if not has_fields:
+        issues.append(
+            f'[{label}] nocoDb update: нет fieldsUi.fieldValues / updateFields.fieldValues. '
+            f'Без fieldValues обновление ничего не запишет.'
+        )
 
 
 def _check_credentials_keys(node: Dict[str, Any], short_type: str, label: str, issues: List[str]) -> None:
@@ -344,8 +526,86 @@ def _check_credentials_keys(node: Dict[str, Any], short_type: str, label: str, i
             )
 
 
+def _check_connections(
+    nodes: List[Any],
+    connections: Any,
+    node_names: set,
+    issues: List[str],
+) -> None:
+    connected_sources: set = set()
+    connected_targets: set = set()
+    if_nodes = {
+        n.get("name")
+        for n in nodes
+        if isinstance(n, dict) and _short_type(n.get("type") or "") == "if" and n.get("name")
+    }
+
+    if isinstance(connections, dict):
+        for src, outputs in connections.items():
+            if src not in node_names:
+                issues.append(f'connections: источник "{src}" не найден в nodes.')
+            connected_sources.add(src)
+            if not isinstance(outputs, dict):
+                issues.append(f'connections["{src}"] должен быть объектом.')
+                continue
+            for okey, buckets in outputs.items():
+                if not isinstance(buckets, list):
+                    issues.append(f'connections["{src}"].{okey} должен быть массивом массивов.')
+                    continue
+                if src in if_nodes and okey == "main" and len(buckets) < 2:
+                    issues.append(
+                        f'connections["{src}"]: IF должен иметь обе ветки в main '
+                        f'(true=индекс 0 и false=индекс 1). Сейчас веток: {len(buckets)}. '
+                        f'Пример: "main": [ [{{true}}], [{{false}}] ].'
+                    )
+                for bucket in buckets:
+                    if not isinstance(bucket, list):
+                        continue
+                    for link in bucket:
+                        if not isinstance(link, dict):
+                            continue
+                        if "inputIndex" in link:
+                            issues.append(
+                                f'connections["{src}"]: ключ "inputIndex" должен быть "index". '
+                                f'n8n игнорирует "inputIndex" — соединение не создаётся.'
+                            )
+                        if "index" not in link and "inputIndex" not in link:
+                            issues.append(
+                                f'connections["{src}"] → "{link.get("node")}": отсутствует '
+                                f'"index" (обычно 0). Без index соединение может не создаться.'
+                            )
+                        target = link.get("node")
+                        if target:
+                            if target not in node_names:
+                                issues.append(
+                                    f'connections["{src}"]: цель "{target}" не найдена в nodes.'
+                                )
+                            connected_targets.add(target)
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        name = node.get("name")
+        if not name:
+            continue
+        short = _short_type(node.get("type") or "")
+        is_trigger = short in _TRIGGER_TYPES
+        in_src = name in connected_sources
+        in_tgt = name in connected_targets
+        if is_trigger and not in_src:
+            issues.append(
+                f'[{name}] trigger-нода не подключена ни к одной следующей ноде. '
+                f'Добавь её в "connections" как источник.'
+            )
+        elif not is_trigger and not in_src and not in_tgt:
+            issues.append(
+                f'[{name}] нода полностью изолирована — отсутствует в "connections" '
+                f'ни как источник, ни как цель. Подключи её или удали из "nodes".'
+            )
+
+
 def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
-    """Python-only структурная валидация (fallback если Node.js недоступен)."""
+    """Python-only структурная валидация (всегда обязательна)."""
     issues: List[str] = []
 
     if not isinstance(workflow, dict):
@@ -358,19 +618,26 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
         return False, ['Массив "nodes" пуст.']
 
     connections = workflow.get("connections")
-    if connections is not None and not isinstance(connections, dict):
+    if connections is None:
+        issues.append('Поле "connections" отсутствует — workflow не свяжет ноды при импорте.')
+    elif not isinstance(connections, dict):
         issues.append('Поле "connections" должно быть объектом.')
 
     node_names: set = set()
+    seen_names: Dict[str, int] = {}
+
     for idx, node in enumerate(nodes):
         label = _node_label(node, idx)
         if not isinstance(node, dict):
             issues.append(f"[{label}] нода должна быть объектом.")
             continue
 
-        node_names.add(node.get("name"))
-        node_type = node.get("type", "")
+        name = node.get("name")
+        if name:
+            seen_names[name] = seen_names.get(name, 0) + 1
+            node_names.add(name)
 
+        node_type = node.get("type", "")
         if not isinstance(node_type, str) or not node_type:
             issues.append(f'[{label}] отсутствует строковое поле "type".')
             node_type = ""
@@ -397,7 +664,7 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
             issues.append(f'[{label}] "parameters" должен быть объектом.')
             continue
 
-        short = node_type.split(".")[-1] if node_type else ""
+        short = _short_type(node_type)
         if short == "scheduleTrigger":
             _check_schedule_trigger(node, label, issues)
         elif short == "if":
@@ -406,73 +673,21 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
             _check_set_node(node, label, issues)
         elif short == "httpRequest":
             _check_http_request(node, label, issues)
+        elif short == "webhook":
+            _check_webhook(node, label, issues)
         elif short == "nocoDb":
             _check_nocodb_update(node, label, issues)
         _check_empty_options(node, short, label, issues)
         _check_credentials_keys(node, short, label, issues)
 
-    # ── Связность connections: inputIndex, цели, изолированные ноды ──────────
-    _TRIGGER_TYPES = frozenset({
-        "scheduleTrigger", "webhook", "emailTrigger", "manualTrigger",
-        "mqttTrigger", "amqpTrigger", "kafkaTrigger", "n8nTrigger", "errorTrigger",
-    })
-
-    connected_sources: set = set()
-    connected_targets: set = set()
-
-    if isinstance(connections, dict):
-        for src, outputs in connections.items():
-            if src not in node_names:
-                issues.append(f'connections: источник "{src}" не найден в nodes.')
-            connected_sources.add(src)
-            if not isinstance(outputs, dict):
-                issues.append(f'connections["{src}"] должен быть объектом.')
-                continue
-            for _okey, buckets in outputs.items():
-                if not isinstance(buckets, list):
-                    issues.append(f'connections["{src}"].main должен быть массивом массивов.')
-                    continue
-                for bucket in buckets:
-                    if not isinstance(bucket, list):
-                        continue
-                    for link in bucket:
-                        if not isinstance(link, dict):
-                            continue
-                        # inputIndex вместо index — ноды не соединяются при импорте
-                        if "inputIndex" in link:
-                            issues.append(
-                                f'connections["{src}"]: ключ "inputIndex" должен быть "index". '
-                                f'n8n игнорирует "inputIndex" — соединение не создаётся.'
-                            )
-                        target = link.get("node")
-                        if target:
-                            if target not in node_names:
-                                issues.append(
-                                    f'connections["{src}"]: цель "{target}" не найдена в nodes.'
-                                )
-                            connected_targets.add(target)
-
-    # Изолированные ноды
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        name = node.get("name")
-        if not name:
-            continue
-        short = (node.get("type") or "").split(".")[-1]
-        is_trigger = short in _TRIGGER_TYPES
-        in_src = name in connected_sources
-        in_tgt = name in connected_targets
-        if is_trigger and not in_src:
+    for name, count in seen_names.items():
+        if count > 1:
             issues.append(
-                f'[{name}] trigger-нода не подключена ни к одной следующей ноде. '
-                f'Добавь её в "connections" как источник.'
+                f'Дублируется имя ноды "{name}" ({count} раз). '
+                f'Имена в nodes должны быть уникальны — иначе connections ломаются.'
             )
-        elif not is_trigger and not in_src and not in_tgt:
-            issues.append(
-                f'[{name}] нода полностью изолирована — отсутствует в "connections" '
-                f'ни как источник, ни как цель. Подключи её или удали из "nodes".'
-            )
+
+    _check_connections(nodes, connections, node_names, issues)
 
     return (len(issues) == 0), issues
 
@@ -481,50 +696,70 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
 # Публичный API
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _merge_issues(*groups: List[str]) -> List[str]:
+    seen: set = set()
+    merged: List[str] = []
+    for group in groups:
+        for item in group:
+            if item not in seen:
+                seen.add(item)
+                merged.append(item)
+    return merged
+
+
 def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
-    """Двухуровневая валидация n8n workflow.
+    """Трёхуровневая валидация n8n workflow.
 
-    1. Пробует runtime-валидатор (npx n8n-workflow-validator).
-    2. Если Node.js недоступен или npx упал — использует heuristic.
+    A. Heuristic (всегда, блокирует).
+    B. Local validate-n8n.js (если доступен).
+    C. Official n8n-workflow-validator / npx (если auto|on и доступен).
 
-    Returns:
-        (is_valid, issues) — is_valid=True если критичных проблем нет.
+    is_valid=False при ERROR от любого слоя (в т.ч. official engine).
     """
     if not isinstance(workflow, dict):
         return False, ['Workflow должен быть объектом JSON с полями "nodes" и "connections".']
 
-    # Попытка runtime-валидации
-    runtime_ok, runtime_issues = validate_n8n_workflow_runtime(workflow)
+    heuristic_ok, heuristic_issues = validate_n8n_workflow_heuristic(workflow)
+    local_ok, local_issues = validate_n8n_workflow_local(workflow)
+    official_ok, official_issues = validate_n8n_workflow_official(workflow)
 
-    if runtime_ok is not None:
-        # Runtime отработал — доверяем его результату
-        source = "runtime (n8n-workflow-validator)"
-        if runtime_ok:
-            # Runtime чист — дополнительно прогоняем heuristic для extra-проверок
-            _, h_issues = validate_n8n_workflow_heuristic(workflow)
-            if h_issues:
-                logger.info(
-                    f"ℹ️  Heuristic нашёл {len(h_issues)} доп. замечаний после чистого runtime"
-                )
-                return True, h_issues  # не блокируем, но передаём в фидбек
-            return True, []
-        else:
-            logger.warning(f"❌ Workflow отклонён {source}: {len(runtime_issues)} проблем")
-            # Дополняем runtime-замечания heuristic-проверками (без дублирования)
-            _, h_issues = validate_n8n_workflow_heuristic(workflow)
-            combined = runtime_issues + [h for h in h_issues if h not in runtime_issues]
-            return False, combined
+    all_issues = _merge_issues(heuristic_issues, local_issues, official_issues)
 
-    # Fallback: только heuristic
-    logger.info("ℹ️  Heuristic-валидация (runtime недоступен)")
-    return validate_n8n_workflow_heuristic(workflow)
+    if not heuristic_ok:
+        logger.warning(f"❌ Workflow отклонён heuristic: {len(heuristic_issues)} проблем")
+        return False, all_issues or heuristic_issues
+
+    if local_ok is False:
+        logger.warning(f"❌ Workflow отклонён local JS: {len(local_issues)} проблем")
+        return False, all_issues or local_issues
+
+    if official_ok is False:
+        logger.warning(f"❌ Workflow отклонён official n8n-engine: {len(official_issues)} проблем")
+        return False, all_issues or official_issues
+
+    layers = ["heuristic"]
+    if local_ok is True:
+        layers.append("local-js")
+    if official_ok is True:
+        layers.append("official-engine")
+    elif official_ok is None:
+        layers.append("official-skipped")
+
+    if all_issues:
+        logger.info(
+            f"ℹ️  Workflow валиден с замечаниями ({len(all_issues)}); слои: {', '.join(layers)}"
+        )
+    else:
+        logger.info(f"✅ n8n workflow прошёл валидацию; слои: {', '.join(layers)}")
+
+    return True, all_issues
 
 
 def build_n8n_feedback(issues: List[str]) -> str:
     """Формирует текст замечаний для возврата агенту developer."""
     header = (
-        "Сгенерированный n8n workflow НЕ пройдёт импорт "
-        '(ошибка "X is not iterable" / структурные несоответствия). '
+        "Сгенерированный n8n workflow НЕ пройдёт импорт / проверку движком n8n "
+        '(ошибка "X is not iterable" / N8N_PARAMETER_VALIDATION_ERROR / структура). '
         "Исправь следующее и верни полный исправленный workflow:\n"
     )
     return header + "\n".join(f"- {i}" for i in issues)

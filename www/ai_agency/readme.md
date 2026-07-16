@@ -215,6 +215,8 @@ GOOGLE_API_KEY=your_google_api_key
 GOOGLE_CX=your_custom_search_engine_id
 MAX_TASK_ITERATIONS=3
 DEVELOPER_MAX_ITERATIONS=6
+# Official n8n-engine validator (Layer C): auto | on | off
+N8N_VALIDATOR_OFFICIAL=auto
 DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)
 DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и создание задач в Bpium для ОКК.
@@ -242,6 +244,34 @@ curl "http://127.0.0.1:7000/google/search?text=test&limit=5"
 переходит на резервный Google Custom Search API (если заданы `GOOGLE_API_KEY`/`GOOGLE_CX`).
 Если недоступны оба источника — агент честно возвращает `clients=[]` и не выдумывает клиентов
 (см. `core/client_hunter_tools.py` → `run_google_only_search()`).
+
+### 🛠 n8n-validator (корректная разработка workflow)
+
+Перед QA каждый JSON от агента `developer` проходит **три слоя**:
+1. Heuristic (Python) — всегда
+2. Local `validate-n8n.js` — без npm
+3. **Official** `n8n-workflow-validator` (движок n8n) — binary / `npx --yes`  
+   Env: `N8N_VALIDATOR_OFFICIAL=auto|on|off` (по умолчанию `auto`)
+
+Ошибки любого слоя блокируют задачу и возвращаются developer как `qa_feedback`.
+
+```bash
+cd www/ai_agency
+node -v                    # нужно >= 22 (лучше 24); на v20 будет EBADENGINE)
+npm run install-validator  # ставит official; xlsx берётся с npmjs (не cdn.sheetjs.com)
+node validate-n8n.js --json path/to/workflow.json
+npx n8n-workflow-validator --json path/to/workflow.json
+# .env: N8N_VALIDATOR_OFFICIAL=on
+```
+
+**Типичные предупреждения `npm run install-validator`:**
+| Сообщение | Значение |
+|-----------|----------|
+| `EBADENGINE … isolated-vm … required node >=22 … current v20` | **Нужно обновить Node** до 22+. Иначе native-модуль может не собраться. |
+| `deprecated uuid / gm / glob / whatwg-encoding` | Шум от зависимостей n8n — **можно игнорировать**. |
+| Зависание на `cdn.sheetjs.com` / `xlsx` | В `package.json` уже есть `"overrides": {"xlsx":"0.18.5"}` с registry.npmjs.org. Удалите `node_modules` + `package-lock.json` и повторите `npm run install-validator`. |
+
+Подробности — `ANALYSIS.md` → Direction N / O.
 
 ### 4. Создание таблиц в NocoDB
 

@@ -3,20 +3,27 @@
   "version": "1.0.0",
   "private": true,
   "description": "Node.js tools for AI Agency: n8n workflow validation",
-  "scripts": {
-    "validate-n8n": "n8n-workflow-validator",
-    "install-validator": "npm install n8n-workflow-validator --save"
+  "engines": {
+    "node": ">=22.0.0"
   },
-  "dependencies": {
+  "scripts": {
+    "validate-n8n": "node validate-n8n.js",
+    "validate-n8n:official": "npx --yes n8n-workflow-validator --json",
+    "preinstall-validator": "node -e \"const m=+process.versions.node.split('.')[0]; if(m<22){console.error('Need Node >=22 (now '+process.version+'). Upgrade: https://nodejs.org'); process.exit(1)} console.log('Node', process.version, 'OK')\"",
+    "install-validator": "npm run preinstall-validator && npm install --registry https://registry.npmjs.org n8n-workflow-validator@^1.4.2 --no-fund --no-audit --save"
+  },
+  "optionalDependencies": {
     "n8n-workflow-validator": "^1.4.2"
   },
+  "overrides": {
+    "xlsx": "0.18.5"
+  },
   "_install_notes": [
-    "Если npm install падает на xlsx от cdn.sheetjs.com — это сетевая блокировка SheetJS CDN.",
-    "Обходные варианты:",
-    "  1) npm install --registry https://registry.npmjs.org n8n-workflow-validator",
-    "  2) npm install --prefer-offline n8n-workflow-validator (если кэш есть)",
-    "  3) Установить глобально: npm install -g n8n-workflow-validator",
-    "При любом варианте Python-валидатор автоматически подхватит бинарник.",
-    "Без установки активен heuristic-режим — ловит самые частые LLM-ошибки."
+    "ТРЕБОВАНИЕ: Node.js >= 22 (isolated-vm у n8n-workflow-validator).",
+    "У вас в логе был Node v20.20.2 → EBADENGINE. Нужен upgrade до 22+.",
+    "xlsx: overrides → registry.npmjs.org (cdn.sheetjs.com часто таймаутит).",
+    "Deprecation uuid/gm/glob — от зависимостей n8n, на валидатор не влияют.",
+    "Слои: A heuristic | B validate-n8n.js | C n8n-workflow-validator",
+    "Env: N8N_VALIDATOR_OFFICIAL=auto|on|off"
   ]
 }

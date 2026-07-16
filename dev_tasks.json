@@ -12,5 +12,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 3,
+    "desc": "Настроить n8n-validator для корректной разработки workflow: усилить heuristic/JS проверки, блокировать дефекты импорта, тесты, документация",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "in_progress"
   }
 ]

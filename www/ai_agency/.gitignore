@@ -1,0 +1,12 @@
+# Node (official n8n-workflow-validator)
+node_modules/
+
+# Python local envs / caches
+.venv/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets
+.env

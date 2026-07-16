@@ -478,6 +478,95 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 
 **Результаты:** 94 теста проходят. Валидатор ловит все дефекты в тестовом workflow (5 классов).
 
+### Direction N — Настройка n8n-validator для корректной разработки (NEW)
+
+**Проблема:** валидатор был «наполовину настроен»:
+1. `node_modules` / официальный `n8n-workflow-validator` часто не ставится (SheetJS CDN).
+2. Heuristic-замечания после «чистого» runtime **не блокировали** developer
+   (`validate_n8n_workflow` возвращал `is_valid=True` с issues → `task_executor` их игнорировал).
+3. Не хватало критичных проверок из developer-чеклиста: пустой IF, отсутствие `index`,
+   обе ветки IF, дубли имён, webhook.path, fieldsUi у NocoDB update.
+4. Баг в `validate-n8n.js`: `params.options === {}` никогда не срабатывал (сравнение по ссылке).
+
+**Решение — двухуровневый gate, heuristic всегда блокирует:**
+
+| Слой | Файл | Роль |
+|------|------|------|
+| Runtime | `validate-n8n.js` (без npm) | Локальный Node-скрипт; `--json` для Python |
+| Heuristic | `core/n8n_validator.py` | Всегда обязателен; ERROR → `is_valid=False` |
+| Опционально | `n8n-workflow-validator` (npm) | Official engine, если удалось установить |
+
+**Что ловит (блокирует developer → pending/failed + qa_feedback):**
+- `scheduleTrigger.rule.interval` не массив («is not iterable»)
+- IF v2: нет/`[]`/пустой `leftValue`/нет `operator`
+- IF в connections без обеих веток (`main` < 2)
+- `inputIndex` вместо `index`, отсутствие `index`
+- изолированные ноды / trigger без исходящих связей
+- пустой `options:{}` у if/switch
+- NocoDB update: `data:{}` или нет `fieldsUi.fieldValues`
+- неверные credential keys, дубли имён нод
+- webhook без `path`, httpRequest без `url`, Set v3 с `values`
+
+**Запуск вручную:**
+```bash
+cd www/ai_agency
+node validate-n8n.js path/to/workflow.json
+node validate-n8n.js --json path/to/workflow.json
+# отключить runtime в Python (только heuristic):
+set N8N_VALIDATOR_RUNTIME=off
+```
+
+**Тесты:** `tests/test_n8n_validator.py` — happy-path + все import-killers.
+В пайплайне developer: `TaskExecutor` → `validate_n8n_workflow` → при fail возвращает
+задачу в `pending` с `build_n8n_feedback(issues)` (до `DEVELOPER_MAX_ITERATIONS`).
+
+### Direction O — Official n8n-engine validator (внешний шаг) (NEW)
+
+**Запрос:** эвристики недостаточно для максимальной точности — подключить официальный
+валидатор / MCP как внешний шаг.
+
+**Что подключено (Layer C):** пакет
+[`n8n-workflow-validator`](https://www.npmjs.com/package/n8n-workflow-validator) —
+использует реальный движок n8n (`n8n-workflow` + `n8n-nodes-base`), те же
+`NodeHelpers.getNodeParameters` / issues, что редактор при импорте. Это правильный
+путь для **JSON** от агента `developer`.
+
+| Env | Значение | Поведение |
+|-----|----------|-----------|
+| `N8N_VALIDATOR_OFFICIAL` | `auto` (default) | Пробуем binary → global → `npx --yes`; если нет — skip без fail |
+| `N8N_VALIDATOR_OFFICIAL` | `on` | Official обязателен; недоступен → `is_valid=False` |
+| `N8N_VALIDATOR_OFFICIAL` | `off` | Только heuristic + local JS |
+| `N8N_VALIDATOR_OFFICIAL_TIMEOUT` | `120` | Таймаут npx/binary (сек) |
+| `N8N_VALIDATOR_RUNTIME` | `off` | Отключить только local `validate-n8n.js` |
+
+**Порядок слоёв в `validate_n8n_workflow()`:**
+1. **A Heuristic** (Python) — всегда, блокирует
+2. **B Local JS** (`validate-n8n.js`) — если файл есть и runtime не off
+3. **C Official** (`node_modules` / global / `npx --yes n8n-workflow-validator --json`) — блокирует при ERROR
+
+Раньше local JS стоял *первым* в поиске binary и **перекрывал** official — исправлено:
+official ищется отдельно и всегда вызывается при `auto|on`.
+
+Вывод official парсится с `schemaDelta` / `n8nError` → в `qa_feedback` developer
+видит missing/extra keys (как в редакторе).
+
+**n8n Instance MCP (опционально):** официальный Builder MCP
+(`validate_workflow` с n8n ≥ 2.12) принимает **TypeScript Workflow SDK code**, не raw JSON.
+Для JSON-пайплайна агентства Layer C — основной. Заготовки env:
+`N8N_MCP_URL`, `N8N_MCP_ACCESS_TOKEN` (в `Config`) — под будущее подключение
+instance MCP, если перейдём на SDK-генерацию.
+
+**Установка:**
+```bash
+cd www/ai_agency
+node -v                         # обязательно >= 22 (на v20 → EBADENGINE isolated-vm)
+npm run install-validator       # xlsx через overrides с npmjs (не cdn.sheetjs.com)
+npx n8n-workflow-validator --json workflow.json
+```
+
+Предупреждения `deprecated uuid/gm/glob` — нормальны (зависимости n8n).
+`EBADENGINE … current: node v20` — нужно обновить Node, иначе native-сборка может сломаться.
+
 ### Direction K — Устойчивый workflow (чек-лист надёжности) (NEW)
 
 **Источник:** рекомендации по разработке устойчивых процессов автоматизации.
@@ -753,7 +842,8 @@ error → `[]`, clamp лимита 1–100) + обновлённые `tests/test
 | Промпты | `prompts/*.txt` | 9 файлов |
 | Конфигурация | `config.py` → `Config` | `.env` |
 | Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
+| n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic → B local → C n8n-workflow-validator |
 
 ---
 
-**Последнее обновление:** Jul 15, 2026. OpenSERP — бесплатный поиск для `client_hunter` (Direction M).
+**Последнее обновление:** Jul 16, 2026. Official n8n-engine validator (Direction O) как внешний шаг.
