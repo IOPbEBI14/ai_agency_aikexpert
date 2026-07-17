@@ -324,7 +324,7 @@ class Orchestrator:
 ДОСТУПНЫЕ АГЕНТЫ:
 - client_hunter: монетизация — поиск клиентов ТОЛЬКО через Google + персональное УТП
 - lead_hunter: поиск потенциальных клиентов (селлеров WB/Ozon)
-- sales: написание холодных сообщений и квалификация лидов
+- sales: написание холодных сообщений и квалификация лидов (ОБЯЗАТЕЛЕН после hunter)
 - analyst: расчёт ROI и подготовка презентации
 - architect: проектирование архитектуры интеграции
 - developer: разработка автоматизаций (n8n, Albato)
@@ -333,6 +333,12 @@ class Orchestrator:
 - tech_writer: создание документации для клиента
 
 ⚠️ КРИТИЧНО: Используй поле "task_id" (НЕ "id"!) для идентификации задач!
+
+ОБЯЗАТЕЛЬНАЯ ЦЕПОЧКА МОНЕТИЗАЦИИ:
+Если в графе есть client_hunter и/или lead_hunter — ОБЯЗАТЕЛЬНО добавь задачу sales
+с depends_on на эти hunter-задачи. Нельзя исключать sales, если идёт поиск клиентов:
+sales пишет тексты сообщений по найденным лидам/УТП. Пример:
+task_001 client_hunter → task_002 sales (depends_on: ["task_001"]).
 
 max_iterations по умолчанию: 3 для большинства агентов, но для agent_name="developer"
 используй 6 — сложные n8n-интеграции чаще требуют доработки по фидбеку QA.
@@ -356,6 +362,7 @@ max_iterations по умолчанию: 3 для большинства аген
 ВАЖНО:
 - Верни ТОЛЬКО JSON, без ```json ... ``` обёрток
 - QA всегда нужен, если есть хотя бы одна задача
+- client_hunter/lead_hunter без sales — ЗАПРЕЩЕНО
 """
 
         schema_prompt = self.build_prompt_with_schema(pm_prompt, "pm_task_graph")
@@ -372,13 +379,19 @@ max_iterations по умолчанию: 3 для большинства аген
                 project_id, {"tokens_used": self.current_project["tokens_used"]}
             )
 
-            tasks_list = pm_task_graph.tasks
-            excluded_agents = getattr(pm_task_graph, "excluded_agents", [])
+            tasks_list = list(pm_task_graph.tasks or [])
+            excluded_agents = list(getattr(pm_task_graph, "excluded_agents", []) or [])
             reasoning = getattr(pm_task_graph, "reasoning", "")
 
             if not tasks_list:
                 logger.error("❌ PM не вернул задачи")
                 return False
+
+            from .task_graph_rules import enforce_sales_after_hunters
+
+            tasks_list, excluded_agents = enforce_sales_after_hunters(
+                tasks_list, excluded_agents
+            )
 
             if excluded_agents:
                 logger.info(f"📋 PM исключил агентов: {excluded_agents} | Причина: {reasoning}")

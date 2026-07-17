@@ -117,12 +117,17 @@ _
 
 ---
 
-## 8. Handoff для sales
+## 8. Handoff для sales (обязательный следующий шаг)
 
-После поиска `client_hunter` должен передать:
+После поиска `client_hunter` **обязательно** запускается агент `sales`
+(пишет тексты холодных сообщений). В Task Graph: `sales.depends_on = [client_hunter]`.
+
+`client_hunter` передаёт:
 - `recommended_approach` — тон и формат первого касания
 - `priority_clients` — кого брать первыми
 - `usp_highlights` — самые сильные формулировки УТП
+
+`sales` использует `client_hunter_context` + USP и возвращает `messages[]`.
 
 ---
 
@@ -154,4 +159,5 @@ Google-запросы (сайты бизнесов):
 - [ ] В `.env` заданы `GOOGLE_API_KEY` и `GOOGLE_CX`
 - [ ] ТЗ / `goal` содержит нишу и услугу
 - [ ] В task graph есть задача с `agent_name: client_hunter`
-- [ ] Понятен следующий агент (`sales` или human review)
+- [ ] В task graph есть `sales` с `depends_on` на client_hunter (обязательно)
+- [ ] `sales` не в `excluded_agents`

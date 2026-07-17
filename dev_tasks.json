@@ -26,5 +26,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 5,
+    "desc": "Обязательный sales после client_hunter: в последних запусках sales не участвовал — поправить PM/граф задач и ANALYSIS.md",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

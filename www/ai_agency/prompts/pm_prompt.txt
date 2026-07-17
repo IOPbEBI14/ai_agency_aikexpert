@@ -62,22 +62,22 @@
   "pm_comment": "твой комментарий"
 }
 
-ПРИМЕР 1 — Начало проекта, поиск лидов:
+ПРИМЕР 1 — Начало проекта, поиск лидов (client_hunter):
 {
   "project_status": "in_progress",
   "current_phase": "lead_gen",
-  "next_agent": "lead_hunter",
-  "task_for_next_agent": "Найди 10 селлеров Wildberries с оборотом от 1 млн рублей в месяц в категории 'Одежда'. Собери их контакты: Telegram, email, телефон.",
-  "pm_comment": "Начинаем с поиска целевых клиентов в нише одежды на WB."
+  "next_agent": "client_hunter",
+  "task_for_next_agent": "Найди частные стоматологии по ICP (гео, ЛПР). Prospect-запросы на сайты клиник, не SaaS.",
+  "pm_comment": "Сначала client_hunter; затем обязательно sales для текстов."
 }
 
-ПРИМЕР 2 — Лиды найдены, переход к продажам:
+ПРИМЕР 2 — После client_hunter / lead_hunter всегда sales (тексты):
 {
   "project_status": "in_progress",
   "current_phase": "sales",
   "next_agent": "sales",
-  "task_for_next_agent": "Напиши персонализированное холодное сообщение для селлера 'ООО Ромашка' (WB, одежда). Их боль: много отзывов, но нет системы обработки.",
-  "pm_comment": "Лиды найдены, переходим к первичному контакту."
+  "task_for_next_agent": "По client_hunter_context / leads_context напиши персональные холодные сообщения и вопросы квалификации. Используй USP и handoff_to_sales.",
+  "pm_comment": "Поиск клиентов без sales недопустим — нужны тексты outreach."
 }
 
 ПРИМЕР 3 — Бюджет на исходе:
@@ -103,8 +103,12 @@
 АНАЛИЗ ЦЕЛЕЙ ПРОЕКТА:
 - Если в цели написано "не делать [задача]" — исключи соответствующего агента
 - Если проект только про анализ — нужны только analyst и architect
-- Если проект только про разработку — можно пропустить lead_hunter и sales
+- Если проект только про разработку (без поиска клиентов) — можно пропустить lead_hunter/client_hunter и sales
 - Если проект про документацию — нужны только tech_writer
+- ⚠️ МОНЕТИЗАЦИЯ / ПОИСК КЛИЕНТОВ: если есть client_hunter или lead_hunter —
+  sales ОБЯЗАТЕЛЕН (пишет тексты холодных сообщений по найденным лидам/УТП).
+  Запрещено класть sales в excluded_agents и запрещено строить граф hunter без sales.
+  Зависимость: sales.depends_on = [task_id hunter].
 
 ПРИМЕРЫ:
 
@@ -119,6 +123,10 @@
 Пример 3: "Настроить CRM без анализа"
 → Исключить: analyst, architect
 → Оставить: crm_customizer, qa, tech_writer
+
+Пример 4: "Найти частные стоматологии и подготовить outreach"
+→ Оставить: client_hunter → sales (depends_on hunter); sales НЕ исключать
+→ Исключить (если разработка не нужна): developer, crm_customizer, …
 
 ФОРМАТ ОТВЕТА (строго JSON):
 {

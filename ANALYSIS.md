@@ -309,19 +309,20 @@ QAGate.run(task, agent_response, iteration_count, max_iter)
 ### Контекстный поток (handoff-протокол)
 
 ```
-lead_hunter →  leads_context + leads_handoff_to_sales
+client_hunter → client_hunter_context + client_hunter_handoff_to_sales
+lead_hunter   → leads_context + leads_handoff_to_sales
+                     ↓  (sales обязателен)
+sales         → sales_context  (тексты сообщений)
                      ↓
-sales        →  sales_context
+analyst       → analyst_context + handoff_to_architect
                      ↓
-analyst      →  analyst_context + handoff_to_architect
+architect     → QA Gate → PM декомпозиция → dev_001…dev_N
                      ↓
-architect    →  QA Gate → PM декомпозиция → dev_001…dev_N
+developer     → QA Gate (каждая dev_*; output_data → qa через dependency_outputs)
                      ↓
-developer    →  QA Gate (каждая dev_*; output_data → qa через dependency_outputs)
+qa            → completed
                      ↓
-qa           →  completed
-                     ↓
-tech_writer  →  QA Gate
+tech_writer   → QA Gate
 ```
 
 Каждая `dev_*` проверяется **QA Gate** в `TaskExecutor` (отдельные задачи агента `qa` на сабтаск не создаются). Финальный агент `qa` из task graph ждёт завершения placeholder developer (после всех `dev_*`).
@@ -709,9 +710,26 @@ Content-Type: application/json
 | УТП на каждого клиента | `ClientUSP` в `ClientHunterResponse.clients[]` |
 | Контекст для sales | `client_hunter_context` + `handoff_to_sales` |
 
-Поток: `TaskExecutor` → inject `google_search_results` → LLM готовит УТП → `handle_client_hunter` сохраняет контекст.
+Поток: `TaskExecutor` → inject `google_search_results` → LLM готовит УТП →
+`handle_client_hunter` → **обязательно `sales`** пишет тексты outreach по USP/handoff.
 
 `lead_hunter` сохранён для сценариев WB/Ozon/Telegram; для монетизации через открытый web используйте `client_hunter`.
+
+### Direction Q — Обязательный `sales` после поиска клиентов (NEW)
+
+**Проблема:** PM строил Task Graph с `client_hunter` без `sales` (или клал `sales`
+в `excluded_agents`) → лиды/УТП есть, текстов холодных сообщений нет.
+
+**Правило:** при наличии `client_hunter` или `lead_hunter` агент `sales` обязателен
+и зависит от hunter-задач (`depends_on`).
+
+| Слой | Изменение |
+|------|-----------|
+| Код | `task_graph_rules.enforce_sales_after_hunters` после ответа PM |
+| PM-промпт | цепочка hunter → sales; запрет exclude sales при поиске клиентов |
+| `sales_prompt.txt` | роль Sales (не Analyst); вход `client_hunter_context` + USP/handoff |
+
+Инвариант enforced в коде — даже если LLM-PM ошибётся, sales будет добавлен в граф.
 
 ### Direction P — ICP-поиск лидов (не SaaS) (NEW)
 
@@ -870,6 +888,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Промпты | `prompts/*.txt` | 9 файлов |
 | Конфигурация | `config.py` → `Config` | `.env` |
 | Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
+| Task Graph rules | `task_graph_rules.py` | sales обязателен после client_hunter/lead_hunter |
 | n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic → B local → C n8n-workflow-validator |
 
 ---
