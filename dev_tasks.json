@@ -19,5 +19,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "in_progress"
+  },
+  {
+    "id": 4,
+    "desc": "Скорректировать процедуру client_hunter: запросы под ICP (частные стоматологии), доработать промпты — сейчас SERP даёт статьи/CRM, 0 лидов",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

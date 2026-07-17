@@ -259,30 +259,35 @@ class TaskExecutor:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _inject_google_search(self, task: Dict, input_data: Dict) -> Dict:
-        """Подмешивает результаты Google Custom Search для client_hunter."""
-        from .client_hunter_tools import build_search_queries, run_google_only_search
+        """Подмешивает ICP-поиск (OpenSERP/Google) для client_hunter."""
+        from .client_hunter_tools import run_icp_search
 
         goal = ""
         if self.orch.current_project:
             goal = self.orch.current_project.get("goal") or ""
-        queries = build_search_queries(
+        pack = run_icp_search(
             goal=goal,
             task_description=task.get("task_description") or "",
             llm_queries=input_data.get("search_queries")
             if isinstance(input_data.get("search_queries"), list)
             else None,
         )
-        results = run_google_only_search(queries)
-        input_data["google_search_results"] = results
-        input_data["google_search_queries"] = queries
-        input_data["search_source_policy"] = (
-            "ONLY_GOOGLE_OPEN_SOURCES — запрещены Telegram, Avito, scrape, закрытые базы"
-        )
+        input_data.update(pack)
+        results = pack.get("google_search_results") or []
+        prospects = pack.get("google_prospect_candidates") or []
         if not results:
             input_data["google_search_warning"] = (
                 "Google-поиск не вернул результатов: OpenSERP недоступен/пуст, "
                 "а резервный Google Custom Search API не настроен или тоже пуст. "
                 "Не выдумывай клиентов — верни clients=[] и опиши причину в notes."
+            )
+        elif not prospects:
+            input_data["google_search_warning"] = (
+                "В выдаче есть результаты, но эвристика пометила их как "
+                "vendor_or_article (SaaS/CRM/обзоры), а не сайты целевых бизнесов ICP. "
+                "Не выдумывай клиники/компании. Верни clients=[] если нет "
+                "hit_class=prospect_candidate; в search_queries предложи запросы "
+                "на сайты бизнесов (официальный сайт / записаться / город)."
             )
         return input_data
 

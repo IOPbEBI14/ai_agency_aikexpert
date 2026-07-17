@@ -24,6 +24,9 @@ _AGENT_QA_CHECKLISTS: dict = {
 - Не должно быть выдуманных телефонов/email/Telegram без URL из Google
 - У каждого клиента есть usp с headline, value_proposition, differentiators, call_to_action
 - clients согласованы с google_search_results во входных данных (если они были)
+- В clients НЕТ SaaS/CRM/статей (YClients, Bitrix, Albato, «как автоматизировать клинику»)
+- Клиенты соответствуют ICP из goal/task (тип бизнеса), а не «любой медцентр из статьи»
+- search_queries — prospect-ориентированные (сайт/записаться/город), не «ниша + CRM»
 - search_queries не пустой, если total_found > 0
 """,
     "architect": """

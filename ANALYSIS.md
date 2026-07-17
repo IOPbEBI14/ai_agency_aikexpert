@@ -704,7 +704,7 @@ Content-Type: application/json
 
 | Правило | Реализация |
 |---------|------------|
-| Только открытые источники | Google Custom Search API (`GOOGLE_API_KEY`, `GOOGLE_CX`) |
+| Только открытые источники | OpenSERP primary + Google Custom Search API fallback |
 | Запрет Telegram/Avito/scrape | `client_hunter_tools.run_google_only_search` |
 | УТП на каждого клиента | `ClientUSP` в `ClientHunterResponse.clients[]` |
 | Контекст для sales | `client_hunter_context` + `handoff_to_sales` |
@@ -712,6 +712,26 @@ Content-Type: application/json
 Поток: `TaskExecutor` → inject `google_search_results` → LLM готовит УТП → `handle_client_hunter` сохраняет контекст.
 
 `lead_hunter` сохранён для сценариев WB/Ozon/Telegram; для монетизации через открытый web используйте `client_hunter`.
+
+### Direction P — ICP-поиск лидов (не SaaS) (NEW)
+
+**Проблема:** эвристика `build_search_queries` строила запросы вида
+«клиника медицинский центр + автоматизация/CRM» → Google отдавал обзоры и
+вендоров; LLM честно возвращал `clients=[]` и просил «лучшие» запросы, но
+поиск уже был выполнен до вызова модели.
+
+**Исправление:**
+
+| Слой | Изменение |
+|------|-----------|
+| `detect_icp` / шаблоны | Запросы на **сайты бизнесов** (`официальный сайт`, `записаться`, город, ЛПР) |
+| Dental/clinic | Legacy-шаблоны «ниша + CRM» отключены (они вредны) |
+| Фильтр SERP | `hit_class`: `prospect_candidate` vs `vendor_or_article` |
+| 2-й проход | Если prospect-хитов < 2 → `build_refined_queries` по городам |
+| Промпты | `client_hunter_prompt.txt` + PM: ICP в task_description, запрет SaaS в clients |
+| QA | Чек-лист: нет вендоров в clients, search_queries prospect-oriented |
+
+Пример хороших запросов: `частная стоматология Москва официальный сайт`.
 
 ### Direction L — Замечания по эксплуатации (ИСПРАВЛЕНО)
 

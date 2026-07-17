@@ -4,9 +4,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.client_hunter_tools import (
+    build_refined_queries,
     build_search_queries,
     company_name_from_title,
+    detect_icp,
+    filter_prospect_hits,
+    looks_like_vendor_or_article,
     run_google_only_search,
+    run_icp_search,
 )
 from core.schemas import ClientHunterResponse, ClientProspect, ClientUSP
 
@@ -17,8 +22,83 @@ class TestClientHunterTools:
         assert qs
         assert any("wildberries" in q.lower() or "селлер" in q.lower() for q in qs)
 
+    def test_dental_icp_uses_prospect_queries_not_crm(self):
+        goal = (
+            "Найти частные стоматологии от 3 кресел с маркетологом; "
+            "ЛПР — главврач/собственник. Москва."
+        )
+        icp = detect_icp(goal=goal)
+        assert icp["icp_key"] == "dental"
+        assert "Москва" in icp["geo"]
+        qs = build_search_queries(goal=goal, max_queries=6)
+        assert qs
+        assert any("стоматолог" in q.lower() for q in qs)
+        assert any("сайт" in q.lower() or "записаться" in q.lower() for q in qs)
+        # Старые шаблоны «ниша + CRM/автоматизация» не должны доминировать
+        assert not any(
+            ("автоматизац" in q.lower() or "crm" in q.lower()) and "стоматолог" in q.lower()
+            for q in qs
+        )
+
+    def test_vendor_noise_filter(self):
+        hits = [
+            {
+                "title": "YClients — CRM для клиник",
+                "link": "https://www.yclients.com/",
+                "snippet": "Автоматизация записи",
+            },
+            {
+                "title": "Стоматология Улыбка | Официальный сайт",
+                "link": "https://ulybka-dental.example/",
+                "snippet": "Записаться к врачу в Москве",
+            },
+        ]
+        assert looks_like_vendor_or_article(hits[0]) is True
+        assert looks_like_vendor_or_article(hits[1]) is False
+        prospects, noise = filter_prospect_hits(hits)
+        assert len(prospects) == 1
+        assert len(noise) == 1
+
+    def test_refined_queries_add_cities(self):
+        qs = build_refined_queries(
+            goal="частная стоматология, ЛПР главврач",
+            max_queries=4,
+        )
+        assert qs
+        assert any("Москва" in q or "Санкт-Петербург" in q for q in qs)
+
     def test_company_name_from_title(self):
         assert company_name_from_title("ТехноФикс | Официальный сайт") == "ТехноФикс"
+
+    @patch("core.client_hunter_tools.run_google_only_search")
+    def test_run_icp_search_second_pass_on_noise(self, mock_search):
+        mock_search.side_effect = [
+            [
+                {
+                    "title": "CRM для клиник",
+                    "link": "https://amocrm.ru/kliniki",
+                    "snippet": "Автоматизация медицинских центров",
+                    "query": "q1",
+                    "source": "google",
+                }
+            ],
+            [
+                {
+                    "title": "Клиника Дент | Запись",
+                    "link": "https://dent-clinic.example/",
+                    "snippet": "Стоматология в центре города",
+                    "query": "q2",
+                    "source": "google",
+                }
+            ],
+        ]
+        pack = run_icp_search(
+            goal="частная стоматология Москва",
+            task_description="ICP: стоматологии",
+        )
+        assert pack["icp_detected"]["icp_key"] == "dental"
+        assert mock_search.call_count == 2
+        assert any(h.get("hit_class") == "prospect_candidate" for h in pack["google_search_results"])
 
     @patch("core.client_hunter_tools.lead_tools")
     @patch("core.client_hunter_tools.openserp_client")
