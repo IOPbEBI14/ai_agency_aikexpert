@@ -299,6 +299,11 @@ class AgentHandlers:
                     "website": c.website,
                     "snippet": c.snippet,
                     "niche": c.niche,
+                    "decision_maker_role": c.decision_maker_role,
+                    "contact_email": c.contact_email,
+                    "contact_phone": c.contact_phone,
+                    "contact_telegram": c.contact_telegram,
+                    "contacts_note": c.contacts_note,
                     "pain_hypothesis": list(c.pain_hypothesis or []),
                     "usp": {
                         "headline": usp.headline,
@@ -309,6 +314,15 @@ class AgentHandlers:
                     "source": "google",
                     "source_query": c.source_query,
                 })
+
+            # Открытые контакты с website лида (не маркетплейсы) — для ЛПР/outreach
+            if Config.CLIENT_HUNTER_SCRAPE_CONTACTS and clients_payload:
+                from .outreach_export import enrich_clients_with_website_contacts
+
+                clients_payload = enrich_clients_with_website_contacts(
+                    clients_payload,
+                    max_scrapes=Config.CLIENT_HUNTER_SCRAPE_MAX,
+                )
 
             self.orch.current_project["client_hunter_context"] = clients_payload
             if response.handoff_to_sales:
@@ -329,26 +343,39 @@ class AgentHandlers:
                     "marketplace": "open_web",
                     "category": c.get("niche") or "",
                     "pain_points": c.get("pain_hypothesis") or [],
-                    "contact_telegram": None,
-                    "contact_email": None,
-                    "contact_phone": None,
+                    "contact_telegram": c.get("contact_telegram"),
+                    "contact_email": c.get("contact_email"),
+                    "contact_phone": c.get("contact_phone"),
+                    "decision_maker_role": c.get("decision_maker_role"),
                     "source": "google",
                     "website": c.get("website"),
                     "usp": c.get("usp"),
                 })
 
+            contacts_n = sum(
+                1
+                for c in clients_payload
+                if c.get("contact_email") or c.get("contact_phone")
+            )
+            # Перезаписываем output_data обогащёнными контактами (для дашборда/выгрузки)
+            enriched_output = response.model_dump()
+            enriched_output["clients"] = clients_payload
+            enriched_output["total_found"] = len(clients_payload)
+
             if task_db_id:
                 self.orch.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
+                    "output_data": json.dumps(enriched_output, ensure_ascii=False),
                     "qa_feedback": (
-                        f"Google: {response.total_found} клиентов с УТП "
+                        f"Google: {len(clients_payload)} клиентов с УТП; "
+                        f"контактов email/тел: {contacts_n} "
                         f"(queries={len(response.search_queries)})"
                     ),
                 })
             logger.info(
-                "✅ Client Hunter: %s клиентов с УТП сохранено",
-                response.total_found,
+                "✅ Client Hunter: %s клиентов с УТП, контактов=%s",
+                len(clients_payload), contacts_n,
             )
             return True
         except Exception as e:
@@ -466,23 +493,43 @@ class AgentHandlers:
             else:
                 sales_data = SalesResponse(**json.loads(_to_str(agent_response)))
 
-            logger.info(f"📝 Sales: {len(sales_data.messages)} сообщений")
+            logger.info(f"📝 Sales: {len(sales_data.messages)} сообщений (выгрузка, без отправки)")
+
+            from .outreach_export import merge_messages_with_contacts
+
+            clients = list(self.orch.current_project.get("client_hunter_context") or [])
+            messages = merge_messages_with_contacts(
+                [m.model_dump() for m in sales_data.messages],
+                clients,
+            )
 
             if "sales_context" not in self.orch.current_project:
                 self.orch.current_project["sales_context"] = []
             self.orch.current_project["sales_context"].append({
-                "messages": [m.model_dump() for m in sales_data.messages],
+                "messages": messages,
                 "qualification_questions": sales_data.qualification_questions,
                 "next_steps": sales_data.next_steps,
+                "send_mode": "manual_export_only",
             })
+
+            enriched_output = {
+                "messages": messages,
+                "qualification_questions": sales_data.qualification_questions,
+                "next_steps": sales_data.next_steps,
+                "send_mode": "manual_export_only",
+            }
 
             if task_db_id:
                 self.orch.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Отправлено {len(sales_data.messages)} сообщений",
+                    "output_data": json.dumps(enriched_output, ensure_ascii=False),
+                    "qa_feedback": (
+                        f"Подготовлено {len(messages)} писем для ручной отправки "
+                        f"(выгрузка .md/.json/.csv)"
+                    ),
                 })
-            logger.info("✅ Sales: результаты сохранены в контекст")
+            logger.info("✅ Sales: письма сохранены для выгрузки")
             return True
 
         except Exception as e:

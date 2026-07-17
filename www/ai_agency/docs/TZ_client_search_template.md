@@ -81,6 +81,8 @@ _
 | `website` | да | URL из выдачи |
 | `snippet` | да | сниппет Google |
 | `niche` | да | отрасль |
+| `decision_maker_role` | желательно | гипотеза ЛПР (без выдуманного ФИО) |
+| `contact_email` / `phone` / `telegram` | желательно | только из открытых данных / scrape сайта |
 | `pain_hypothesis` | да | 1–3 гипотезы на основе сниппета + цели |
 | `usp.headline` | да | 1 предложение |
 | `usp.value_proposition` | да | персонально под клиента |

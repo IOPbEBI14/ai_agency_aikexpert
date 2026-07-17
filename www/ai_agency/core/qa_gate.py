@@ -26,6 +26,7 @@ _AGENT_QA_CHECKLISTS: dict = {
 - clients согласованы с google_search_results во входных данных (если они были)
 - В clients НЕТ SaaS/CRM/статей (YClients, Bitrix, Albato, «как автоматизировать клинику»)
 - Клиенты соответствуют ICP из goal/task (тип бизнеса), а не «любой медцентр из статьи»
+- По возможности заполнены decision_maker_role и контакты (email/phone) из открытых данных
 - search_queries — prospect-ориентированные (сайт/записаться/город), не «ниша + CRM»
 - search_queries не пустой, если total_found > 0
 """,

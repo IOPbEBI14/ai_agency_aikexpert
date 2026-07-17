@@ -715,6 +715,19 @@ Content-Type: application/json
 
 `lead_hunter` сохранён для сценариев WB/Ozon/Telegram; для монетизации через открытый web используйте `client_hunter`.
 
+### Direction R — Контакты ЛПР + выгрузка писем (NEW)
+
+По факту запуска (см. `AI_Agency - tasks (tasks).json`): у `client_hunter` в карточках
+не было контактов ЛПР; `sales` готовил тексты, но отправки нет → нужен export.
+
+| Проблема | Решение |
+|----------|---------|
+| Нет email/телефона/ЛПР | Поля `decision_maker_role`, `contact_*` в `ClientProspect`; scrape website (`outreach_export.enrich_clients_with_website_contacts`) |
+| Нет выгрузки писем | `GET /api/agency/outreach/export?format=md\|json\|csv` + кнопки на дашборде |
+| Sales «как будто отправил» | `send_mode=manual_export_only`; qa_feedback: «подготовлено N писем» |
+
+Скачивание артефактов расширено: `client_hunter` (контакты), `sales` (письма).
+
 ### Direction Q — Обязательный `sales` после поиска клиентов (NEW)
 
 **Проблема:** PM строил Task Graph с `client_hunter` без `sales` (или клал `sales`
@@ -889,6 +902,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Конфигурация | `config.py` → `Config` | `.env` |
 | Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
 | Task Graph rules | `task_graph_rules.py` | sales обязателен после client_hunter/lead_hunter |
+| Outreach export | `outreach_export.py` + `/api/agency/outreach/export` | контакты ЛПР + выгрузка писем |
 | n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic → B local → C n8n-workflow-validator |
 
 ---

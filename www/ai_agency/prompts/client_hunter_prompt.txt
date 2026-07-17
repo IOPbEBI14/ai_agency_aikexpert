@@ -58,6 +58,11 @@ ICP И ФИЛЬТРАЦИЯ ВЫДАЧИ (КРИТИЧНО)
 - website — link
 - snippet — snippet
 - niche — отрасль по сниппету и ICP
+- decision_maker_role — гипотеза ЛПР (главврач / собственник / маркетолог /
+  коммерческий директор), только если следует из сниппета/цели; ФИО не выдумывать
+- contact_email / contact_phone / contact_telegram — ТОЛЬКО если явно видны
+  в title/snippet (иначе null; система дополнительно скрапит website)
+- contacts_note — "snippet" если контакты из сниппета, иначе null
 - pain_hypothesis — 1–3 гипотезы болей из сниппета и goal (без выдуманных фактов
   вроде «ровно 5 кресел», если этого нет в сниппете)
 - usp.headline — одно цепляющее предложение под ЭТОГО клиента
@@ -83,6 +88,11 @@ ICP И ФИЛЬТРАЦИЯ ВЫДАЧИ (КРИТИЧНО)
       "website": "https://...",
       "snippet": "...",
       "niche": "ниша",
+      "decision_maker_role": "главный врач / собственник",
+      "contact_email": null,
+      "contact_phone": null,
+      "contact_telegram": null,
+      "contacts_note": null,
       "pain_hypothesis": ["боль 1"],
       "usp": {
         "headline": "Заголовок УТП",

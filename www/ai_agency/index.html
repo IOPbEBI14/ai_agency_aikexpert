@@ -880,7 +880,11 @@
 
         <div class="section-title">
             <span>Задачи агентов</span>
-            <span id="poll-hint">обновление каждые 10 с</span>
+            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button type="button" onclick="downloadOutreach('md')">Выгрузить письма .md</button>
+                <button type="button" onclick="downloadOutreach('csv')">.csv</button>
+                <span id="poll-hint">обновление каждые 10 с</span>
+            </span>
         </div>
         <section class="grid" id="task-grid">
             <div class="card">
@@ -1231,6 +1235,13 @@ function renderTasks() {
                 `${artifactDownloadLabel(task.agent_name)}</button>`
             );
         }
+        if (task.agent_name === 'sales' && task.artifact && task.artifact.outreach_export) {
+            actions.push(
+                `<button type="button" onclick="downloadOutreach('md')">Пакет писем .md</button>` +
+                `<button type="button" onclick="downloadOutreach('csv')">Пакет .csv</button>` +
+                `<button type="button" onclick="downloadOutreach('json')">Пакет .json</button>`
+            );
+        }
 
         card.innerHTML = `
             <div class="card-header">
@@ -1256,6 +1267,8 @@ function artifactDownloadLabel(agent) {
     if (agent === 'architect') return 'Скачать архитектуру (.md)';
     if (agent === 'tech_writer') return 'Скачать инструкции (.md)';
     if (agent === 'crm_customizer') return 'Скачать инструкцию CRM (.md)';
+    if (agent === 'client_hunter') return 'Скачать клиентов и контакты (.md)';
+    if (agent === 'sales') return 'Скачать письма (.md)';
     return 'Скачать (.md)';
 }
 
@@ -1328,7 +1341,55 @@ function renderArtifact(task) {
         `;
     }
 
+    if (a.kind === 'clients') {
+        const rows = (a.clients_preview || []).map(c =>
+            `<li><strong>${escapeHtml(c.company_name || '—')}</strong>` +
+            `<div class="muted">${escapeHtml(c.website || '')}</div>` +
+            `<div class="muted">ЛПР: ${escapeHtml(c.decision_maker_role || '—')} · ` +
+            `${escapeHtml(c.contact_email || 'нет email')} · ${escapeHtml(c.contact_phone || 'нет тел.')}</div></li>`
+        ).join('');
+        return `
+            <div class="artifact">
+                <h4>Клиенты и контакты</h4>
+                <div class="muted">Всего: ${a.total_found || 0}, с email/тел: ${a.with_contacts || 0}</div>
+                ${rows ? `<ul>${rows}</ul>` : '<div class="muted">Карточек нет</div>'}
+            </div>
+        `;
+    }
+
+    if (a.kind === 'outreach') {
+        const rows = (a.messages_preview || []).map(m =>
+            `<li><strong>${escapeHtml(m.lead_name || '—')}</strong> ` +
+            `<span class="muted">(${escapeHtml(m.channel || 'email')} → ${escapeHtml(m.to_email || 'нет email')})</span>` +
+            `${m.subject ? `<div class="muted">Тема: ${escapeHtml(m.subject)}</div>` : ''}` +
+            `${m.preview ? `<div class="muted">${escapeHtml(m.preview)}</div>` : ''}</li>`
+        ).join('');
+        return `
+            <div class="artifact">
+                <h4>Готовые письма (ручная отправка)</h4>
+                <div class="muted">Писем: ${a.messages_count || 0} · ${escapeHtml(a.send_mode || 'manual_export_only')}</div>
+                ${rows ? `<ul>${rows}</ul>` : '<div class="muted">Писем нет</div>'}
+            </div>
+        `;
+    }
+
     return '';
+}
+
+function downloadOutreach(fmt) {
+    const projectId = state.project_id || historyProjectId;
+    if (!projectId) {
+        toast('Нет project_id');
+        return;
+    }
+    const url = `${API}/outreach/export?project_id=${encodeURIComponent(projectId)}&format=${encodeURIComponent(fmt || 'md')}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Выгрузка писем…');
 }
 
 function downloadArtifact(taskId) {

@@ -33,5 +33,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 6,
+    "desc": "Контакты ЛПР в результатах + механизм выгрузки готовых писем sales (пока без отправки)",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

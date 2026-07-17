@@ -424,6 +424,26 @@ class ClientProspect(BaseModel):
     website: Optional[str] = Field(default=None, description="URL из Google")
     snippet: Optional[str] = Field(default=None, description="Сниппет Google")
     niche: str = Field(description="Ниша / отрасль")
+    decision_maker_role: Optional[str] = Field(
+        default=None,
+        description=(
+            "Гипотеза роли ЛПР (главврач / собственник / маркетолог / коммерческий директор). "
+            "Только если следует из сниппета/сайта — не выдумывать ФИО."
+        ),
+    )
+    contact_email: Optional[str] = Field(
+        default=None, description="Email с сайта/сниппета (не выдумывать)"
+    )
+    contact_phone: Optional[str] = Field(
+        default=None, description="Телефон с сайта/сниппета (не выдумывать)"
+    )
+    contact_telegram: Optional[str] = Field(
+        default=None, description="Telegram с сайта/сниппета (не выдумывать)"
+    )
+    contacts_note: Optional[str] = Field(
+        default=None,
+        description="Откуда контакты: snippet / website_scrape / not_found",
+    )
     pain_hypothesis: List[str] = Field(
         description="Гипотезы болей на основе открытых данных"
     )
@@ -495,17 +515,29 @@ class LeadHunterResponse(BaseModel):
 # ==================== SALES MODELS ====================
 
 class SalesMessage(BaseModel):
-    """Сообщение для лида."""
-    
+    """Сообщение для лида (текст для ручной отправки / выгрузки)."""
+
     lead_name: str = Field(description="Название компании")
     message_text: str = Field(description="Текст сообщения")
     channel: Literal["telegram", "email", "phone"] = Field(description="Канал связи")
     personalization_points: List[str] = Field(description="Что упомянули о их бизнесе")
+    subject: Optional[str] = Field(
+        default=None, description="Тема письма (для channel=email)"
+    )
+    to_email: Optional[str] = Field(
+        default=None, description="Email получателя из карточки клиента (не выдумывать)"
+    )
+    to_phone: Optional[str] = Field(default=None, description="Телефон из карточки")
+    to_telegram: Optional[str] = Field(default=None, description="Telegram из карточки")
+    website: Optional[str] = Field(default=None, description="Сайт компании")
+    decision_maker_role: Optional[str] = Field(
+        default=None, description="Роль ЛПР (гипотеза из карточки)"
+    )
 
 
 class SalesResponse(BaseModel):
-    """Ответ Sales."""
-    
+    """Ответ Sales: готовые тексты (отправка пока ручная через выгрузку)."""
+
     messages: List[SalesMessage] = Field(description="Список сообщений")
     qualification_questions: List[str] = Field(description="Вопросы для квалификации лида")
     next_steps: str = Field(description="Рекомендации по дальнейшим действиям")

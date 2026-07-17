@@ -60,6 +60,11 @@ class Config:
     OPENSERP_USE_MEGA_FALLBACK = os.getenv(
         "OPENSERP_USE_MEGA_FALLBACK", "true"
     ).strip().lower() in ("1", "true", "yes", "on")
+    # После client_hunter: scrape website лида для email/телефона (открытые контакты).
+    CLIENT_HUNTER_SCRAPE_CONTACTS = os.getenv(
+        "CLIENT_HUNTER_SCRAPE_CONTACTS", "true"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    CLIENT_HUNTER_SCRAPE_MAX = int(os.getenv("CLIENT_HUNTER_SCRAPE_MAX", 15))
 
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")

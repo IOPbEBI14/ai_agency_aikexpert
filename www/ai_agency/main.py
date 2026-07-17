@@ -265,14 +265,16 @@ async def download_artifact(
     project_id: int = Query(..., description="ID проекта"),
     task_id: str = Query(..., min_length=1, description="Логический task_id"),
 ):
-    """Скачать markdown-артефакт задачи (architect / tech_writer / crm_customizer)."""
+    """Скачать markdown-артефакт задачи (architect / tech_writer / crm / hunter / sales)."""
     tasks = await asyncio.to_thread(tasks_db.get_tasks_by_project, project_id)
     task = next((t for t in tasks if t.get("task_id") == task_id), None)
     if not task:
         raise HTTPException(status_code=404, detail=f"Задача {task_id} не найдена")
 
     agent_name = task.get("agent_name") or ""
-    if agent_name not in ("architect", "tech_writer", "crm_customizer"):
+    if agent_name not in (
+        "architect", "tech_writer", "crm_customizer", "client_hunter", "sales",
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"Скачивание не поддерживается для агента {agent_name}",
@@ -287,11 +289,68 @@ async def download_artifact(
         "architect": "architecture",
         "tech_writer": "tech_writer_docs",
         "crm_customizer": "crm_setup_guide",
+        "client_hunter": "clients_contacts",
+        "sales": "outreach_letters",
     }
     filename = f"{names.get(agent_name, agent_name)}_{task_id}.md"
     return Response(
         content=markdown.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/agency/outreach/export")
+async def export_outreach_pack(
+    project_id: int = Query(..., description="ID проекта"),
+    format: str = Query("md", description="Формат: md | json | csv"),
+):
+    """Выгрузка готовых писем sales + контактов client_hunter (без автоотправки)."""
+    from core.outreach_export import (
+        build_outreach_csv,
+        build_outreach_json,
+        build_outreach_markdown,
+        collect_outreach_from_tasks,
+    )
+
+    fmt = (format or "md").strip().lower()
+    if fmt not in ("md", "json", "csv"):
+        raise HTTPException(status_code=400, detail="format должен быть md|json|csv")
+
+    tasks = await asyncio.to_thread(tasks_db.get_tasks_by_project, project_id)
+    clients, messages, questions, next_steps = collect_outreach_from_tasks(tasks)
+    if not messages and not clients:
+        raise HTTPException(
+            status_code=404,
+            detail="Нет данных client_hunter/sales для выгрузки",
+        )
+
+    if fmt == "json":
+        body = build_outreach_json(
+            messages,
+            qualification_questions=questions,
+            next_steps=next_steps,
+            clients=clients,
+        )
+        media = "application/json; charset=utf-8"
+        filename = f"outreach_pack_{project_id}.json"
+    elif fmt == "csv":
+        body = build_outreach_csv(messages)
+        media = "text/csv; charset=utf-8"
+        filename = f"outreach_pack_{project_id}.csv"
+    else:
+        body = build_outreach_markdown(
+            messages,
+            qualification_questions=questions,
+            next_steps=next_steps,
+            clients=clients,
+        )
+        media = "text/markdown; charset=utf-8"
+        filename = f"outreach_pack_{project_id}.md"
+
+    return Response(
+        content=body.encode("utf-8"),
+        media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

@@ -211,6 +211,54 @@ def _build_agent_artifact(agent_name: Optional[str], parsed: Dict[str, Any]) -> 
             "download_name": "crm_setup_guide",
         }
 
+    if agent_name == "client_hunter":
+        clients = [c for c in (parsed.get("clients") or []) if isinstance(c, dict)]
+        with_contacts = sum(
+            1 for c in clients if c.get("contact_email") or c.get("contact_phone")
+        )
+        preview = []
+        for c in clients[:8]:
+            preview.append({
+                "company_name": c.get("company_name") or "",
+                "website": c.get("website") or "",
+                "decision_maker_role": c.get("decision_maker_role") or "",
+                "contact_email": c.get("contact_email") or "",
+                "contact_phone": c.get("contact_phone") or "",
+            })
+        return {
+            "kind": "clients",
+            "title": parsed.get("summary") or "Найденные клиенты",
+            "summary": parsed.get("summary") or "",
+            "total_found": parsed.get("total_found") or len(clients),
+            "with_contacts": with_contacts,
+            "clients_preview": preview,
+            "downloadable": True,
+            "download_name": "clients_contacts",
+        }
+
+    if agent_name == "sales":
+        messages = [m for m in (parsed.get("messages") or []) if isinstance(m, dict)]
+        return {
+            "kind": "outreach",
+            "title": "Готовые письма (ручная отправка)",
+            "summary": parsed.get("next_steps") or "",
+            "messages_count": len(messages),
+            "send_mode": parsed.get("send_mode") or "manual_export_only",
+            "messages_preview": [
+                {
+                    "lead_name": m.get("lead_name") or "",
+                    "channel": m.get("channel") or "",
+                    "to_email": m.get("to_email") or "",
+                    "subject": m.get("subject") or "",
+                    "preview": (m.get("message_text") or "")[:180],
+                }
+                for m in messages[:8]
+            ],
+            "downloadable": True,
+            "download_name": "outreach_letters",
+            "outreach_export": True,
+        }
+
     return None
 
 
@@ -343,6 +391,34 @@ def _artifact_to_markdown(agent_name: str, parsed: Dict[str, Any]) -> str:
             lines.append("## Заметки")
             lines.append(str(parsed["notes"]))
             lines.append("")
+
+    elif agent_name == "client_hunter":
+        lines.append(f"# {parsed.get('summary') or 'Клиенты и контакты'}")
+        lines.append("")
+        for c in parsed.get("clients") or []:
+            if not isinstance(c, dict):
+                continue
+            lines.append(f"## {c.get('company_name') or '—'}")
+            lines.append(f"- Сайт: {c.get('website') or '—'}")
+            lines.append(f"- Ниша: {c.get('niche') or '—'}")
+            lines.append(f"- ЛПР: {c.get('decision_maker_role') or '—'}")
+            lines.append(f"- Email: {c.get('contact_email') or '—'}")
+            lines.append(f"- Телефон: {c.get('contact_phone') or '—'}")
+            lines.append(f"- Telegram: {c.get('contact_telegram') or '—'}")
+            if c.get("contacts_note"):
+                lines.append(f"- Источник контактов: {c['contacts_note']}")
+            if c.get("snippet"):
+                lines.append(f"- Сниппет: {c['snippet']}")
+            lines.append("")
+
+    elif agent_name == "sales":
+        from core.outreach_export import build_outreach_markdown
+
+        return build_outreach_markdown(
+            [m for m in (parsed.get("messages") or []) if isinstance(m, dict)],
+            qualification_questions=list(parsed.get("qualification_questions") or []),
+            next_steps=str(parsed.get("next_steps") or ""),
+        )
 
     else:
         lines.append("# Результат агента")
