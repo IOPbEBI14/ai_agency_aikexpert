@@ -1,0 +1,84 @@
+# Конфиг OpenSERP для AI Agency (client_hunter).
+# Дефолт upstream: app.timeout=15 → Google часто падает с 504 context deadline exceeded
+# (у вас в логах ~38 с). Успешные запросы занимают 7–30+ с — нужен запас.
+
+server:
+  host: 0.0.0.0
+  port: 7000
+  debug: false
+  verbose: false
+  raw_requests: false
+  insecure: true
+
+app:
+  log_format: "text"
+  # Секунд на ОДНУ попытку browser-поиска; deadline запроса ≈ timeout × (1+retries)
+  timeout: 120
+  browser_path: ""
+  profiles: ""
+  head: false
+  leakless: false
+  leave_head: false
+  block_resources: "image,font,css,media"
+  block_trackers: true
+  max_processes: 4
+  idle_ttl: 5m
+  mega_timeout: 180s
+
+extract:
+  enabled: false
+  default_mode: auto
+  timeout: 20s
+  max_bytes: 2000000
+  max_concurrent: 2
+
+proxies:
+  allow_request_proxy_url: true
+  health:
+    failure_threshold: 2
+  lanes:
+    enabled: true
+    max_lanes: 50
+    drop_cookies_on_challenge: true
+
+cache:
+  ttl_seconds: 300
+  max_size: 1000
+
+resilience:
+  max_retries: 2
+  allow_endpoint_fallback: false
+
+cors:
+  enabled: true
+  allow_origins: "*"
+  allow_methods: "GET, POST, OPTIONS"
+  allow_headers: "Origin, Content-Type, Accept, Authorization, X-Request-ID"
+  max_age: 86400
+
+captcha:
+  solver_enabled: false
+
+google:
+  rate_requests: 30
+  rate_burst: 2
+
+yandex:
+  rate_requests: 30
+  rate_burst: 2
+
+bing:
+  rate_requests: 30
+  rate_burst: 2
+
+duckduckgo:
+  rate_requests: 30
+  rate_burst: 2
+
+ecosia:
+  rate_requests: 30
+  rate_burst: 2
+
+baidu:
+  rate_requests: 20
+  rate_burst: 1

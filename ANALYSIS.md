@@ -770,15 +770,24 @@ Content-Type: application/json
 | Слой | Что сделано |
 |------|-------------|
 | Клиент | `core/openserp_client.py` → `OpenSerpClient.search()` — HTTP GET `{base_url}/{engine}/search`, парсит `results[]`, фильтрует не-organic (реклама/related) |
-| Конфиг | `OPENSERP_BASE_URL` (`http://localhost:7000`), `OPENSERP_ENGINE` (`google`), `OPENSERP_TIMEOUT_SEC` (**300 с / 5 мин** — browser SERP медленный) |
+| Конфиг | `OPENSERP_*` + **`openserp/config.yaml`**: `app.timeout: 120` (дефолт upstream 15 с → 504 на Google) |
+| Клиент | `openserp_client.py`: retry на 504/timeout + `/mega/search?mode=any` + fallback engines |
 | Резерв | `core/client_hunter_tools.py` → `run_google_only_search()`: OpenSERP пуст/недоступен для запроса → пробуем Google Custom Search API (если настроен); оба пусты → честный `[]` |
 | Промпт | `client_hunter_prompt.txt`: `google_search_results` теперь описан как «через OpenSERP или резервно Google Custom Search API» |
 | Устойчивость | Любая ошибка сети/HTTP/JSON от OpenSERP — временная, ловится внутри `OpenSerpClient.search()`, никогда не бросает исключение наружу |
 
-Запуск OpenSERP локально:
+Запуск OpenSERP локально (**с agency-конфигом**, иначе дефолт `timeout: 15` → 504):
 
 ```bash
-docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000
+# Linux/macOS
+docker run --rm -p 127.0.0.1:7000:7000 \
+  -v "$PWD/openserp/config.yaml:/config.yaml:ro" \
+  karust/openserp:latest serve --config /config.yaml
+
+# Windows (PowerShell, из www/ai_agency)
+docker run --rm -p 127.0.0.1:7000:7000 `
+  -v "${PWD}/openserp/config.yaml:/config.yaml:ro" `
+  karust/openserp:latest serve --config /config.yaml
 ```
 
 Приоритет источников на каждый search-запрос (не на всю пачку запросов —
@@ -793,9 +802,8 @@ docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -
     collect(hits)
 ```
 
-Тесты: `tests/test_openserp.py` (11 тестов — парсинг, фильтр non-organic, timeout/connection
-error → `[]`, clamp лимита 1–100) + обновлённые `tests/test_client_hunter.py`
-(primary/fallback/оба пусты).
+Тесты: `tests/test_openserp.py` (retry 504, mega/fallback) + `tests/test_client_hunter.py`
+(primary/fallback/оба пусты) — 24 passed.
 
 ### Направление H. UI на React + WebSocket (ТЗ №5) — СЛЕДУЮЩИЙ ЭТАП
 

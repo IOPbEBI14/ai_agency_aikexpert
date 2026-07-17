@@ -207,9 +207,13 @@ TOKEN_BUDGET=500000
 
 # OpenSERP — self-hosted бесплатный SERP API (агент client_hunter, основной источник)
 # https://github.com/karust/openserp — см. раздел "🔎 OpenSERP" ниже
+# Обязательно монтировать openserp/config.yaml (app.timeout: 120), иначе 504 на Google
 OPENSERP_BASE_URL=http://localhost:7000
 OPENSERP_ENGINE=google
 OPENSERP_TIMEOUT_SEC=300
+OPENSERP_MAX_RETRIES=2
+OPENSERP_FALLBACK_ENGINES=bing,yandex,duckduckgo
+OPENSERP_USE_MEGA_FALLBACK=true
 
 # Google Custom Search (агент client_hunter — резервный источник, если OpenSERP недоступен)
 GOOGLE_API_KEY=your_google_api_key
@@ -227,24 +231,48 @@ DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и �
 
 [OpenSERP](https://github.com/karust/openserp) — self-hosted SERP API (Google,
 Yandex, Bing, DuckDuckGo, Baidu, Ecosia), используется агентом `client_hunter`
-как основной источник поиска клиентов вместо платного Google Custom Search API.
+как основной источник поиска клиентов.
 
-Запуск локально через Docker:
+**Важно:** дефолтный `app.timeout=15` у OpenSERP часто даёт `504 context deadline
+exceeded` на Google (browser). В агентстве лежит готовый конфиг
+`openserp/config.yaml` с `timeout: 120` и `resilience.max_retries: 2`.
+
+Запуск с конфигом агентства (рекомендуется):
 
 ```bash
-docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000
+cd www/ai_agency
+docker run --rm -p 127.0.0.1:7000:7000 ^
+  -v "%CD%/openserp/config.yaml:/config.yaml:ro" ^
+  karust/openserp:latest serve --config /config.yaml
 ```
 
-Проверка, что сервер поднялся:
+Linux/macOS:
+
+```bash
+docker run --rm -p 127.0.0.1:7000:7000 \
+  -v "$PWD/openserp/config.yaml:/config.yaml:ro" \
+  karust/openserp:latest serve --config /config.yaml
+```
+
+Проверка:
 
 ```bash
 curl "http://127.0.0.1:7000/google/search?text=test&limit=5"
 ```
 
-Если `OPENSERP_BASE_URL` недоступен или вернул пусто — `client_hunter` автоматически
-переходит на резервный Google Custom Search API (если заданы `GOOGLE_API_KEY`/`GOOGLE_CX`).
-Если недоступны оба источника — агент честно возвращает `clients=[]` и не выдумывает клиентов
-(см. `core/client_hunter_tools.py` → `run_google_only_search()`).
+Клиент (`core/openserp_client.py`) при 504/timeout:
+1. retry с backoff (до `OPENSERP_MAX_RETRIES`)
+2. `/mega/search?mode=any` по fallback-движкам
+3. затем Google Custom Search API (если настроены ключи)
+
+```env
+OPENSERP_BASE_URL=http://localhost:7000
+OPENSERP_ENGINE=google
+OPENSERP_TIMEOUT_SEC=300
+OPENSERP_MAX_RETRIES=2
+OPENSERP_FALLBACK_ENGINES=bing,yandex,duckduckgo
+OPENSERP_USE_MEGA_FALLBACK=true
+```
 
 ### 🛠 n8n-validator (корректная разработка workflow)
 
