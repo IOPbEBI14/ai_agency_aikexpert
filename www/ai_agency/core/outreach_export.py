@@ -10,6 +10,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("OutreachExport")
 
+# Фирменная подпись директора (обязательна в каждом письме sales)
+SALES_SIGNATURE = (
+    'С уважением,\n'
+    'Иконников Алексей,\n'
+    'директор агентства "Деловая экспертиза"'
+)
+
 _BAD_EMAIL_RE = re.compile(
     r"(?i)(noreply|no-?reply|donotreply|example\.|sentry\.|wixpress|"
     r"cloudflare|schema\.org|googleapis|w3\.org|png|jpg|jpeg|webp|svg)"
@@ -104,6 +111,17 @@ def _norm_name(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").strip().lower())
 
 
+def ensure_sales_signature(text: str) -> str:
+    """Гарантирует фирменную подпись в конце письма (если модель забыла)."""
+    body = (text or "").rstrip()
+    if not body:
+        return SALES_SIGNATURE
+    # Уже есть характерный маркер подписи
+    if "иконников алексей" in body.lower() and "деловая экспертиза" in body.lower():
+        return body
+    return f"{body}\n\n{SALES_SIGNATURE}"
+
+
 def merge_messages_with_contacts(
     messages: List[Dict[str, Any]],
     clients: List[Dict[str, Any]],
@@ -123,9 +141,10 @@ def merge_messages_with_contacts(
             "decision_maker_role",
             c.get("decision_maker_role") or m.get("decision_maker_role"),
         )
+        m["message_text"] = ensure_sales_signature(str(m.get("message_text") or ""))
         if not m.get("subject"):
             company = m.get("lead_name") or "клиника"
-            m["subject"] = f"Автоматизация записи — предложение для {company}"
+            m["subject"] = f"Пара идей для {company} — без длинных презентаций"
         # если канал email, но адреса нет — помечаем
         if m.get("channel") == "email" and not m.get("to_email"):
             m["delivery_status"] = "ready_text_no_email"

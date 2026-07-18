@@ -2,11 +2,13 @@
 from unittest.mock import patch
 
 from core.outreach_export import (
+    SALES_SIGNATURE,
     build_outreach_csv,
     build_outreach_json,
     build_outreach_markdown,
     collect_outreach_from_tasks,
     enrich_clients_with_website_contacts,
+    ensure_sales_signature,
     merge_messages_with_contacts,
 )
 
@@ -44,6 +46,14 @@ class TestOutreachContacts:
         assert msgs[0]["to_email"] == "a@test.ru"
         assert msgs[0]["subject"]
         assert msgs[0]["delivery_status"] == "ready_for_manual_send"
+        assert "Иконников Алексей" in msgs[0]["message_text"]
+        assert "Деловая экспертиза" in msgs[0]["message_text"]
+
+    def test_ensure_signature_idempotent(self):
+        once = ensure_sales_signature("Привет")
+        assert once.endswith(SALES_SIGNATURE.splitlines()[-1])
+        twice = ensure_sales_signature(once)
+        assert twice.count("Иконников Алексей") == 1
 
 
 class TestOutreachPack:

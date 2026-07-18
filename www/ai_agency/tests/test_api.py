@@ -252,3 +252,72 @@ class TestResumableProjectStatus:
         resp = c.get("/api/agency/status")
         assert resp.status_code == 200
         assert resp.json()["status"] == "idle"
+
+    def test_completed_project_sets_resume_allowed(self, client):
+        """При completed кнопка «Продолжить» должна быть разрешена (resume_allowed)."""
+        c, mod = client
+        completed = self._project(status="completed", Id=20)
+
+        def side_effect(status):
+            # других resumable нет
+            return None
+
+        mod.orchestrator.current_project = completed
+        mod.projects_db.find_project_by_status.side_effect = side_effect
+        mod.tasks_db.get_tasks_by_project.return_value = []
+
+        resp = c.get("/api/agency/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "completed"
+        assert data["resume_allowed"] is True
+        assert data["can_resume"] is False
+
+    def test_resume_starts_stopped_project(self, client):
+        c, mod = client
+        stopped = self._project(status="stopped", Id=7)
+
+        def side_effect(status):
+            return stopped if status == "stopped" else None
+
+        mod.projects_db.find_project_by_status.side_effect = side_effect
+        mod.orchestrator.initialize.return_value = True
+        mod.orchestrator.current_project = dict(stopped)
+        mod.orchestrator.agency_running = False
+
+        with patch.object(mod, "_start_orchestrator_background") as start:
+            resp = c.post("/api/agency/resume")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "resumed"
+        assert data["project_id"] == 7
+        start.assert_called_once()
+        mod.projects_db.update_project.assert_called()
+
+    def test_resume_awaits_human_review_without_starting(self, client):
+        c, mod = client
+        review = self._project(status="needs_human_review", Id=9)
+
+        def side_effect(status):
+            return review if status == "needs_human_review" else None
+
+        mod.projects_db.find_project_by_status.side_effect = side_effect
+        mod.orchestrator.initialize.return_value = True
+        mod.orchestrator.current_project = dict(review)
+        mod.orchestrator.agency_running = False
+
+        with patch.object(mod, "_start_orchestrator_background") as start:
+            resp = c.post("/api/agency/resume")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "awaiting_human_review"
+        assert data["project_id"] == 9
+        start.assert_not_called()
+
+    def test_resume_404_when_no_resumable(self, client):
+        c, mod = client
+        mod.projects_db.find_project_by_status.side_effect = None
+        mod.projects_db.find_project_by_status.return_value = None
+        mod.orchestrator.agency_running = False
+        resp = c.post("/api/agency/resume")
+        assert resp.status_code == 404

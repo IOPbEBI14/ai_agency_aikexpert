@@ -40,5 +40,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 7,
+    "desc": "Кнопка Продолжить активна при completed; поиск stopped/in_progress/needs_human_review и resume/ожидание human review",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

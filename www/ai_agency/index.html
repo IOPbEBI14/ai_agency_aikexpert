@@ -963,7 +963,7 @@ async function refreshData() {
                 document.getElementById('btn-start').disabled = false;
                 document.getElementById('btn-stop').disabled = !liveRunning;
                 document.getElementById('btn-resume').disabled =
-                    liveRunning || !['stopped', 'needs_human_review'].includes(live.status);
+                    liveRunning || !isResumeAllowed(live);
             }
             renderHistoryChrome();
             return;
@@ -1113,7 +1113,7 @@ function renderMetrics() {
     const running = historyProjectId ? liveRunning : !!d.running;
     document.getElementById('btn-start').disabled = false;
     document.getElementById('btn-stop').disabled = !running;
-    document.getElementById('btn-resume').disabled = running || !['stopped', 'needs_human_review'].includes(d.status);
+    document.getElementById('btn-resume').disabled = running || !isResumeAllowed(d);
 
     const statusEl = document.getElementById('system-status');
     statusEl.textContent = (!historyProjectId && d.running) ? 'Работает' : statusLabel(d.status);
@@ -1591,11 +1591,26 @@ async function stopAgency() {
     setTimeout(refreshData, 500);
 }
 
+function isResumeAllowed(d) {
+    if (!d) return false;
+    if (d.resume_allowed === true || d.can_resume === true) return true;
+    // completed: кнопка активна — resume ищет stopped/in_progress/needs_human_review
+    return ['stopped', 'needs_human_review', 'in_progress', 'completed'].includes(d.status);
+}
+
 async function resumeAgency() {
     const res = await fetch(`${API}/resume`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) return toast(data.error || 'Ошибка');
-    toast('Продолжаем');
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok) {
+        const msg = data.detail || data.error || 'Нет проектов для продолжения';
+        return toast(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    if (data.status === 'awaiting_human_review') {
+        toast(data.error || 'Ожидаются замечания человека (Human Review)');
+    } else {
+        toast(`Продолжаем: ${data.project || 'проект'} (#${data.project_id || '—'})`);
+    }
     setTimeout(refreshData, 1000);
 }
 

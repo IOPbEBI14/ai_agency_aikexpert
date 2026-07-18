@@ -157,16 +157,17 @@ def _agency_task_running() -> bool:
     return agency_task is not None and not agency_task.done()
 
 
-def _find_resumable_project() -> Optional[Dict[str, Any]]:
-    """Ищет проект в БД, который можно продолжить, если он не загружен в память.
+# Проекты, которые «Продолжить» может подхватить (completed — нет: нужен другой проект).
+_RESUMABLE_STATUSES = ("in_progress", "stopped", "needs_human_review")
 
-    Актуально после перезапуска процесса (или когда current_project был
-    перезаписан созданием другого проекта): в БД может быть проект со статусом
-    stopped/needs_human_review/in_progress, о котором /api/agency/status
-    иначе не узнал бы, и кнопка «Продолжить» оставалась бы неактивной, хотя
-    проект реально можно возобновить. Порядок совпадает с Orchestrator.initialize().
+
+def _find_resumable_project() -> Optional[Dict[str, Any]]:
+    """Ищет проект в БД для продолжения: in_progress → stopped → needs_human_review.
+
+    Используется и для кнопки «Продолжить» (в т.ч. когда в памяти лежит
+    completed-проект), и для POST /resume. Новый проект не создаётся.
     """
-    for status in ("in_progress", "stopped", "needs_human_review"):
+    for status in _RESUMABLE_STATUSES:
         try:
             project = projects_db.find_project_by_status(status)
         except Exception as e:
@@ -175,6 +176,20 @@ def _find_resumable_project() -> Optional[Dict[str, Any]]:
         if isinstance(project, dict) and project.get("Id"):
             return project
     return None
+
+
+def _attach_resume_flags(view: Dict[str, Any]) -> Dict[str, Any]:
+    """Добавляет can_resume / resumable_* для UI кнопки «Продолжить»."""
+    resumable = _find_resumable_project()
+    view["can_resume"] = resumable is not None
+    view["resumable_project_id"] = resumable.get("Id") if resumable else None
+    view["resumable_status"] = resumable.get("status") if resumable else None
+    # Завершённый проект: кнопку всё равно можно нажать — resume поищет другой.
+    view["resume_allowed"] = bool(
+        view.get("can_resume")
+        or (view.get("status") or "") in (*_RESUMABLE_STATUSES, "completed")
+    )
+    return view
 
 
 def _start_orchestrator_background() -> None:
@@ -202,7 +217,7 @@ async def get_status():
     if current_project:
         view = await asyncio.to_thread(payloads._project_view_payload, current_project)
         view["running"] = orchestrator.agency_running
-        return view
+        return await asyncio.to_thread(_attach_resume_flags, view)
 
     # current_project не загружен в память (например, после restart процесса),
     # но в БД может быть проект, который реально можно продолжить. Отдаём его
@@ -211,9 +226,10 @@ async def get_status():
     if resumable:
         view = await asyncio.to_thread(payloads._project_view_payload, resumable)
         view["running"] = False
-        return view
+        return await asyncio.to_thread(_attach_resume_flags, view)
 
-    return _idle_status_payload()
+    idle = _idle_status_payload()
+    return await asyncio.to_thread(_attach_resume_flags, idle)
 
 
 @app.get("/api/agency/projects")
@@ -415,26 +431,64 @@ async def stop_agency():
 
 @app.post("/api/agency/resume", response_model=AgencyActionResponse)
 async def resume_agency():
-    """Возобновить работу агентства."""
+    """Продолжить: найти stopped/in_progress/needs_human_review и возобновить.
+
+    - in_progress / stopped → загрузка проекта и запуск цикла;
+    - needs_human_review → загрузка проекта, цикл НЕ стартует (ожидание human-review);
+    - нет кандидатов → 404 (новый проект не создаётся; для этого «Новый проект»).
+    """
     if orchestrator.agency_running or _agency_task_running():
         raise HTTPException(status_code=400, detail="Already running")
 
-    ok = await asyncio.to_thread(orchestrator.initialize)
-    if not ok:
-        raise HTTPException(status_code=500, detail="Failed to initialize project")
+    project = await asyncio.to_thread(_find_resumable_project)
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Нет проектов для продолжения "
+                "(ищем status: in_progress, stopped, needs_human_review). "
+                "Создайте новый проект или дождитесь human review."
+            ),
+        )
 
-    if orchestrator.current_project.get("status") == "needs_human_review":
-        project_id = orchestrator.current_project.get("Id")
-        if project_id:
-            await asyncio.to_thread(
-                projects_db.update_project, project_id, {"status": "in_progress"}
-            )
+    project_id = project["Id"]
+    ok = await asyncio.to_thread(orchestrator.initialize, project_id)
+    if not ok or not orchestrator.current_project:
+        raise HTTPException(status_code=500, detail="Failed to load resumable project")
+
+    status = (orchestrator.current_project.get("status") or "").strip()
+    phase = orchestrator.current_project.get("current_phase")
+    name = orchestrator.current_project.get("project_name")
+
+    if status == "needs_human_review":
+        # Не переводим в in_progress и не запускаем цикл — ждём замечания человека.
+        logger.info(
+            "⏸ Resume → awaiting human review (project #%s %s)",
+            project_id, name,
+        )
+        return AgencyActionResponse(
+            status="awaiting_human_review",
+            project=name,
+            project_id=project_id,
+            phase=phase,
+            error=(
+                "Проект в needs_human_review: опишите замечания в блоке "
+                "Human Review и отправьте — цикл продолжит работу."
+            ),
+        )
+
+    if status == "stopped":
+        await asyncio.to_thread(
+            projects_db.update_project, project_id, {"status": "in_progress"}
+        )
         orchestrator.current_project["status"] = "in_progress"
 
     _start_orchestrator_background()
     return AgencyActionResponse(
         status="resumed",
-        phase=orchestrator.current_project.get("current_phase"),
+        project=name,
+        project_id=project_id,
+        phase=phase,
     )
 
 

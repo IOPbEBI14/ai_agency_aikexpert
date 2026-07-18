@@ -47,6 +47,11 @@ class TestPromptIdentities:
             "должна быть исправлена на Sales Agent."
         )
         assert "Sales Agent" in content or "sales" in content.lower()
+        assert "Иконников Алексей" in content
+        assert "Деловая экспертиза" in content
+        assert "ИИ-стиль" in content or "канцелярит" in content.lower()
+        assert "project_goal" in content
+        assert "предметн" in content.lower() or "ниш" in content.lower()
 
     def test_analyst_prompt_is_analyst(self):
         content = _read_prompt("analyst")
