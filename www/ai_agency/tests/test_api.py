@@ -273,6 +273,21 @@ class TestResumableProjectStatus:
         assert data["resume_allowed"] is True
         assert data["can_resume"] is False
 
+    def test_status_in_progress_does_not_search_resumable_again(self, client):
+        """При проекте в памяти in_progress не дублируем find_project_by_status на poll."""
+        c, mod = client
+        mod.orchestrator.current_project = self._project(status="in_progress", Id=18)
+        mod.tasks_db.get_tasks_by_project.return_value = []
+        mod.projects_db.find_project_by_status.reset_mock()
+
+        resp = c.get("/api/agency/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["project_id"] == 18
+        assert data["can_resume"] is True
+        assert data["resumable_project_id"] == 18
+        mod.projects_db.find_project_by_status.assert_not_called()
+
     def test_resume_starts_stopped_project(self, client):
         c, mod = client
         stopped = self._project(status="stopped", Id=7)

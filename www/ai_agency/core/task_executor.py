@@ -75,7 +75,11 @@ class TaskExecutor:
         if agent_name == "client_hunter":
             input_data = self._inject_google_search(task, input_data)
 
-        logger.info(f"📥 Входные данные для {agent_name}: {json.dumps(input_data, ensure_ascii=False)[:300]}")
+        logger.debug(
+            "📥 Входные данные для %s: %s",
+            agent_name,
+            json.dumps(input_data, ensure_ascii=False)[:300],
+        )
 
         # Проверка лимита итераций
         if iteration_count >= max_iter:

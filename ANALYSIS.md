@@ -771,6 +771,23 @@ Content-Type: application/json
 
 Пример хороших запросов: `частная стоматология Москва официальный сайт`.
 
+### Direction S — Тихое логирование (NEW)
+
+**Проблема:** poll дашборда (`GET /status` каждые 2.5 с) заливал консоль:
+uvicorn access, `Main` timing, NocoDB «получено N задач» + полный URL
+`find_project_by_status`, плюс **дубль**: `_attach_resume_flags` снова искал
+resumable-проект в БД на каждый poll, хотя `current_project` уже в памяти.
+
+| Исправление | Где |
+|-------------|-----|
+| `core/logging_setup.py` | `LOG_LEVEL`, `NOCODB_LOG_LEVEL` (default WARNING), фильтр uvicorn `/status` |
+| Middleware | `/api/agency/status` и `/static/*` → DEBUG |
+| `_attach_resume_flags` | без NocoDB, если статус уже resumable; `known_resumable=` без второго поиска |
+| NocoDB read/PATCH | INFO → DEBUG для рутины |
+
+В INFO остаются старт/стоп оркестратора, LLM, ошибки, создание задач/проектов,
+результаты поиска OpenSERP.
+
 ### Direction L — Замечания по эксплуатации (ИСПРАВЛЕНО)
 
 Три замечания по факту использования дашборда/оркестратора:

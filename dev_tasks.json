@@ -47,5 +47,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 8,
+    "desc": "Переработать логирование: убрать мусор от /status poll и NocoDB INFO; проверить дублирующие вызовы",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

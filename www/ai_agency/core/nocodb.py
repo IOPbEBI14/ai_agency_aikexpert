@@ -135,8 +135,8 @@ class ProjectsClient:
                 limit=1,
                 sort_field="UpdatedAt",
             )
-            logger.info(f"🔍 Поиск проекта со статусом '{status}': {url}")
-            
+            logger.debug("🔍 Поиск проекта status=%s url=%s", status, url)
+
             response = requests.get(url, headers=self.headers, timeout=120)
             
             if response.status_code != 200:
@@ -147,15 +147,16 @@ class ProjectsClient:
             records = data.get("records", [])
 
             if records:
-                # Логируем первую запись для отладки
                 logger.debug(f"?? Первая запись: {json.dumps(records[0], ensure_ascii=False)[:300]}")
                 
                 project = self._unpack_record(records[0])
-                logger.info(f"?? Найден проект в статусе '{status}': {project.get('project_name')} (ID: {project.get('Id')})")
+                logger.debug(
+                    "?? Найден проект status=%s name=%s id=%s",
+                    status, project.get("project_name"), project.get("Id"),
+                )
                 return project
-            else:
-                logger.info(f"?? Проект в статусе '{status}' не найден")
-                return None
+            logger.debug("?? Проект status=%s не найден", status)
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"? Ошибка поиска проекта: {e}")
             return None
@@ -290,7 +291,7 @@ class ProjectsClient:
                 logger.error(f"? Ошибка обновления проекта: {response.status_code} — {response.text[:300]}")
                 return False
             
-            logger.info(f"? Проект обновлён: {project_id}")
+            logger.debug("Проект обновлён: %s", project_id)
             return True
         except requests.exceptions.RequestException as e:
             logger.error(f"? Ошибка обновления проекта: {e}")
@@ -317,11 +318,12 @@ class ProjectsClient:
                 fields["Id"] = r.get("Id")
                 records.append(fields)
 
-            logger.info(f" Получено {len(records)} записей для проекта {project_id}")
+            logger.debug("Получено %s записей для проекта %s", len(records), project_id)
             return records
         except requests.exceptions.RequestException as e:
             logger.error(f" Ошибка чтения записей проекта {project_id}: {e}")
             return []
+
     def find_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
         """Ищет проект по ID."""
         try:
@@ -437,9 +439,8 @@ class TasksClient:
                 task = self._unpack_task(r)
                 tasks.append(task)
             
-            logger.info(f"📥 Получено {len(tasks)} задач для проекта {project_id}")
-            
-            # Отладка: проверяем, что у всех задач есть Id
+            logger.debug("📥 Получено %s задач для проекта %s", len(tasks), project_id)
+
             tasks_without_id = [t for t in tasks if not t.get("Id")]
             if tasks_without_id:
                 logger.warning(f"⚠️ {len(tasks_without_id)} задач без Id! Это приведёт к ошибкам обновления.")
@@ -482,7 +483,7 @@ class TasksClient:
             # ВАЖНО: в API v3 поле "id" с маленькой буквы, а не "Id"!
             payload = [{"id": task_id, "fields": data}]
             
-            logger.info(f"📝 PATCH задача {task_id}: {data}")
+            logger.debug("📝 PATCH задача %s: %s", task_id, data)
             logger.debug(f"📝 PATCH payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
             response = requests.patch(self.tasks_url, json=payload, headers=self.headers, timeout=120)
@@ -491,7 +492,7 @@ class TasksClient:
                 logger.error(f"❌ Ошибка обновления задачи {task_id}: {response.status_code} — {response.text[:300]}")
                 return False
             
-            logger.info(f"✅ Задача обновлена: {task_id}")
+            logger.debug("✅ Задача обновлена: %s", task_id)
             return True
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка обновления задачи {task_id}: {e}")

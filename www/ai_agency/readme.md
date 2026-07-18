@@ -204,6 +204,10 @@ LLM_MODEL=yandexgpt
 
 # Project Configuration
 TOKEN_BUDGET=500000
+# Логи: INFO по умолчанию; poll /status и рутина NocoDB не засоряют консоль
+# LOG_LEVEL=INFO
+# NOCODB_LOG_LEVEL=WARNING
+
 
 # OpenSERP — self-hosted бесплатный SERP API (агент client_hunter, основной источник)
 # https://github.com/karust/openserp — см. раздел "🔎 OpenSERP" ниже

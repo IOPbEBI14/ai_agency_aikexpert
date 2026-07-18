@@ -35,6 +35,7 @@ from core.api_schemas import (
     WorkflowsListResponse,
 )
 from core.config import Config
+from core.logging_setup import configure_logging, is_quiet_http_path
 from core.nocodb import NocoDBClient, ProjectsClient, TasksClient
 from core.orchestrator import Orchestrator
 from core.utils import call_llm, load_prompt, log_to_agent_logs
@@ -42,10 +43,7 @@ from core.utils import call_llm, load_prompt, log_to_agent_logs
 _BASE_DIR = Path(__file__).resolve().parent
 _WORKFLOWS_DIR = _BASE_DIR / "workflows"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+configure_logging()
 logger = logging.getLogger("Main")
 
 db = NocoDBClient()
@@ -76,16 +74,18 @@ _HOP_BY_HOP = frozenset(
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Логирует метод, путь и длительность каждого HTTP-запроса."""
+    """Логирует HTTP-запросы; poll /status и static — только на DEBUG."""
 
     async def dispatch(self, request: Request, call_next):
         started = time.perf_counter()
         response = await call_next(request)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        logger.info(
+        path = request.url.path
+        log_fn = logger.debug if is_quiet_http_path(path) else logger.info
+        log_fn(
             "%s %s → %s (%.1f ms)",
             request.method,
-            request.url.path,
+            path,
             response.status_code,
             elapsed_ms,
         )
@@ -178,16 +178,39 @@ def _find_resumable_project() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _attach_resume_flags(view: Dict[str, Any]) -> Dict[str, Any]:
-    """Добавляет can_resume / resumable_* для UI кнопки «Продолжить»."""
-    resumable = _find_resumable_project()
+_RESUME_UNSET = object()
+
+
+def _attach_resume_flags(
+    view: Dict[str, Any],
+    *,
+    known_resumable: Any = _RESUME_UNSET,
+) -> Dict[str, Any]:
+    """Добавляет can_resume / resumable_* для UI кнопки «Продолжить».
+
+    Не ходит в NocoDB, если:
+    - уже передан known_resumable (в т.ч. None после одного поиска);
+    - текущий view сам в resumable-статусе (in_progress/stopped/needs_human_review).
+    Поиск в БД нужен только для completed/idle — есть ли другой проект.
+    """
+    status = (view.get("status") or "").strip()
+    if known_resumable is not _RESUME_UNSET:
+        resumable = known_resumable
+    elif status in _RESUMABLE_STATUSES and view.get("project_id"):
+        resumable = {"Id": view.get("project_id"), "status": status}
+    else:
+        resumable = _find_resumable_project()
+
     view["can_resume"] = resumable is not None
-    view["resumable_project_id"] = resumable.get("Id") if resumable else None
-    view["resumable_status"] = resumable.get("status") if resumable else None
-    # Завершённый проект: кнопку всё равно можно нажать — resume поищет другой.
+    view["resumable_project_id"] = (
+        resumable.get("Id") if isinstance(resumable, dict) else None
+    )
+    view["resumable_status"] = (
+        resumable.get("status") if isinstance(resumable, dict) else None
+    )
     view["resume_allowed"] = bool(
         view.get("can_resume")
-        or (view.get("status") or "") in (*_RESUMABLE_STATUSES, "completed")
+        or status in (*_RESUMABLE_STATUSES, "completed")
     )
     return view
 
@@ -217,19 +240,22 @@ async def get_status():
     if current_project:
         view = await asyncio.to_thread(payloads._project_view_payload, current_project)
         view["running"] = orchestrator.agency_running
+        # Без повторного find_project_by_status на каждый poll (см. _attach_resume_flags).
         return await asyncio.to_thread(_attach_resume_flags, view)
 
-    # current_project не загружен в память (например, после restart процесса),
-    # но в БД может быть проект, который реально можно продолжить. Отдаём его
-    # статус, чтобы кнопка «Продолжить» не выглядела неактивной без причины.
+    # current_project не в памяти — один поиск resumable, без второго в attach.
     resumable = await asyncio.to_thread(_find_resumable_project)
     if resumable:
         view = await asyncio.to_thread(payloads._project_view_payload, resumable)
         view["running"] = False
-        return await asyncio.to_thread(_attach_resume_flags, view)
+        return await asyncio.to_thread(
+            _attach_resume_flags, view, known_resumable=resumable
+        )
 
     idle = _idle_status_payload()
-    return await asyncio.to_thread(_attach_resume_flags, idle)
+    return await asyncio.to_thread(
+        _attach_resume_flags, idle, known_resumable=None
+    )
 
 
 @app.get("/api/agency/projects")
