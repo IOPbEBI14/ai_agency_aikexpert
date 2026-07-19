@@ -483,24 +483,50 @@ class ClientHunterResponse(BaseModel):
 # ==================== LEAD HUNTER MODELS ====================
 
 class Lead(BaseModel):
-    """Лид."""
-    
-    company_name: str = Field(description="Название компании")
-    marketplace: str = Field(description="Маркетплейс")
-    category: str = Field(description="Категория товаров")
-    estimated_revenue: Optional[str] = Field(default=None, description="Примерный оборот")
-    pain_points: List[str] = Field(description="Болевые точки")
-    contact_telegram: Optional[str] = Field(default=None, description="Telegram контакт")
-    contact_email: Optional[str] = Field(default=None, description="Email контакт")
-    contact_phone: Optional[str] = Field(default=None, description="Телефон контакт")
-    source: str = Field(description="Источник")
+    """Лид из открытого Google/OpenSERP-поиска (не выдуманный)."""
+
+    company_name: str = Field(description="Название компании — из title SERP")
+    marketplace: str = Field(
+        description="Маркетплейс / канал (WB, Ozon, open_web) — гипотеза по сниппету"
+    )
+    category: str = Field(description="Категория товаров / ниша")
+    estimated_revenue: Optional[str] = Field(
+        default=None,
+        description="Оборот — только если явно следует из открытых данных, иначе null",
+    )
+    pain_points: List[str] = Field(description="Гипотезы болей по сниппету и goal")
+    contact_telegram: Optional[str] = Field(
+        default=None, description="Telegram — только из сниппета/сайта, иначе null"
+    )
+    contact_email: Optional[str] = Field(
+        default=None, description="Email — только из сниппета/сайта, иначе null"
+    )
+    contact_phone: Optional[str] = Field(
+        default=None, description="Телефон — только из сниппета/сайта, иначе null"
+    )
+    website: Optional[str] = Field(
+        default=None, description="URL из google_search_results.link"
+    )
+    source_url: Optional[str] = Field(
+        default=None, description="Тот же URL результата поиска (обязателен для валидного лида)"
+    )
+    source_query: Optional[str] = Field(
+        default=None, description="Запрос OpenSERP, по которому найден результат"
+    )
+    source: str = Field(
+        description="Источник: openserp / google + краткое описание, без выдуманного парсинга"
+    )
 
 
 class LeadHunterResponse(BaseModel):
-    """Ответ Lead Hunter."""
+    """Ответ Lead Hunter — только по google_search_results (OpenSERP)."""
 
     leads_found: List[Lead] = Field(description="Список найденных лидов")
     total_found: int = Field(description="Общее количество найденных лидов")
+    search_queries: List[str] = Field(
+        default_factory=list,
+        description="Запросы OpenSERP / рекомендованные prospect-запросы",
+    )
     notes: Optional[str] = Field(default=None, description="Комментарий о качестве лидов")
     handoff_to_sales: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -820,16 +846,20 @@ def _build_examples() -> dict:
                     "company_name": "ООО Ромашка",
                     "marketplace": "Wildberries",
                     "category": "Одежда",
-                    "estimated_revenue": "1-2 млн руб/мес",
+                    "estimated_revenue": None,
                     "pain_points": ["Ручная обработка отзывов"],
-                    "contact_telegram": "@romashka_seller",
+                    "contact_telegram": None,
                     "contact_email": None,
                     "contact_phone": None,
-                    "source": "Telegram-канал 'Селлеры WB'",
+                    "website": "https://romashka-shop.example",
+                    "source_url": "https://romashka-shop.example",
+                    "source_query": "бренд одежды официальный сайт",
+                    "source": "openserp:google",
                 }
             ],
             "total_found": 1,
-            "notes": "Найден 1 качественный лид",
+            "search_queries": ["бренд одежды официальный сайт"],
+            "notes": "Найден 1 лид из OpenSERP",
         },
         ClientHunterResponse: {
             "summary": "Найдено 2 клиента через Google; подготовлены персональные УТП",

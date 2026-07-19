@@ -1,5 +1,5 @@
 """Инварианты Task Graph: sales обязателен после hunter."""
-from core.task_graph_rules import enforce_sales_after_hunters
+from core.task_graph_rules import enforce_sales_after_hunters, prefer_single_hunter
 
 
 class TestEnforceSalesAfterHunters:
@@ -62,3 +62,35 @@ class TestEnforceSalesAfterHunters:
         )
         assert any(t["agent_name"] == "sales" for t in tasks)
         assert "sales" not in excluded
+
+
+class TestPreferSingleHunter:
+    def test_drops_client_hunter_for_seller_goal(self):
+        tasks, excluded = prefer_single_hunter(
+            [
+                {"task_id": "ch", "agent_name": "client_hunter", "depends_on": []},
+                {"task_id": "lh", "agent_name": "lead_hunter", "depends_on": []},
+                {"task_id": "s", "agent_name": "sales", "depends_on": ["ch", "lh"]},
+            ],
+            goal="Найти селлеров Wildberries и Ozon",
+        )
+        agents = [t["agent_name"] for t in tasks]
+        assert "lead_hunter" in agents
+        assert "client_hunter" not in agents
+        assert "client_hunter" in excluded
+        sales = next(t for t in tasks if t["agent_name"] == "sales")
+        assert "ch" not in sales["depends_on"]
+        assert "lh" in sales["depends_on"]
+
+    def test_drops_lead_hunter_for_clinic_goal(self):
+        tasks, excluded = prefer_single_hunter(
+            [
+                {"task_id": "ch", "agent_name": "client_hunter", "depends_on": []},
+                {"task_id": "lh", "agent_name": "lead_hunter", "depends_on": []},
+            ],
+            goal="Частные стоматологии Москва",
+        )
+        agents = [t["agent_name"] for t in tasks]
+        assert "client_hunter" in agents
+        assert "lead_hunter" not in agents
+        assert "lead_hunter" in excluded

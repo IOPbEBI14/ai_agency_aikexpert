@@ -30,6 +30,14 @@ _AGENT_QA_CHECKLISTS: dict = {
 - search_queries — prospect-ориентированные (сайт/записаться/город), не «ниша + CRM»
 - search_queries не пустой, если total_found > 0
 """,
+    "lead_hunter": """
+СПЕЦИФИКА ПРОВЕРКИ LEAD HUNTER:
+- Лиды только из google_search_results (OpenSERP); нет выдуманных компаний
+- У каждого лида есть website или source_url из выдачи
+- Нет фейковых @telegram / email / телефонов без подтверждения в сниппете
+- Если SERP пуст — leads_found=[] и честные notes
+- source не должен утверждать «парсинг WB/Telegram», если данных не было
+""",
     "architect": """
 СПЕЦИФИКА ПРОВЕРКИ АРХИТЕКТУРЫ:
 - workflow_blueprint должен содержать nodes[] со ВСЕМИ нодами (включая Set-ноды для сохранения контекста перед HTTP)

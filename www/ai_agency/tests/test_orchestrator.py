@@ -431,14 +431,23 @@ class TestOrchestratorNewAgents:
                     marketplace="WB",
                     category="Одежда",
                     pain_points=["Много отзывов"],
-                    source="Telegram"
+                    website="https://romashka.example",
+                    source_url="https://romashka.example",
+                    source="openserp:google",
                 )
             ],
             total_found=1,
             notes="Найден 1 лид"
         )
-        
-        # Вызываем метод
+        orchestrator.current_project["_lead_hunter_serp"] = [
+            {
+                "title": "ООО Ромашка",
+                "link": "https://romashka.example",
+                "snippet": "магазин",
+                "query": "q",
+            }
+        ]
+
         result = orchestrator._handle_lead_hunter(
             sample_task_data,
             sample_task_data["Id"],
@@ -458,8 +467,14 @@ class TestOrchestratorNewAgents:
         from core.schemas import SalesResponse, SalesMessage
         
         orchestrator.current_project = sample_project_data
-        
-        # Создаём Pydantic-модель
+        orchestrator.current_project["client_hunter_context"] = [
+            {
+                "company_name": "ООО Ромашка",
+                "website": "https://romashka.example",
+                "contact_email": "info@romashka.example",
+            }
+        ]
+
         sales_response = SalesResponse(
             messages=[
                 SalesMessage(
@@ -473,7 +488,6 @@ class TestOrchestratorNewAgents:
             next_steps="Назначить встречу"
         )
         
-        # Вызываем метод
         result = orchestrator._handle_sales(
             sample_task_data,
             sample_task_data["Id"],

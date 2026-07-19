@@ -13,12 +13,57 @@ logger = logging.getLogger("TaskGraphRules")
 
 _LEAD_GEN_AGENTS = frozenset({"client_hunter", "lead_hunter"})
 
+_SELLER_GOAL_MARKERS = (
+    "wb", "wildberries", "ozon", "селлер", "маркетплейс", "продавец wb",
+    "продавцы ozon",
+)
+
 _SALES_AFTER_HUNTER_DESCRIPTION = (
     "Напиши персонализированные холодные сообщения и вопросы квалификации "
     "по найденным клиентам/лидам. Источники: client_hunter_context и/или "
-    "leads_context, USP, client_hunter_handoff_to_sales / leads_handoff_to_sales. "
-    "Если лидов нет — messages=[] и объясни в next_steps (не выдумывай компании)."
+    "leads_context (только с website/source_url), USP, handoff_to_sales. "
+    "Если реальных лидов нет — messages=[] и объясни в next_steps "
+    "(не выдумывай компании)."
 )
+
+
+def prefer_single_hunter(
+    tasks: List[Dict[str, Any]],
+    excluded_agents: Optional[List[str]] = None,
+    goal: str = "",
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Не запускать client_hunter и lead_hunter одновременно.
+
+    Оба бьют в OpenSERP; двойной запуск даёт шум и провоцирует галлюцинации.
+    - goal про селлеров WB/Ozon → оставляем lead_hunter;
+    - иначе → client_hunter (общий ICP / клиники / школы / …).
+    """
+    excluded = [a for a in (excluded_agents or []) if a]
+    normalized = [dict(t) for t in (tasks or []) if isinstance(t, dict)]
+    hunters = [t for t in normalized if t.get("agent_name") in _LEAD_GEN_AGENTS]
+    if len(hunters) < 2:
+        return normalized, excluded
+
+    low = (goal or "").lower()
+    prefer_seller = any(m in low for m in _SELLER_GOAL_MARKERS)
+    keep = "lead_hunter" if prefer_seller else "client_hunter"
+    drop = "client_hunter" if prefer_seller else "lead_hunter"
+
+    dropped_ids = {
+        t.get("task_id") for t in normalized if t.get("agent_name") == drop
+    }
+    normalized = [t for t in normalized if t.get("agent_name") != drop]
+    for t in normalized:
+        deps = _as_list(t.get("depends_on"))
+        t["depends_on"] = [d for d in deps if d not in dropped_ids]
+
+    if drop not in excluded:
+        excluded.append(drop)
+    logger.info(
+        "Task Graph: один hunter — оставляем %s, убираем %s (goal_seller=%s)",
+        keep, drop, prefer_seller,
+    )
+    return normalized, excluded
 
 
 def _as_list(value: Any) -> List[Any]:

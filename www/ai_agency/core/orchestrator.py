@@ -335,10 +335,12 @@ class Orchestrator:
 ⚠️ КРИТИЧНО: Используй поле "task_id" (НЕ "id"!) для идентификации задач!
 
 ОБЯЗАТЕЛЬНАЯ ЦЕПОЧКА МОНЕТИЗАЦИИ:
-Если в графе есть client_hunter и/или lead_hunter — ОБЯЗАТЕЛЬНО добавь задачу sales
-с depends_on на эти hunter-задачи. Нельзя исключать sales, если идёт поиск клиентов:
-sales пишет тексты сообщений по найденным лидам/УТП. Пример:
-task_001 client_hunter → task_002 sales (depends_on: ["task_001"]).
+Выбери ОДИН hunter (не оба сразу):
+- client_hunter — общий поиск клиентов по ICP (клиники, школы, ИМ, …) через OpenSERP;
+- lead_hunter — селлеры/бренды WB/Ozon (тоже OpenSERP, без выдуманных контактов).
+Если в графе есть hunter — ОБЯЗАТЕЛЬНО sales с depends_on на него.
+Пример: task_001 client_hunter → task_002 sales (depends_on: ["task_001"]).
+ЗАПРЕЩЕНО одновременно ставить client_hunter и lead_hunter.
 
 max_iterations по умолчанию: 3 для большинства агентов, но для agent_name="developer"
 используй 6 — сложные n8n-интеграции чаще требуют доработки по фидбеку QA.
@@ -387,8 +389,13 @@ max_iterations по умолчанию: 3 для большинства аген
                 logger.error("❌ PM не вернул задачи")
                 return False
 
-            from .task_graph_rules import enforce_sales_after_hunters
+            from .task_graph_rules import enforce_sales_after_hunters, prefer_single_hunter
 
+            tasks_list, excluded_agents = prefer_single_hunter(
+                tasks_list,
+                excluded_agents,
+                goal=project_goal,
+            )
             tasks_list, excluded_agents = enforce_sales_after_hunters(
                 tasks_list, excluded_agents
             )

@@ -771,6 +771,22 @@ Content-Type: application/json
 
 Пример хороших запросов: `частная стоматология Москва официальный сайт`.
 
+### Direction T — lead_hunter: OpenSERP + анти-галлюцинации + один hunter (NEW)
+
+**Проблема:** `lead_hunter` выдумывал селлеров («Модный Дом», фейковые @telegram /
+email), хотя `client_hunter` честно вернул 0. Оба hunter работали параллельно →
+`sales` писал письма по галлюцинациям.
+
+| Исправление | Где |
+|-------------|-----|
+| OpenSERP inject до LLM | `task_executor._inject_lead_search` + `lead_hunter_tools` |
+| Промпт | только `google_search_results`; запрет выдуманных контактов |
+| Post-filter | `filter_hallucinated_leads` — лид без URL из SERP отбрасывается |
+| Маршрутизация | `prefer_single_hunter`: ровно один из client_hunter / lead_hunter |
+| Sales | письма только по компаниям из подтверждённого контекста |
+
+Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
+
 ### Direction S — Тихое логирование (NEW)
 
 **Проблема:** poll дашборда (`GET /status` каждые 2.5 с) заливал консоль:

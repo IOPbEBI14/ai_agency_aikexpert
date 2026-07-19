@@ -356,12 +356,22 @@ class TestLeadHunterHandoff:
                     marketplace="WB",
                     category="Одежда",
                     pain_points=["Ручная обработка"],
-                    source="Telegram",
+                    website="https://romashka.example",
+                    source_url="https://romashka.example",
+                    source="openserp:google",
                 )
             ],
             total_found=1,
             handoff_to_sales={"recommended_approach": "Тёплый", "key_pain_points": ["боль"]},
         )
+        mock_orch.current_project["_lead_hunter_serp"] = [
+            {
+                "title": "ООО Ромашка | Официальный сайт",
+                "link": "https://romashka.example",
+                "snippet": "Магазин одежды",
+                "query": "бренд одежда сайт",
+            }
+        ]
 
         result = handlers.handle_lead_hunter(
             task={"Id": 1, "task_id": "t1", "task_description": "Поиск лидов"},
@@ -374,6 +384,7 @@ class TestLeadHunterHandoff:
         assert result is True
         assert "leads_handoff_to_sales" in mock_orch.current_project
         assert mock_orch.current_project["leads_handoff_to_sales"]["recommended_approach"] == "Тёплый"
+        assert len(mock_orch.current_project["leads_context"]) == 1
 
     def test_handle_lead_hunter_without_handoff(self):
         """handle_lead_hunter без handoff не ломается."""

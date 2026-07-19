@@ -20,7 +20,11 @@ class TestClientHunterTools:
     def test_build_queries_from_goal(self):
         qs = build_search_queries(goal="Автоматизация для селлеров WB", max_queries=3)
         assert qs
-        assert any("wildberries" in q.lower() or "селлер" in q.lower() for q in qs)
+        # Seller ICP → запросы на сайты брендов/ИМ (не выдачу wildberries.ru)
+        assert any(
+            "бренд" in q.lower() or "магазин" in q.lower() or "сайт" in q.lower()
+            for q in qs
+        )
 
     def test_dental_icp_uses_prospect_queries_not_crm(self):
         goal = (

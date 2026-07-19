@@ -54,5 +54,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 9,
+    "desc": "lead_hunter галлюцинирует — перевести на OpenSERP, запретить выдуманные лиды; поправить маршрутизацию с client_hunter",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

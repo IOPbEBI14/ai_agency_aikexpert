@@ -71,9 +71,11 @@ class TaskExecutor:
             all_tasks = self.orch.tasks_db.get_tasks_by_project(project_id) if project_id else []
         input_data = self.orch._build_enriched_input_data(task, all_tasks)
 
-        # client_hunter: перед LLM подмешиваем РЕАЛЬНЫЕ результаты Google (единственный источник)
+        # Перед LLM подмешиваем РЕАЛЬНЫЙ OpenSERP (анти-галлюцинации)
         if agent_name == "client_hunter":
             input_data = self._inject_google_search(task, input_data)
+        elif agent_name == "lead_hunter":
+            input_data = self._inject_lead_search(task, input_data)
 
         logger.debug(
             "📥 Входные данные для %s: %s",
@@ -292,6 +294,33 @@ class TaskExecutor:
                 "Не выдумывай клиники/компании. Верни clients=[] если нет "
                 "hit_class=prospect_candidate; в search_queries предложи запросы "
                 "на сайты бизнесов (официальный сайт / записаться / город)."
+            )
+        return input_data
+
+    def _inject_lead_search(self, task: Dict, input_data: Dict) -> Dict:
+        """Подмешивает OpenSERP-поиск брендов/ИМ для lead_hunter."""
+        from .lead_hunter_tools import run_lead_serp_search
+
+        goal = ""
+        if self.orch.current_project:
+            goal = self.orch.current_project.get("goal") or ""
+        pack = run_lead_serp_search(
+            goal=goal,
+            task_description=task.get("task_description") or "",
+            llm_queries=input_data.get("search_queries")
+            if isinstance(input_data.get("search_queries"), list)
+            else None,
+        )
+        input_data.update(pack)
+        # Для post-filter в handle_lead_hunter (task.input_data в БД может быть старым)
+        if self.orch.current_project is not None:
+            self.orch.current_project["_lead_hunter_serp"] = list(
+                pack.get("google_search_results") or []
+            )
+        if not pack.get("google_search_results"):
+            input_data["google_search_warning"] = (
+                "OpenSERP не дал сайтов брендов/ИМ (или только маркетплейсы/SaaS). "
+                "Не выдумывай лидов — верни leads_found=[], total_found=0."
             )
         return input_data
 

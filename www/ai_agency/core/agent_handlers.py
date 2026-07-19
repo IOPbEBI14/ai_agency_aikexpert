@@ -31,9 +31,8 @@ QA Gate — отдельный LLM-вызов, который проверяет
      на dev_* подзадачи (2-й LLM-вызов с PMDecomposition-моделью)
 
 3. ИМЕЕТ FALLBACK-ЛОГИКУ РЕАЛЬНОГО ИНСТРУМЕНТА:
-   - lead_hunter → если LLM не вернул лидов, вызывает Telegram search API
-   - client_hunter → перед LLM подмешивает Google Custom Search;
-     сохраняет клиентов + УТП в client_hunter_context
+   - lead_hunter → OpenSERP inject + фильтр галлюцинаций; leads_context
+   - client_hunter → OpenSERP inject + УТП в client_hunter_context
 
 Агенты со спец-хендлерами авто-подтверждают QA ("qa_approved": "true")
 и сами проставляют статус "completed", не используя QA Gate.
@@ -394,90 +393,99 @@ class AgentHandlers:
     def handle_lead_hunter(
         self, task: Dict, task_db_id: Any, task_name: str, agent_response: Any, pm_prompt: str
     ) -> bool:
-        """Lead Hunter: парсит ответ агента или выполняет реальный поиск."""
+        """Lead Hunter: только лиды, подтверждённые OpenSERP (анти-галлюцинации)."""
         try:
-            # Пробуем использовать уже готовый ответ агента (Pydantic или JSON-строка)
+            from .lead_hunter_tools import (
+                enrich_lead_contacts,
+                filter_hallucinated_leads,
+            )
+
             if isinstance(agent_response, LeadHunterResponse):
                 lead_response = agent_response
             elif isinstance(agent_response, str) and agent_response.strip().startswith("{"):
                 lead_response = LeadHunterResponse(**json.loads(agent_response))
             else:
-                # Fallback: реальный поиск через Telegram
-                lead_response = self._search_leads_real(task)
+                lead_response = LeadHunterResponse(
+                    leads_found=[],
+                    total_found=0,
+                    notes="LLM не вернул LeadHunterResponse",
+                )
 
-            if "leads_context" not in self.orch.current_project:
-                self.orch.current_project["leads_context"] = []
-            for lead in lead_response.leads_found:
-                self.orch.current_project["leads_context"].append({
-                    "company_name": lead.company_name,
-                    "marketplace": lead.marketplace,
-                    "category": lead.category,
-                    "pain_points": lead.pain_points,
-                    "contact_telegram": lead.contact_telegram,
-                    "contact_email": lead.contact_email,
-                    "contact_phone": lead.contact_phone,
-                    "source": lead.source,
-                })
+            # SERP из input задачи (inject до LLM) — источник истины
+            serp: list = []
+            try:
+                raw_in = task.get("input_data") or "{}"
+                inp = json.loads(raw_in) if isinstance(raw_in, str) else (raw_in or {})
+                serp = list(inp.get("google_search_results") or [])
+            except Exception:
+                serp = []
+            if not serp and self.orch.current_project:
+                serp = list(
+                    self.orch.current_project.get("_lead_hunter_serp") or []
+                )
 
-            # Сохраняем handoff_to_sales — рекомендации Sales-агенту (тон, ключевые боли)
+            raw_leads = [lead.model_dump() for lead in lead_response.leads_found]
+            verified = filter_hallucinated_leads(raw_leads, serp)
+            if verified:
+                verified = enrich_lead_contacts(verified)
+
+            dropped = len(raw_leads) - len(verified)
+            if dropped:
+                logger.warning(
+                    "lead_hunter: отброшено %s галлюцинированных лидов из %s",
+                    dropped, len(raw_leads),
+                )
+
+            self.orch.current_project["leads_context"] = [
+                {
+                    "company_name": L.get("company_name"),
+                    "marketplace": L.get("marketplace"),
+                    "category": L.get("category"),
+                    "pain_points": L.get("pain_points") or [],
+                    "contact_telegram": L.get("contact_telegram"),
+                    "contact_email": L.get("contact_email"),
+                    "contact_phone": L.get("contact_phone"),
+                    "website": L.get("website") or L.get("source_url"),
+                    "source_url": L.get("source_url"),
+                    "source_query": L.get("source_query"),
+                    "source": L.get("source") or "openserp",
+                }
+                for L in verified
+            ]
+
             if lead_response.handoff_to_sales:
-                self.orch.current_project["leads_handoff_to_sales"] = lead_response.handoff_to_sales
-                logger.info(
-                    f"📋 handoff_to_sales сохранён: {list(lead_response.handoff_to_sales.keys())}"
+                self.orch.current_project["leads_handoff_to_sales"] = (
+                    lead_response.handoff_to_sales
+                )
+
+            enriched_output = lead_response.model_dump()
+            enriched_output["leads_found"] = verified
+            enriched_output["total_found"] = len(verified)
+            if dropped:
+                note = enriched_output.get("notes") or ""
+                enriched_output["notes"] = (
+                    f"{note} | Отфильтровано выдуманных лидов: {dropped}".strip(" |")
                 )
 
             if task_db_id:
                 self.orch.tasks_db.update_task(task_db_id, {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Найдено {lead_response.total_found} лидов",
+                    "output_data": json.dumps(enriched_output, ensure_ascii=False),
+                    "qa_feedback": (
+                        f"OpenSERP: {len(verified)} подтверждённых лидов"
+                        + (f" (отброшено выдуманных: {dropped})" if dropped else "")
+                    ),
                 })
-            logger.info(f"✅ Lead Hunter: {lead_response.total_found} лидов сохранено в контекст")
+            logger.info(
+                "✅ Lead Hunter: %s лидов (SERP=%s, dropped=%s)",
+                len(verified), len(serp), dropped,
+            )
             return True
 
         except Exception as e:
             logger.error(f"❌ Ошибка обработки Lead Hunter: {e}", exc_info=True)
             return False
-
-    def _search_leads_real(self, task: Dict) -> LeadHunterResponse:
-        """Реальный поиск лидов через Telegram."""
-        from .lead_tools import lead_tools
-
-        task_description = task.get("task_description", "")
-
-        # Определяем категорию из описания задачи
-        category = "Одежда"
-        desc_lower = task_description.lower()
-        if "электроник" in desc_lower:
-            category = "Электроника"
-        elif "товар" in desc_lower and "дом" in desc_lower:
-            category = "Товары для дома"
-        elif "косметик" in desc_lower:
-            category = "Косметика"
-
-        reviews_match = re.search(r"(\d+)\s*\+?\s*отзыв", desc_lower)
-        min_reviews = int(reviews_match.group(1)) if reviews_match else 1000
-        logger.info(f"🔍 Поиск лидов: категория={category}, мин. отзывов={min_reviews}")
-
-        raw_leads = []
-        for ch in lead_tools.search_telegram_channels(f"селлеры WB {category}"):
-            raw_leads.append({
-                "company_name": ch["name"],
-                "marketplace": "Wildberries/Ozon",
-                "category": category,
-                "estimated_revenue": None,
-                "pain_points": ["Активное сообщество селлеров"],
-                "contact_telegram": ch.get("link"),
-                "contact_email": None,
-                "contact_phone": None,
-                "source": "Telegram",
-            })
-
-        return LeadHunterResponse(
-            leads_found=raw_leads[:20],
-            total_found=len(raw_leads),
-            notes=f"Поиск Telegram. Найдено {len(raw_leads)} лидов.",
-        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # SALES: сохранение сообщений и квалификации в контекст
@@ -498,10 +506,37 @@ class AgentHandlers:
             from .outreach_export import merge_messages_with_contacts
 
             clients = list(self.orch.current_project.get("client_hunter_context") or [])
-            messages = merge_messages_with_contacts(
-                [m.model_dump() for m in sales_data.messages],
-                clients,
-            )
+            # Лиды lead_hunter — только с website (подтверждённые OpenSERP)
+            if not clients:
+                for lead in self.orch.current_project.get("leads_context") or []:
+                    if not (lead.get("website") or lead.get("source_url")):
+                        continue
+                    clients.append({
+                        "company_name": lead.get("company_name"),
+                        "website": lead.get("website") or lead.get("source_url"),
+                        "contact_email": lead.get("contact_email"),
+                        "contact_phone": lead.get("contact_phone"),
+                        "contact_telegram": lead.get("contact_telegram"),
+                        "decision_maker_role": None,
+                    })
+            # Не писать письма «в пустоту» по галлюцинациям без карточек
+            allowed_names = {
+                (c.get("company_name") or "").strip().lower()
+                for c in clients
+                if c.get("company_name")
+            }
+            raw_messages = [m.model_dump() for m in sales_data.messages]
+            if allowed_names:
+                raw_messages = [
+                    m for m in raw_messages
+                    if (m.get("lead_name") or "").strip().lower() in allowed_names
+                ]
+            elif raw_messages:
+                logger.warning(
+                    "sales: нет подтверждённых клиентов/лидов — письма очищены"
+                )
+                raw_messages = []
+            messages = merge_messages_with_contacts(raw_messages, clients)
 
             if "sales_context" not in self.orch.current_project:
                 self.orch.current_project["sales_context"] = []
