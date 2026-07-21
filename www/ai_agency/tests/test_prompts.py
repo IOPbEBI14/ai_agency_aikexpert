@@ -140,12 +140,27 @@ class TestPromptSchemaAlignment:
             assert val in content, f"channel enum '{val}' отсутствует в sales_prompt.txt"
 
     def test_tech_writer_prompt_document_type_enum(self):
-        """tech_writer_prompt описывает commercial_proposal — должен быть в Document.type."""
+        """tech_writer_prompt: commercial_proposal + integration_guide в Document.type."""
         content = _read_prompt("tech_writer")
         assert "commercial_proposal" in content
+        assert "integration_guide" in content
+        assert "критичные поля" in content.lower()
+        assert "контракт данных" in content.lower()
         from core.schemas import Document
         schema = Document.model_json_schema()
         assert "commercial_proposal" in str(schema)
+        assert "integration_guide" in str(schema)
+
+    def test_tech_writer_prompt_requires_integration_checklist(self):
+        content = _read_prompt("tech_writer")
+        for needle in (
+            "Цель интеграции",
+            "Обработка ошибок",
+            "Сопровождение",
+            "Адаптер",
+            "постранич",
+        ):
+            assert needle.lower() in content.lower(), f"В tech_writer нет: {needle}"
 
 
 # ══════════════════════════════════════════════════════════════════

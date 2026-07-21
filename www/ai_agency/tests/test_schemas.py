@@ -757,6 +757,84 @@ class TestDocumentType:
         )
         assert doc.type == "commercial_proposal"
 
+    def test_integration_guide_is_valid_type(self):
+        from core.schemas import Document, DocumentSection
+        doc = Document(
+            title="Интеграция",
+            type="integration_guide",
+            audience="Админ",
+            sections=[
+                DocumentSection(title="Цель", content="...", screenshot_needed=False),
+            ],
+        )
+        assert doc.type == "integration_guide"
+
+    def test_tech_writer_requires_integration_sections(self):
+        from core.schemas import (
+            Document,
+            DocumentSection,
+            FAQItem,
+            TechWriterResponse,
+        )
+        with pytest.raises(ValidationError):
+            TechWriterResponse(
+                summary="Только user guide",
+                documents=[
+                    Document(
+                        title="Инструкция",
+                        type="user_guide",
+                        audience="Менеджеры",
+                        sections=[
+                            DocumentSection(
+                                title="Введение",
+                                content="Текст",
+                                screenshot_needed=False,
+                            )
+                        ],
+                    )
+                ],
+                video_scripts=[],
+                faq=[FAQItem(question="?", answer="!")],
+                checklist=["a", "b", "c", "d", "e"],
+            )
+
+    def test_tech_writer_valid_integration_guide(self):
+        from core.schemas import (
+            Document,
+            DocumentSection,
+            FAQItem,
+            TechWriterResponse,
+        )
+
+        sections = [
+            DocumentSection(title="Цель интеграции", content="Задача сценария.", screenshot_needed=False),
+            DocumentSection(title="Источник данных и получатель", content="Webhook → API.", screenshot_needed=False),
+            DocumentSection(title="Версия API", content="API v1.", screenshot_needed=False),
+            DocumentSection(title="Способ получения событий (webhook)", content="Webhook.", screenshot_needed=False),
+            DocumentSection(title="Лимиты и постраничная выдача", content="Rate limit.", screenshot_needed=False),
+            DocumentSection(title="Критичные поля", content="event_id.", screenshot_needed=False),
+            DocumentSection(title="Контракт данных", content="JSON contract.", screenshot_needed=False),
+            DocumentSection(title="Обработка ошибок", content="503 retry.", screenshot_needed=False),
+            DocumentSection(title="Адаптер / нормализация", content="Set node.", screenshot_needed=False),
+            DocumentSection(title="Тестирование", content="Сценарии.", screenshot_needed=False),
+            DocumentSection(title="Сопровождение", content="Ответственный.", screenshot_needed=False),
+        ]
+        resp = TechWriterResponse(
+            summary="Документация интеграции",
+            documents=[
+                Document(
+                    title="Документация интеграции",
+                    type="integration_guide",
+                    audience="Админ",
+                    sections=sections,
+                )
+            ],
+            video_scripts=[],
+            faq=[FAQItem(question="401?", answer="Проверить токен.")],
+            checklist=["1", "2", "3", "4", "5"],
+        )
+        assert resp.documents[0].type == "integration_guide"
+
     def test_invalid_document_type_raises(self):
         """Неизвестный тип документа вызывает ValidationError."""
         from core.schemas import Document, DocumentSection

@@ -2,6 +2,7 @@
 Pydantic-модели для строгой валидации ответов LLM.
 Каждый агент должен возвращать JSON, соответствующий своей модели.
 """
+from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError, ConfigDict
 from typing import List, Dict, Any, Optional, Literal, Type, TypeVar
@@ -372,10 +373,16 @@ class DocumentSection(BaseModel):
 
 class Document(BaseModel):
     """Документ."""
-    
+
     title: str = Field(description="Название документа")
     type: Literal[
-        "user_guide", "tech_guide", "video_script", "faq", "checklist", "commercial_proposal"
+        "user_guide",
+        "tech_guide",
+        "integration_guide",
+        "video_script",
+        "faq",
+        "checklist",
+        "commercial_proposal",
     ] = Field(description="Тип документа")
     audience: str = Field(description="Для кого документ")
     sections: List[DocumentSection] = Field(description="Список секций")
@@ -383,7 +390,7 @@ class Document(BaseModel):
 
 class VideoScript(BaseModel):
     """Скрипт видео."""
-    
+
     title: str = Field(description="Название видео")
     duration_minutes: int = Field(description="Длительность в минутах")
     script: str = Field(description="Текст для озвучки")
@@ -392,20 +399,101 @@ class VideoScript(BaseModel):
 
 class FAQItem(BaseModel):
     """Элемент FAQ."""
-    
+
     question: str = Field(description="Вопрос")
     answer: str = Field(description="Ответ")
 
 
+# Темы, которые обязан покрыть integration/tech guide (по заголовкам секций).
+_INTEGRATION_SECTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("цель", "задач"),
+    ("источник", "получател"),
+    ("api", "верси"),
+    ("вебхук", "webhook", "опрос", "poll", "событи"),
+    ("постранич", "пагинац", "страниц", "лимит", "ограничен"),
+    ("контракт",),
+    ("критичн",),
+    ("ошиб",),
+    ("адаптер", "нормализац"),
+    ("тест",),
+    ("сопровожд", "поддержк", "ответственн"),
+)
+
+_CRITICAL_SECTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("контракт",),
+    ("критичн",),
+    ("ошиб",),
+)
+
+
+def _section_blob(doc: "Document") -> str:
+    parts = [doc.title or ""]
+    for s in doc.sections or []:
+        parts.append(s.title or "")
+        parts.append((s.content or "")[:400])
+    return " ".join(parts).lower()
+
+
+def _group_covered(blob: str, group: tuple[str, ...]) -> bool:
+    return any(token in blob for token in group)
+
+
 class TechWriterResponse(BaseModel):
     """Ответ технического писателя."""
-    
+
     summary: str = Field(description="Что было создано")
     documents: List[Document] = Field(description="Список документов")
     video_scripts: List[VideoScript] = Field(description="Список видео-скриптов")
     faq: List[FAQItem] = Field(description="Список FAQ")
     checklist: List[str] = Field(description="Чек-лист")
     notes: Optional[str] = Field(default=None, description="Дополнительные рекомендации")
+
+    @model_validator(mode="after")
+    def validate_integration_docs(self) -> "TechWriterResponse":
+        """После разработки обязателен guide интеграции с ключевыми разделами."""
+        guides = [
+            d for d in self.documents
+            if d.type in ("integration_guide", "tech_guide")
+        ]
+        if not guides:
+            raise ValueError(
+                "Нужен хотя бы один документ type=integration_guide или tech_guide "
+                "с описанием интеграции (цель, контракт, ошибки, критичные поля…)"
+            )
+
+        primary = max(guides, key=lambda d: len(d.sections or []))
+        if len(primary.sections or []) < 6:
+            raise ValueError(
+                "Документ интеграции должен содержать минимум 6 секций "
+                f"(сейчас {len(primary.sections or [])})"
+            )
+
+        blob = _section_blob(primary)
+        missing_critical = [
+            "/".join(g) for g in _CRITICAL_SECTION_GROUPS if not _group_covered(blob, g)
+        ]
+        if missing_critical:
+            raise ValueError(
+                "В документации интеграции обязательны разделы про: "
+                "критичные поля, контракт данных, обработку ошибок. "
+                f"Не покрыто: {', '.join(missing_critical)}"
+            )
+
+        missing = [
+            "/".join(g) for g in _INTEGRATION_SECTION_GROUPS if not _group_covered(blob, g)
+        ]
+        # Полный чек-лист — мягко: достаточно ≥8 из 11 групп + все critical уже ок
+        covered = len(_INTEGRATION_SECTION_GROUPS) - len(missing)
+        if covered < 8:
+            raise ValueError(
+                "Документация интеграции слишком неполная "
+                f"(покрыто тем {covered}/11). Добавь секции: {', '.join(missing[:5])}"
+            )
+
+        if len(self.checklist or []) < 5:
+            raise ValueError("checklist: минимум 5 пунктов приёмки интеграции")
+
+        return self
 
 
 # ==================== CLIENT HUNTER (МОНЕТИЗАЦИЯ) ====================
@@ -813,19 +901,24 @@ def _build_examples() -> dict:
             ],
         },
         TechWriterResponse: {
-            "summary": "Создано пользовательское руководство и FAQ",
+            "summary": "Создана документация интеграции и FAQ",
             "documents": [
                 {
-                    "title": "Руководство пользователя",
-                    "type": "user_guide",
-                    "audience": "Менеджеры клиента",
+                    "title": "Документация интеграции: Webhook → API",
+                    "type": "integration_guide",
+                    "audience": "Администратор интеграции",
                     "sections": [
-                        {
-                            "title": "Начало работы",
-                            "content": "Описание первых шагов...",
-                            "screenshot_needed": True,
-                            "screenshot_description": "Главный экран системы",
-                        }
+                        {"title": "Цель интеграции", "content": "Сценарий принимает событие и передаёт во внешний сервис.", "screenshot_needed": False},
+                        {"title": "Источник данных и получатель", "content": "Источник — webhook; получатель — внешний HTTP API.", "screenshot_needed": False},
+                        {"title": "Версия API", "content": "Работаем с API v1 получателя; при смене версии проверить контракт.", "screenshot_needed": False},
+                        {"title": "Способ получения событий (webhook)", "content": "Выбран webhook: события нужны near-realtime, опрос не подходит.", "screenshot_needed": False},
+                        {"title": "Лимиты и постраничная выдача", "content": "Rate limit учтён через Wait; пагинация не используется для webhook.", "screenshot_needed": False},
+                        {"title": "Критичные поля", "content": "event_id и payload.type обязательны; менять имена нельзя.", "screenshot_needed": False},
+                        {"title": "Контракт данных", "content": "JSON: event_id string, payload object; при отсутствии event_id — стоп.", "screenshot_needed": False},
+                        {"title": "Обработка ошибок", "content": "503/timeout — retry; 401 — permanent + алерт; исчерпание — журнал.", "screenshot_needed": False},
+                        {"title": "Адаптер / нормализация", "content": "Set/Code нормализует payload до контракта получателя.", "screenshot_needed": False},
+                        {"title": "Тестирование", "content": "Успех, 503, неверный токен, дубль event_id — сценарии приёмки.", "screenshot_needed": False},
+                        {"title": "Сопровождение", "content": "Ответственный — команда интеграции; эскалация в Telegram-алерт.", "screenshot_needed": False},
                     ],
                 }
             ],
@@ -843,7 +936,13 @@ def _build_examples() -> dict:
                     "answer": "Проверьте логи в n8n...",
                 }
             ],
-            "checklist": ["Проверить credentials", "Запустить тестовый сценарий"],
+            "checklist": [
+                "Проверить credentials",
+                "Запустить тестовый сценарий",
+                "Проверить контракт данных",
+                "Проверить критичные поля",
+                "Проверить обработку ошибок",
+            ],
             "notes": None,
         },
         LeadHunterResponse: {

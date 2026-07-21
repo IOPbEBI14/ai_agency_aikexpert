@@ -408,7 +408,7 @@ _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 | `architect_prompt.txt` | ✅ | ✅ `ArchitectResponse` | Handoff-протокол для developer |
 | `developer_prompt.txt` | ✅ | ✅ `DeveloperResponse` | Handoff-протокол для qa |
 | `qa_prompt.txt` | ❌ (динамически) | ✅ `QAResponse` | |
-| `tech_writer_prompt.txt` | ✅ | ✅ `TechWriterResponse` | `commercial_proposal` добавлен в `Document.type` |
+| `tech_writer_prompt.txt` | ✅ | ✅ `TechWriterResponse` | `integration_guide` + чек-лист интеграции (Direction W) |
 | `lead_hunter_prompt.txt` | ✅ | ✅ `LeadHunterResponse` | |
 | `sales_prompt.txt` | ✅ | ✅ `SalesResponse` | Исправлена неверная идентичность роли |
 | `crm_customizer_prompt.txt` | ✅ | ✅ `CRMCustomizerResponse` | |
@@ -787,6 +787,35 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
 
+### Direction W — Документация интеграции (tech_writer) (NEW)
+
+**Проблема:** tech_writer мог выдать user_guide/КП без обязательного описания
+интеграции. Для сопрововления n8n-сценария нужны технические разделы, а не
+маркетинговый текст.
+
+**Обязательный документ:** `integration_guide` или `tech_guide` с минимумом:
+
+| # | Раздел | Зачем |
+|---|--------|--------|
+| 1 | Цель интеграции | Задача сценария |
+| 2 | Источник и получатель | Откуда/куда данные, где искать сбой |
+| 3 | Версия API | Диагностика совместимости |
+| 4 | Webhook / poll | Способ получения событий и почему |
+| 5 | Пагинация | Обход страниц, если есть |
+| 6 | Лимиты API | Как учтены в сценарии |
+| 7 | Контракт данных | Поля, формат, условия стопа |
+| 8 | Критичные поля | Нельзя ломать |
+| 9 | Обработка ошибок | Коды, retry, алерты, журнал |
+| 10 | Адаптер | Слой нормализации |
+| 11 | Тестирование | Данные и сценарии устойчивости |
+| 12 | Сопровождение | Ответственный, поддержка |
+
+**Ключевое (без этого QA/схема не примут):** критичные поля, контракт данных,
+обработка ошибок.
+
+Изменения: `tech_writer_prompt.txt`, `Document.type=integration_guide`,
+валидатор `TechWriterResponse`, чек-лист QA Gate.
+
 ### Direction V — Один workflow на декомпозицию developer (NEW)
 
 **Проблема (факт из `AI_Agency - tasks.json`):** цель = один устойчивый сценарий
@@ -992,4 +1021,4 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 ---
 
-**Последнее обновление:** Jul 21, 2026. Один n8n workflow на декомпозицию (Direction V).
+**Последнее обновление:** Jul 21, 2026. Документация интеграции tech_writer (Direction W).

@@ -164,17 +164,35 @@ def sample_pydantic_responses():
             test_cases=[QATestCase(name="Тест 1", status="passed", description="Проверка")]
         ),
         "tech_writer_response": TechWriterResponse(
-            summary="Создана документация",
+            summary="Создана документация интеграции",
             documents=[Document(
-                title="Инструкция",
-                type="user_guide",
-                audience="Менеджеры",
-                sections=[DocumentSection(title="Введение", content="Описание", screenshot_needed=False)]
+                title="Документация интеграции",
+                type="integration_guide",
+                audience="Администратор",
+                sections=[
+                    DocumentSection(title="Цель интеграции", content="Сценарий передаёт события во внешний API.", screenshot_needed=False),
+                    DocumentSection(title="Источник данных и получатель", content="Источник webhook, получатель HTTP API.", screenshot_needed=False),
+                    DocumentSection(title="Версия API", content="API v1 получателя.", screenshot_needed=False),
+                    DocumentSection(title="Способ получения событий (webhook)", content="Webhook выбран для realtime.", screenshot_needed=False),
+                    DocumentSection(title="Лимиты и постраничная выдача", content="Учтён rate limit; пагинация не нужна.", screenshot_needed=False),
+                    DocumentSection(title="Критичные поля", content="event_id обязателен, имя менять нельзя.", screenshot_needed=False),
+                    DocumentSection(title="Контракт данных", content="JSON с event_id и payload; без event_id — стоп.", screenshot_needed=False),
+                    DocumentSection(title="Обработка ошибок", content="503 retry; 401 permanent + алерт.", screenshot_needed=False),
+                    DocumentSection(title="Адаптер / нормализация", content="Set нормализует payload.", screenshot_needed=False),
+                    DocumentSection(title="Тестирование", content="Проверить успех, 503, дубль.", screenshot_needed=False),
+                    DocumentSection(title="Сопровождение", content="Ответственный — команда интеграции.", screenshot_needed=False),
+                ],
             )],
             video_scripts=[VideoScript(title="Видео", duration_minutes=5, script="Текст", visual_cues=["Экран"])],
-            faq=[FAQItem(question="В?", answer="О")],
-            checklist=["Пункт 1"],
-            notes="Готово"
+            faq=[FAQItem(question="Что при 401?", answer="Проверить токен, смотреть журнал.")],
+            checklist=[
+                "Контракт данных",
+                "Критичные поля",
+                "Ошибки",
+                "Дедуп",
+                "Алерт",
+            ],
+            notes="Готово",
         ),
         "lead_hunter_response": LeadHunterResponse(
             leads_found=[Lead(

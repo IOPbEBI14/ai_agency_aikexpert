@@ -82,5 +82,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 13,
+    "desc": "tech_writer: обязательная документация интеграции (цель, источник/получатель, API, webhook/poll, пагинация, лимиты, контракт, ошибки, адаптер, тесты + сопровождение)",
+    "priority": "medium",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]
