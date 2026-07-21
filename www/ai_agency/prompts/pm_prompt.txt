@@ -193,36 +193,47 @@
 }
 
 ⚠️ ПРАВИЛА ДЕКОМПОЗИЦИИ:
-1. Каждая подзадача атомарна (один компонент/интеграция)
-2. Максимум 5-7 подзадач
-3. Указывай зависимости между подзадачами
-4. Передавай developer только релевантный контекст
-5. subtask_id должен быть уникальным (dev_001, dev_002, ...)
+1. ОДИН n8n-сценарий (один workflow_blueprint) → РОВНО ОДНА задача
+   artifact_mode="full_workflow". Нельзя резать retry / ошибки / журнал /
+   идемпотентность / fallback на отдельные developer-задачи с n8n JSON —
+   иначе получится несколько почти одинаковых workflow.
+2. artifact_mode (обязательно указывать):
+   - "full_workflow" — единственный, кто возвращает n8n_json (максимум 1 на сценарий)
+   - "prep" — таблицы CRM, credentials, env (без n8n_json)
+   - "spec" — текстовая спецификация куска (без n8n_json), редко
+3. Шаги ТЗ «базовый сценарий → ошибки → retry → журнал → резерв» —
+   это пункты ВНУТРИ description одной full_workflow-задачи, не отдельные subtasks.
+4. Несколько full_workflow — только если в архитектуре явно несколько
+   независимых workflow (разные триггеры/продукты).
+5. Максимум 5-7 подзадач; prep могут предшествовать full_workflow через depends_on.
+6. subtask_id уникален (dev_001, dev_002, ...)
 
-ПРИМЕР ДЕКОМПОЗИЦИИ:
+ПРИМЕР (один сценарий — одна сборка):
 {
   "subtasks": [
     {
       "subtask_id": "dev_001",
-      "description": "Создать webhook для Telegram в n8n",
+      "description": "Подготовить таблицу журнала событий и переменные окружения",
       "depends_on": [],
-      "context": "Из архитектуры: Telegram Bot API, webhook endpoint /telegram, нормализация данных"
+      "context": "Bpium: event_id, status, payload",
+      "artifact_mode": "prep",
+      "assigned_node_names": []
     },
     {
       "subtask_id": "dev_002",
-      "description": "Создать webhook для VK в n8n",
-      "depends_on": [],
-      "context": "Из архитектуры: VK Callback API, webhook endpoint /vk"
-    },
-    {
-      "subtask_id": "dev_003",
-      "description": "Настроить интеграцию с Bpium API",
-      "depends_on": ["dev_001", "dev_002"],
-      "context": "Из архитектуры: POST /api/v1/records, маппинг полей"
+      "description": "Собрать ЕДИНЫЙ n8n workflow: источник → обработка → внешний API; 4 типа ошибок; backoff retry; дедуп; fallback в журнал",
+      "depends_on": ["dev_001"],
+      "context": "Полный workflow_blueprint архитектора",
+      "artifact_mode": "full_workflow",
+      "assigned_node_names": []
     }
   ],
-  "pm_comment": "Разбил архитектуру на 3 подзадачи. Начинаю с Telegram webhook."
+  "pm_comment": "Prep + одна сборка workflow. Фичи устойчивости не дробим на отдельные n8n-задачи."
 }
+
+ПЛОХОЙ ПРИМЕР (запрещено):
+dev_001 «сделать retry», dev_002 «классификацию ошибок», dev_003 «запись статуса» —
+каждый со своим n8n_json. Так делать нельзя.
 
 ═══════════════════════════════════════════════════════════
 🎯 ТИП 4: ФИНАЛИЗАЦИЯ ПРОЕКТА

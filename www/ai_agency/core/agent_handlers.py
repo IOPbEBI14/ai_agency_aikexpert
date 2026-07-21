@@ -46,6 +46,11 @@ from typing import TYPE_CHECKING, Any, Dict
 from pydantic import BaseModel
 
 from .config import Config
+from .dev_decomposition import (
+    MODE_FULL,
+    build_developer_input_data,
+    normalize_developer_subtasks,
+)
 from .schemas import (
     AnalystResponse,
     ClientHunterResponse,
@@ -117,8 +122,9 @@ class AgentHandlers:
         agent_response_str = _to_str(agent_response)
 
         # Node-level blueprint от архитектора — source of truth для developer.
-        # Передаётся в КАЖДУЮ dev-подзадачу целиком (не обрезается), чтобы developer
-        # видел полную топологию нод, connections и field_mapping.
+        # Полный blueprint передаётся ТОЛЬКО задаче artifact_mode=full_workflow
+        # (см. core/dev_decomposition.py). Иначе каждая dev_* сериализует весь
+        # сценарий заново → дубли workflow.
         blueprint = None
         if isinstance(agent_response, BaseModel):
             blueprint = getattr(agent_response, "handoff_to_developer", None)
@@ -127,9 +133,10 @@ class AgentHandlers:
         blueprint_str = (
             json.dumps(blueprint, ensure_ascii=False, indent=2) if blueprint else ""
         )
+        has_blueprint = bool(blueprint_str and blueprint_str.strip() not in ("{}", "null"))
 
         decompose_prompt = f"""
-Ты — Project Manager. Архитектор завершил проектирование. Разбей архитектуру на подзадачи для developer.
+Ты — Project Manager. Архитектор завершил проектирование. Разбей работу для developer.
 
 АРХИТЕКТУРА ОТ ARCHITECT:
 {agent_response_str[:16000]}
@@ -142,23 +149,30 @@ class AgentHandlers:
     "subtasks": [
         {{
             "subtask_id": "dev_001",
-            "description": "Создать webhook для Telegram в n8n",
+            "description": "Собрать единый n8n workflow по blueprint",
             "depends_on": [],
-            "context": "Из архитектуры: Telegram Bot API, webhook endpoint /telegram"
+            "context": "Краткий контекст",
+            "artifact_mode": "full_workflow",
+            "assigned_node_names": []
         }}
     ],
-    "pm_comment": "Разбил архитектуру на N подзадач."
+    "pm_comment": "Один workflow — одна задача сборки."
 }}
 
-ПРАВИЛА:
-- Каждая подзадача атомарна (один компонент/интеграция)
-- Максимум 5-7 подзадач
-- Указывай зависимости между подзадачами
-- Передавай developer только релевантный контекст
-- Если в архитектуре есть handoff_to_developer.workflow_blueprint —
-  в поле context каждой подзадачи укажи, КАКИЕ ноды blueprint она реализует
-  (по name), и какие connections/field_mapping к ним относятся.
-- Верни ТОЛЬКО валидный JSON.
+ПРАВИЛА (КРИТИЧНО — иначе получатся 4 одинаковых workflow):
+1. Если в архитектуре ОДИН n8n-сценарий (один workflow_blueprint) — создай
+   РОВНО ОДНУ задачу с artifact_mode="full_workflow". НЕ режь retry / ошибки /
+   журнал / идемпотентность на отдельные developer-задачи с n8n JSON.
+2. artifact_mode:
+   - "full_workflow" — единственный исполнитель, который вернёт n8n_json (макс. 1);
+   - "prep" — таблицы CRM, credentials, env (без n8n_json);
+   - "spec" — текстовая спецификация куска (без n8n_json). Редко нужно.
+3. Шаги цели вроде «базовый сценарий / 4 ошибки / retry / журнал / fallback» —
+   это требования ВНУТРИ одной full_workflow-задачи, а не отдельные subtasks.
+4. Несколько full_workflow допустимы ТОЛЬКО если в архитектуре явно несколько
+   независимых workflow (разные триггеры/продукты).
+5. Максимум 5–7 подзадач; prep могут идти до full_workflow (depends_on).
+6. Верни ТОЛЬКО валидный JSON.
 """
 
         try:
@@ -178,28 +192,39 @@ class AgentHandlers:
                 project_id, {"tokens_used": self.orch.current_project["tokens_used"]}
             )
 
-            subtasks = pm_decision.subtasks if hasattr(pm_decision, "subtasks") else []
-            if not subtasks:
+            raw_subtasks = pm_decision.subtasks if hasattr(pm_decision, "subtasks") else []
+            if not raw_subtasks:
                 logger.error("❌ PM не вернул подзадачи")
                 self.orch.tasks_db.update_task(task_db_id, {"status": "failed"})
                 return False
 
-            logger.info(f"📦 PM декомпозировал на {len(subtasks)} подзадач")
+            subtasks = normalize_developer_subtasks(
+                raw_subtasks, has_blueprint=has_blueprint
+            )
+            logger.info(
+                "📦 PM декомпозировал на %s подзадач → после нормализации %s "
+                "(blueprint=%s, full=%s)",
+                len(raw_subtasks),
+                len(subtasks),
+                has_blueprint,
+                sum(1 for s in subtasks if s.get("artifact_mode") == MODE_FULL),
+            )
 
             subtask_ids = []
-            for subtask in subtasks:
-                sd = subtask.model_dump() if hasattr(subtask, "model_dump") else subtask
+            for sd in subtasks:
                 subtask_ids.append(sd.get("subtask_id", ""))
+                input_payload = build_developer_input_data(
+                    subtask=sd,
+                    architecture_summary=agent_response_str,
+                    blueprint=blueprint,
+                    blueprint_str=blueprint_str,
+                )
                 self.orch.tasks_db.create_task({
                     "task_id": sd.get("subtask_id"),
                     "project_id": project_id,
                     "agent_name": "developer",
                     "task_description": sd.get("description"),
-                    "input_data": json.dumps({
-                        "context": sd.get("context", ""),
-                        "architecture_summary": agent_response_str[:2000],
-                        "workflow_blueprint": blueprint_str,
-                    }, ensure_ascii=False),
+                    "input_data": json.dumps(input_payload, ensure_ascii=False),
                     "status": "pending",
                     "depends_on": json.dumps(sd.get("depends_on", []), ensure_ascii=False),
                     "iteration_count": 0,
@@ -207,7 +232,11 @@ class AgentHandlers:
                     "qa_approved": "pending",
                     "created_at": datetime.now().isoformat(),
                 })
-                logger.info(f"  → Подзадача создана: {sd.get('subtask_id')}")
+                logger.info(
+                    "  → Подзадача %s [%s]",
+                    sd.get("subtask_id"),
+                    sd.get("artifact_mode"),
+                )
 
             # Помечаем placeholder developer-задачу из initial task graph как "пропущена".
             # Проблема: после завершения architect в pending остаётся задача с agent_name=developer

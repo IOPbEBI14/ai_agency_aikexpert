@@ -787,6 +787,30 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
 
+### Direction V — Один workflow на декомпозицию developer (NEW)
+
+**Проблема (факт из `AI_Agency - tasks.json`):** цель = один устойчивый сценарий
+(источник → обработка → внешний API + retry/ошибки/журнал). PM разрезал на
+`dev_002…dev_005` (loop, backoff, классификация ошибок, статус). Каждая задача
+получила **полный** `workflow_blueprint` и контракт developer «сериализуй весь
+blueprint в n8n JSON» → 4 почти одинаковых workflow под разными именами.
+
+**Корневая причина:** декомпозировали *работу*, но не артефакт: не было
+`artifact_mode`, blueprint шёл в каждую `dev_*`, merge отсутствовал.
+
+**Исправление:**
+
+| Слой | Изменение |
+|------|-----------|
+| `core/dev_decomposition.py` | Нормализация: при blueprint → ≤1 `full_workflow`; фиче-срезы склеиваются |
+| `handle_architect` | Полный blueprint только у `full_workflow`; prep/spec без `n8n_json` |
+| `pm_prompt` + decompose prompt | Запрет резать retry/ошибки/журнал на отдельные n8n-задачи |
+| `developer_prompt` | Ветвление по `artifact_mode` |
+| `task_executor` | n8n-валидация только для `full_workflow`; strip у prep/spec |
+
+Допустимо: `prep` (таблица/env) + одна `full_workflow`. Несколько `full_workflow` —
+только если в архитектуре явно несколько независимых сценариев.
+
 ### Direction U — Мульти-провайдерный LLM (NEW)
 
 **Проблема:** все агенты ходили только в Yandex Responses API через `utils.call_llm`.
@@ -956,6 +980,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Pydantic-модели | `schemas.py` → все классы + `AGENT_MODELS` | |
 | Единый парсинг LLM | `schemas.py` → `call_and_parse_llm()` | |
 | Мульти-LLM | `llm_engine.py` + `/api/agency/llm/*` | OpenAI, Grok, Anthropic, DeepSeek, YandexGPT, GigaChat |
+| Dev decomposition | `dev_decomposition.py` | ≤1 full_workflow на blueprint (Direction V) |
 | NocoDB клиенты | `nocodb.py` → 3 класса | |
 | NocoDB прокси | `main.py` → `nocodb_proxy()` | Защищён whitelist |
 | Промпты | `prompts/*.txt` | 9 файлов |
@@ -967,4 +992,4 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 ---
 
-**Последнее обновление:** Jul 15, 2026. Мульти-провайдерный LLM (Direction U).
+**Последнее обновление:** Jul 21, 2026. Один n8n workflow на декомпозицию (Direction V).

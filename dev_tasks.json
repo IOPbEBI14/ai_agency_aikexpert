@@ -75,5 +75,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 12,
+    "desc": "Direction V: после architect не плодить несколько одинаковых n8n workflow — один full_workflow на blueprint (normalize + prompts)",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

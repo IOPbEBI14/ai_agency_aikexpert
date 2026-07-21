@@ -454,6 +454,58 @@ class TestDeveloperMaxIterationsDefault:
     """dev_* подзадачи должны создаваться с Config.DEVELOPER_MAX_ITERATIONS (=6),
     остальные агенты — с обычным лимитом (=3)."""
 
+    def test_handle_architect_collapses_slices_when_blueprint_present(self):
+        """С blueprint 4 фиче-среза → одна full_workflow задача."""
+        from core.agent_handlers import AgentHandlers
+        from core.schemas import PMDecomposition
+
+        mock_orch = MagicMock()
+        mock_orch.current_project = {"Id": 1, "tokens_used": 0, "goal": "Устойчивый webhook"}
+        mock_orch.tasks_db = MagicMock()
+        mock_orch.tasks_db.get_tasks_by_project.return_value = []
+        mock_orch.projects_db = MagicMock()
+
+        mock_qa_gate = MagicMock()
+        mock_qa_gate.run.return_value = True
+        handlers = AgentHandlers(orchestrator=mock_orch, qa_gate=mock_qa_gate)
+
+        decomposition = PMDecomposition(
+            subtasks=[
+                {"subtask_id": "dev_002", "description": "Loop и backoff в workflow", "depends_on": [], "context": ""},
+                {"subtask_id": "dev_003", "description": "Цикл повторов exponential backoff", "depends_on": ["dev_002"], "context": ""},
+                {"subtask_id": "dev_004", "description": "Классификация ошибок API", "depends_on": ["dev_003"], "context": ""},
+                {"subtask_id": "dev_005", "description": "Финальный статус в журнал", "depends_on": ["dev_004"], "context": ""},
+            ],
+            pm_comment="4 среза",
+        )
+
+        architect_out = {
+            "summary": "Архитектура",
+            "handoff_to_developer": {
+                "workflow_blueprint": {
+                    "nodes": [{"name": "Webhook"}, {"name": "HTTP"}],
+                    "connections": [],
+                }
+            },
+        }
+
+        with patch("core.agent_handlers.call_and_parse_llm", return_value=(decomposition, 100)):
+            handlers.handle_architect(
+                task={"Id": 1, "task_id": "task_001", "task_description": ""},
+                task_db_id=1,
+                task_name="task_001",
+                agent_response=architect_out,
+                pm_prompt="",
+            )
+
+        created_calls = mock_orch.tasks_db.create_task.call_args_list
+        dev_calls = [c for c in created_calls if c[0][0].get("agent_name") == "developer"]
+        assert len(dev_calls) == 1
+        created = dev_calls[0][0][0]
+        payload = json.loads(created["input_data"])
+        assert payload.get("artifact_mode") == "full_workflow"
+        assert "workflow_blueprint" in payload
+
     def test_config_developer_max_iterations_is_six(self):
         from core.config import Config
         assert Config.DEVELOPER_MAX_ITERATIONS == 6

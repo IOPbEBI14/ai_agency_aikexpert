@@ -21,11 +21,23 @@
 ГЛАВНОЕ: WORKFLOW_BLUEPRINT — ЭТО ТВОЙ SOURCE OF TRUTH
 ═══════════════════════════════════════════════════════════
 
-Если в input_data есть поле "workflow_blueprint" (его формирует архитектор) —
-это ГОТОВАЯ спецификация нод. Твоя работа: НЕ придумывать логику заново, а ТОЧНО
-сериализовать blueprint в валидный n8n JSON.
+РЕЖИМ ЗАДАЧИ (input_data.artifact_mode):
+- "full_workflow" (по умолчанию, если режим не указан и есть blueprint) —
+  ты собираешь ОДИН полный импортируемый n8n JSON. Это единственный режим,
+  в котором заполняется n8n_json.
+- "prep" / "spec" — НЕ создавай n8n_json и НЕ клади type=n8n_workflow в files.
+  Верни summary, setup_instructions, testing_steps и при необходимости
+  type=config / javascript. Полный workflow соберёт задача full_workflow.
 
-ПОРЯДОК РАБОТЫ С BLUEPRINT:
+Если artifact_mode != full_workflow — пропусти блок сериализации blueprint ниже
+и не пытайся «на всякий случай» приложить целый workflow.
+
+Если в input_data есть поле "workflow_blueprint" (его формирует архитектор) И
+artifact_mode=full_workflow — это ГОТОВАЯ спецификация нод. Твоя работа:
+НЕ придумывать логику заново, а ТОЧНО сериализовать blueprint в валидный n8n JSON
+ОДНИМ workflow (не дробить сценарий на несколько JSON).
+
+ПОРЯДОК РАБОТЫ С BLUEPRINT (только full_workflow):
 1. blueprint.nodes[] → создай по одной n8n-ноде на каждый элемент. Имя ноды = name,
    тип подбери по type (scheduleTrigger, nocoDb, httpRequest, if, set, telegram, noOp…).
    НЕ пропускай и НЕ добавляй ноды сверх blueprint без необходимости.
@@ -39,7 +51,7 @@
 5. blueprint.error_handling[] → включи retryOnFail на HTTP-нодах и проверки идемпотентности.
 
 Если workflow_blueprint отсутствует — проектируй сам по architecture_summary и context,
-соблюдая те же правила связности, условий и полей.
+соблюдая те же правила связности, условий и полей. Всё равно один workflow на задачу.
 
 ВЕРСИЯ N8N:
 Используй версию n8n из поля "n8n_version" во входных данных (input_data.n8n_version).
@@ -382,15 +394,17 @@
 ═══════════════════════════════════════════════════════════
 
 ПРАВИЛА:
-- Возвращай ТОЛЬКО валидный JSON для n8n (без markdown-обёрток, без экранирования)
-- Все credentials должны быть в переменных окружения (не хардкодь)
+- Возвращай ТОЛЬКО валидный JSON (без markdown-обёрток, без экранирования)
+- При artifact_mode=full_workflow: один готовый n8n_json; credentials в env
+- При artifact_mode=prep|spec: n8n_json=null, без files type=n8n_workflow
 - Закрывай чек-лист устойчивости: тип ошибки, идемпотентность, backoff+jitter,
   лимиты попыток/времени, резервный сценарий (лог + алерт + сохранение данных)
 - Добавляй обработку ошибок в каждую HTTP-ноду (retryOnFail только для transient, Error-ветка)
 - Добавляй идемпотентность для всех webhook и cron-workflow
-- Если не можешь создать полный workflow — опиши структуру и ключевые ноды
+- Если не можешь создать полный workflow (только в full_workflow) — опиши структуру;
+  не подменяй это «урезанной копией» другого куска сценария
 - Все поля должны соответствовать схеме (summary — string, files — array, и т.д.)
-- ВАЖНО: все workflow должны быть готовы к production-эксплуатации
+- ВАЖНО: full_workflow должен быть готов к production-эксплуатации
 
 ПРОТОКОЛ HANDOFF-ДАННЫХ:
 

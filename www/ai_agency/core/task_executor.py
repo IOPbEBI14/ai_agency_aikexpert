@@ -7,8 +7,9 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .config import Config
+from .dev_decomposition import MODE_FULL, strip_n8n_from_spec_response
 from .n8n_validator import build_n8n_feedback, validate_n8n_workflow
-from .schemas import AGENT_MODELS, call_and_parse_llm, get_model_schema
+from .schemas import AGENT_MODELS, DeveloperResponse, call_and_parse_llm, get_model_schema
 from .utils import (
     build_agent_task,
     call_llm,
@@ -162,35 +163,51 @@ class TaskExecutor:
                     )
                 return False
 
-            # Структурная валидация n8n workflow (защита от ошибки импорта
-            # "X is not iterable" из-за неверных структур нод/версий)
+            # Структурная валидация n8n — только для full_workflow.
+            # prep/spec не должны порождать отдельный n8n_json (Direction V).
             if agent_name == "developer":
-                n8n_json = getattr(validated_response, "n8n_json", None)
-                if isinstance(n8n_json, dict) and n8n_json.get("nodes"):
-                    n8n_ok, n8n_issues = validate_n8n_workflow(n8n_json)
-                    if not n8n_ok:
-                        n8n_feedback = build_n8n_feedback(n8n_issues)
-                        logger.error(
-                            f"❌ n8n workflow от developer не пройдёт импорт "
-                            f"({len(n8n_issues)} проблем): {task_name}"
+                artifact_mode = (
+                    str(input_data.get("artifact_mode") or MODE_FULL).strip().lower()
+                )
+                if artifact_mode != MODE_FULL:
+                    if getattr(validated_response, "n8n_json", None):
+                        logger.warning(
+                            "⚠️ %s [%s]: убираем n8n_json — режим не full_workflow",
+                            task_name,
+                            artifact_mode,
                         )
-                        self.orch.tasks_db.update_task(
-                            task_db_id,
-                            {
-                                "status": "pending" if iteration_count + 1 < max_iter else "failed",
-                                "qa_feedback": n8n_feedback,
-                                "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
-                            },
-                        )
-                        if iteration_count + 1 >= max_iter:
-                            send_telegram_alert(
-                                f"🚨 <b>Developer генерирует невалидный n8n workflow</b>\n\n"
-                                f"Задача: <code>{task_name}</code>\n"
-                                f"Итераций: {iteration_count + 1}/{max_iter}\n"
-                                f"Проблемы:\n{chr(10).join(n8n_issues[:5])}\n\n"
-                                f"Задача переведена в статус <b>failed</b>."
+                    stripped = strip_n8n_from_spec_response(
+                        validated_response.model_dump()
+                    )
+                    validated_response = DeveloperResponse(**stripped)
+                    response_json = validated_response.model_dump_json(indent=2)
+                else:
+                    n8n_json = getattr(validated_response, "n8n_json", None)
+                    if isinstance(n8n_json, dict) and n8n_json.get("nodes"):
+                        n8n_ok, n8n_issues = validate_n8n_workflow(n8n_json)
+                        if not n8n_ok:
+                            n8n_feedback = build_n8n_feedback(n8n_issues)
+                            logger.error(
+                                f"❌ n8n workflow от developer не пройдёт импорт "
+                                f"({len(n8n_issues)} проблем): {task_name}"
                             )
-                        return False
+                            self.orch.tasks_db.update_task(
+                                task_db_id,
+                                {
+                                    "status": "pending" if iteration_count + 1 < max_iter else "failed",
+                                    "qa_feedback": n8n_feedback,
+                                    "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
+                                },
+                            )
+                            if iteration_count + 1 >= max_iter:
+                                send_telegram_alert(
+                                    f"🚨 <b>Developer генерирует невалидный n8n workflow</b>\n\n"
+                                    f"Задача: <code>{task_name}</code>\n"
+                                    f"Итераций: {iteration_count + 1}/{max_iter}\n"
+                                    f"Проблемы:\n{chr(10).join(n8n_issues[:5])}\n\n"
+                                    f"Задача переведена в статус <b>failed</b>."
+                                )
+                            return False
 
             log_to_agent_logs(
                 project_id=project_id,

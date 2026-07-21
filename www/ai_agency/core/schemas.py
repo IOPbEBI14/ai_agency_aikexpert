@@ -109,10 +109,10 @@ class PMTaskGraph(BaseModel):
         
 class PMDecomposition(BaseModel):
     """Декомпозиция архитектуры на подзадачи."""
-    
+
     subtasks: List[Dict[str, Any]] = Field(description="Список подзадач")
     pm_comment: str = Field(description="Комментарий PM")
-    
+
     @field_validator("subtasks")
     @classmethod
     def validate_subtasks(cls, v):
@@ -120,13 +120,19 @@ class PMDecomposition(BaseModel):
             raise ValueError("Список подзадач не может быть пустым")
         if len(v) > 10:
             raise ValueError("Слишком много подзадач (максимум 10)")
-        
+
         for subtask in v:
             if "subtask_id" not in subtask:
                 raise ValueError("Каждая подзадача должна иметь subtask_id")
             if "description" not in subtask:
                 raise ValueError("Каждая подзадача должна иметь description")
-        
+            mode = (subtask.get("artifact_mode") or "").strip().lower()
+            if mode and mode not in ("full_workflow", "spec", "prep"):
+                raise ValueError(
+                    "artifact_mode должен быть full_workflow | spec | prep "
+                    f"(получено: {mode})"
+                )
+
         return v
 
 
