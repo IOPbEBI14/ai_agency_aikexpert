@@ -12,11 +12,16 @@ class Config:
     NOCODB_PROJECTS_TABLE_ID = os.getenv("NOCODB_PROJECTS_TABLE_ID")
     NOCODB_TASKS_TABLE_ID = os.getenv("NOCODB_TASKS_TABLE_ID")  # НОВОЕ
     
-    # LLM
-    LLM_API_KEY = os.getenv("LLM_API_KEY")
-    LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://ai.api.cloud.yandex.net/v1").rstrip('/')
-    LLM_FOLDER_ID = os.getenv("LLM_FOLDER_ID")
-    LLM_MODEL = os.getenv("LLM_MODEL", "yandexgpt")
+    # LLM (мульти-провайдер: см. core/llm_engine.py и LLM_PROVIDER)
+    # Активный провайдер: openai | grok | anthropic | deepseek | yandexgpt | gigachat
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "yandexgpt").strip().lower()
+    # YandexGPT / общая совместимость (исторические имена)
+    LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("YANDEX_API_KEY")
+    LLM_BASE_URL = os.getenv(
+        "LLM_BASE_URL", os.getenv("YANDEX_BASE_URL", "https://ai.api.cloud.yandex.net/v1")
+    ).rstrip('/')
+    LLM_FOLDER_ID = os.getenv("LLM_FOLDER_ID") or os.getenv("YANDEX_FOLDER_ID")
+    LLM_MODEL = os.getenv("LLM_MODEL") or os.getenv("YANDEX_MODEL", "yandexgpt")
     
     # Limits
     TOKEN_BUDGET = int(os.getenv("TOKEN_BUDGET", 30000))

@@ -181,6 +181,46 @@
             flex-wrap: wrap;
             gap: 8px;
             margin-bottom: 24px;
+            align-items: center;
+        }
+
+        .llm-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .llm-switch label {
+            white-space: nowrap;
+        }
+
+        .llm-switch select {
+            font-family: var(--font);
+            font-size: 13px;
+            border: 1px solid var(--ink);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--ink);
+            padding: 8px 12px;
+            min-width: 160px;
+            cursor: pointer;
+        }
+
+        .llm-switch select:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .llm-switch .llm-model {
+            font-size: 12px;
+            color: var(--muted);
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         button, .btn {
@@ -777,6 +817,13 @@
             <button onclick="increaseTokens()">+ Токены</button>
             <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
+            <div class="llm-switch" title="Активная нейросеть для всех агентов">
+                <label for="llm-provider">Нейросеть</label>
+                <select id="llm-provider" onchange="onLlmProviderChange(this)">
+                    <option value="">Загрузка…</option>
+                </select>
+                <span class="llm-model" id="llm-model-hint"></span>
+            </div>
         </section>
 
         <section class="new-project-panel" id="new-project-panel">
@@ -916,6 +963,7 @@ let state = {
     pm: {},
     final_report: '',
     metrics: {},
+    llm: null,
 };
 /** Открытые карточки: task_id → замороженный innerHTML (не обновляется при poll) */
 const expandedFreeze = new Map();
@@ -923,6 +971,7 @@ const expandedFreeze = new Map();
 let historyProjectId = null;
 let liveRunning = false;
 let projectsCache = [];
+let llmSwitchBusy = false;
 
 function toast(msg) {
     const el = document.getElementById('toast');
@@ -964,6 +1013,7 @@ async function refreshData() {
                 document.getElementById('btn-stop').disabled = !liveRunning;
                 document.getElementById('btn-resume').disabled =
                     liveRunning || !isResumeAllowed(live);
+                if (live.llm) renderLlmSelector(live.llm);
             }
             renderHistoryChrome();
             return;
@@ -983,11 +1033,85 @@ async function refreshData() {
 
 function renderAll() {
     renderMetrics();
+    renderLlmSelector(state.llm);
     renderPm();
     renderReviewPanel();
     renderTasks();
     renderFinalReport();
     renderHistoryChrome();
+}
+
+function renderLlmSelector(llm) {
+    const select = document.getElementById('llm-provider');
+    const hint = document.getElementById('llm-model-hint');
+    if (!select || !llm || llmSwitchBusy) return;
+
+    const providers = llm.providers || [];
+    const active = llm.provider || '';
+    const prev = select.value;
+    select.innerHTML = '';
+
+    if (!providers.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Нет провайдеров';
+        select.appendChild(opt);
+        select.disabled = true;
+        if (hint) hint.textContent = '';
+        return;
+    }
+
+    for (const p of providers) {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.configured
+            ? p.label
+            : `${p.label} (нет ключа)`;
+        opt.disabled = !p.configured;
+        if (p.id === active) opt.selected = true;
+        select.appendChild(opt);
+    }
+
+    if (active && [...select.options].some(o => o.value === active)) {
+        select.value = active;
+    } else if (prev && [...select.options].some(o => o.value === prev && !o.disabled)) {
+        select.value = prev;
+    }
+
+    select.disabled = !!liveRunning || (!historyProjectId && !!state.running);
+    if (hint) {
+        const cur = providers.find(p => p.id === (select.value || active));
+        hint.textContent = cur ? (cur.model || '') : (llm.model || '');
+        hint.title = hint.textContent;
+    }
+}
+
+async function onLlmProviderChange(selectEl) {
+    const provider = selectEl.value;
+    if (!provider || llmSwitchBusy) return;
+    llmSwitchBusy = true;
+    selectEl.disabled = true;
+    try {
+        const res = await fetch(`${API}/llm/provider`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+        }
+        state.llm = data.llm || data;
+        toast(`Нейросеть: ${state.llm.label || provider}`);
+        renderLlmSelector(state.llm);
+    } catch (e) {
+        console.error(e);
+        toast(`Не удалось переключить: ${e.message || e}`);
+        if (state.llm) renderLlmSelector(state.llm);
+    } finally {
+        llmSwitchBusy = false;
+        renderLlmSelector(state.llm);
+    }
 }
 
 function renderHistoryChrome() {

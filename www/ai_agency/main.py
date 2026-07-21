@@ -30,11 +30,13 @@ from core.api_schemas import (
     IncreaseTokensResponse,
     SaveWorkflowRequest,
     SaveWorkflowResponse,
+    SetLlmProviderRequest,
     StartProjectRequest,
     WorkflowFileInfo,
     WorkflowsListResponse,
 )
 from core.config import Config
+from core import llm_engine
 from core.logging_setup import configure_logging, is_quiet_http_path
 from core.nocodb import NocoDBClient, ProjectsClient, TasksClient
 from core.orchestrator import Orchestrator
@@ -135,6 +137,7 @@ def _idle_status_payload() -> Dict[str, Any]:
         "goal": "",
         "tasks": [],
         "review_tasks": [],
+        "llm": llm_engine.get_llm_status(),
         "pm": {
             "project_name": "",
             "phase": "",
@@ -151,6 +154,11 @@ def _idle_status_payload() -> Dict[str, Any]:
             "review_count": 0,
         },
     }
+
+
+def _attach_llm_status(view: Dict[str, Any]) -> Dict[str, Any]:
+    view["llm"] = llm_engine.get_llm_status()
+    return view
 
 
 def _agency_task_running() -> bool:
@@ -241,21 +249,40 @@ async def get_status():
         view = await asyncio.to_thread(payloads._project_view_payload, current_project)
         view["running"] = orchestrator.agency_running
         # Без повторного find_project_by_status на каждый poll (см. _attach_resume_flags).
-        return await asyncio.to_thread(_attach_resume_flags, view)
+        view = await asyncio.to_thread(_attach_resume_flags, view)
+        return _attach_llm_status(view)
 
     # current_project не в памяти — один поиск resumable, без второго в attach.
     resumable = await asyncio.to_thread(_find_resumable_project)
     if resumable:
         view = await asyncio.to_thread(payloads._project_view_payload, resumable)
         view["running"] = False
-        return await asyncio.to_thread(
+        view = await asyncio.to_thread(
             _attach_resume_flags, view, known_resumable=resumable
         )
+        return _attach_llm_status(view)
 
     idle = _idle_status_payload()
-    return await asyncio.to_thread(
+    view = await asyncio.to_thread(
         _attach_resume_flags, idle, known_resumable=None
     )
+    return _attach_llm_status(view)
+
+
+@app.get("/api/agency/llm/providers")
+async def get_llm_providers():
+    """Список LLM-провайдеров и активный выбор."""
+    return llm_engine.get_llm_status()
+
+
+@app.post("/api/agency/llm/provider")
+async def set_llm_provider(body: SetLlmProviderRequest):
+    """Переключить активный LLM (без перезапуска процесса)."""
+    try:
+        status = llm_engine.set_active_provider(body.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"status": "ok", "llm": status}
 
 
 @app.get("/api/agency/projects")
@@ -846,27 +873,37 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 
 def test_llm_connection():
-    """Проверка подключения к Yandex AI Studio."""
-    logger.info("Проверка подключения к Yandex AI Studio...")
-    logger.info(f"   URL: {Config.get_llm_responses_url()}")
-    logger.info(f"   Model: {Config.get_llm_model_uri()}")
-    api_key_preview = (
-        f"{'*' * 8}{Config.LLM_API_KEY[-4:]}"
-        if Config.LLM_API_KEY and len(Config.LLM_API_KEY) > 4
-        else "NOT SET"
+    """Проверка активного LLM-провайдера при старте."""
+    status = llm_engine.get_llm_status()
+    logger.info(
+        "Проверка LLM: %s / %s (провайдер из LLM_PROVIDER или дашборда)",
+        status.get("label"),
+        status.get("model"),
     )
-    logger.info(f"   API Key: {api_key_preview}")
+    for p in status.get("providers") or []:
+        mark = "●" if p.get("active") else "○"
+        cfg = "ok" if p.get("configured") else "нет ключа"
+        logger.info("   %s %s (%s) — %s", mark, p.get("label"), p.get("model"), cfg)
 
-    if not Config.LLM_API_KEY or not Config.LLM_FOLDER_ID:
-        logger.error("Не указан LLM_API_KEY или LLM_FOLDER_ID в .env")
+    active = next(
+        (p for p in (status.get("providers") or []) if p.get("active")),
+        None,
+    )
+    if not active or not active.get("configured"):
+        logger.error(
+            "Активный провайдер не настроен. Задайте ключи в .env "
+            "(см. readme: OPENAI_*/GROK_*/ANTHROPIC_*/DEEPSEEK_*/LLM_*/GIGACHAT_*)"
+        )
         return False
 
     try:
-        content, tokens = call_llm("TEST", "Ты тестовый агент.", "Скажи 'OK' одним словом.")
-        logger.info(f"LLM подключен! Ответ: {content[:50]}")
+        content, tokens = call_llm(
+            "TEST", "Ты тестовый агент.", "Скажи 'OK' одним словом."
+        )
+        logger.info("LLM подключен (%s)! Ответ: %s", status.get("label"), content[:50])
         return True
     except Exception as e:
-        logger.error(f"LLM недоступен: {e}")
+        logger.error("LLM недоступен (%s): %s", status.get("label"), e)
         return False
 
 

@@ -61,5 +61,19 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 10,
+    "desc": "Мульти-LLM: выбор OpenAI/Grok/Anthropic/DeepSeek/YandexGPT/Gigachat с переключением на дашборде",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
+  },
+  {
+    "id": 11,
+    "desc": "Мульти-провайдерный LLM: OpenAI, Grok, Anthropic, DeepSeek, YandexGPT, GigaChat — переключение на дашборде агентства",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

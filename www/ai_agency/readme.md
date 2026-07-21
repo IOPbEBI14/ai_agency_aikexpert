@@ -64,7 +64,7 @@
 
 | Компонент | Технология | Назначение |
 |-----------|-----------|------------|
-| **LLM** | Yandex AI Studio (YandexGPT) | Генерация ответов агентов |
+| **LLM** | OpenAI / Grok / Anthropic / DeepSeek / YandexGPT / GigaChat | Генерация ответов агентов (выбор на дашборде) |
 | **Оркестрация** | Python + FastAPI (uvicorn) | API и цикл оркестрации |
 | **База данных** | NocoDB | Хранение проектов, задач, логов |
 | **Дашборд** | HTML + JavaScript | Мониторинг и управление |
@@ -196,11 +196,40 @@ NOCODB_TABLE_ID=your_agent_logs_table_id
 NOCODB_PROJECTS_TABLE_ID=your_projects_table_id
 NOCODB_TASKS_TABLE_ID=your_tasks_table_id
 
-# Yandex AI Studio Configuration
+# Активный LLM при старте (можно сменить на дашборде без рестарта):
+# openai | grok | anthropic | deepseek | yandexgpt | gigachat
+LLM_PROVIDER=yandexgpt
+
+# YandexGPT (обратная совместимость: LLM_* или YANDEX_*)
 LLM_API_KEY=your_yandex_api_key
 LLM_BASE_URL=https://ai.api.cloud.yandex.net/v1
 LLM_FOLDER_ID=your_folder_id
 LLM_MODEL=yandexgpt
+
+# OpenAI
+# OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=https://api.openai.com/v1
+
+# Grok (xAI)
+# GROK_API_KEY=xai-...
+# GROK_MODEL=grok-2-latest
+# GROK_BASE_URL=https://api.x.ai/v1
+
+# Anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+# ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# DeepSeek
+# DEEPSEEK_API_KEY=...
+# DEEPSEEK_MODEL=deepseek-chat
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# GigaChat (Authorization key / Basic credentials)
+# GIGACHAT_CREDENTIALS=...
+# GIGACHAT_MODEL=GigaChat
+# GIGACHAT_SCOPE=GIGACHAT_API_PERS
+# GIGACHAT_VERIFY_SSL=true
 
 # Project Configuration
 TOKEN_BUDGET=500000

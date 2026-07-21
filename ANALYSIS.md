@@ -787,6 +787,25 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
 
+### Direction U — Мульти-провайдерный LLM (NEW)
+
+**Проблема:** все агенты ходили только в Yandex Responses API через `utils.call_llm`.
+Нельзя было выбрать OpenAI / Grok / Anthropic / DeepSeek / GigaChat с дашборда.
+
+**Решение:**
+
+| Слой | Изменение |
+|------|-----------|
+| `core/llm_engine.py` | Реестр 6 провайдеров, активный в памяти процесса, единый `invoke()` |
+| `utils.call_llm` | Тонкая обёртка → `llm_engine.invoke` (контракт агентов без изменений) |
+| API | `GET /api/agency/llm/providers`, `POST /api/agency/llm/provider`, поле `llm` в `/status` |
+| Дашборд | Селектор «Нейросеть» в `.controls`; смена без рестарта; блокировка во время `running` |
+| `.env` | `LLM_PROVIDER` + ключи `OPENAI_*` / `GROK_*` / `ANTHROPIC_*` / `DEEPSEEK_*` / `LLM_*` / `GIGACHAT_*` |
+
+Стили API: OpenAI/Grok/DeepSeek — `chat/completions`; YandexGPT — Responses; Anthropic — Messages; GigaChat — OAuth + chat completions.
+
+Тесты: `tests/test_llm.py`, `tests/test_llm_engine.py`.
+
 ### Direction S — Тихое логирование (NEW)
 
 **Проблема:** poll дашборда (`GET /status` каждые 2.5 с) заливал консоль:
@@ -936,6 +955,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Спец-хендлеры | `agent_handlers.py` → `AgentHandlers` | |
 | Pydantic-модели | `schemas.py` → все классы + `AGENT_MODELS` | |
 | Единый парсинг LLM | `schemas.py` → `call_and_parse_llm()` | |
+| Мульти-LLM | `llm_engine.py` + `/api/agency/llm/*` | OpenAI, Grok, Anthropic, DeepSeek, YandexGPT, GigaChat |
 | NocoDB клиенты | `nocodb.py` → 3 класса | |
 | NocoDB прокси | `main.py` → `nocodb_proxy()` | Защищён whitelist |
 | Промпты | `prompts/*.txt` | 9 файлов |
@@ -947,4 +967,4 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 ---
 
-**Последнее обновление:** Jul 16, 2026. Official n8n-engine validator (Direction O) как внешний шаг.
+**Последнее обновление:** Jul 15, 2026. Мульти-провайдерный LLM (Direction U).

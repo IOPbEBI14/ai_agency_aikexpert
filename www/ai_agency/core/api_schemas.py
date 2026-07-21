@@ -64,6 +64,18 @@ class IncreaseTokensRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class SetLlmProviderRequest(BaseModel):
+    """POST /api/agency/llm/provider — переключение активного LLM."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        description="openai | grok | anthropic | deepseek | yandexgpt | gigachat",
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
 # ─── Responses (ключевые; остальное — Dict для гибкости фронта) ───────────────
 
 class AgencyActionResponse(BaseModel):

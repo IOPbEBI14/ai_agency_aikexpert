@@ -336,3 +336,50 @@ class TestResumableProjectStatus:
         mod.orchestrator.agency_running = False
         resp = c.post("/api/agency/resume")
         assert resp.status_code == 404
+
+
+class TestLlmProviderApi:
+    """API переключения LLM (Direction U)."""
+
+    @pytest.fixture(autouse=True)
+    def _llm_env(self, monkeypatch):
+        import core.llm_engine as eng
+        from core.config import Config
+
+        monkeypatch.setenv("LLM_PROVIDER", "yandexgpt")
+        monkeypatch.setenv("YANDEX_API_KEY", "yandex-key")
+        monkeypatch.setenv("YANDEX_FOLDER_ID", "folder-1")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+        monkeypatch.setattr(Config, "LLM_API_KEY", "yandex-key")
+        monkeypatch.setattr(Config, "LLM_FOLDER_ID", "folder-1")
+        eng._active_provider_id = "yandexgpt"
+        yield
+        eng._active_provider_id = None
+
+    def test_get_providers(self, client):
+        c, _ = client
+        resp = c.get("/api/agency/llm/providers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider"] == "yandexgpt"
+        assert len(data["providers"]) == 6
+
+    def test_status_includes_llm(self, client):
+        c, mod = client
+        mod.projects_db.find_project_by_status.return_value = None
+        resp = c.get("/api/agency/status")
+        assert resp.status_code == 200
+        assert resp.json()["llm"]["provider"] == "yandexgpt"
+
+    def test_switch_provider(self, client):
+        c, _ = client
+        resp = c.post("/api/agency/llm/provider", json={"provider": "deepseek"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["llm"]["provider"] == "deepseek"
+
+    def test_switch_invalid(self, client):
+        c, _ = client
+        resp = c.post("/api/agency/llm/provider", json={"provider": "nope"})
+        assert resp.status_code == 400

@@ -63,85 +63,10 @@ def try_fix_truncated_json(content: str) -> str:
 
 
 def call_llm(agent_name: str, system_prompt: str, user_task: str, max_retries: int = 2) -> tuple:
-    """
-    Вызов Yandex AI Studio через Responses API.
-    Обрабатывает обрезанные ответы через retry.
-    """
-    url = Config.get_llm_responses_url()
-    model_uri = Config.get_llm_model_uri()
-    
-    headers = {
-        "Authorization": f"Bearer {Config.LLM_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": model_uri,
-        "instructions": system_prompt,
-        "input": [{"role": "user", "content": user_task}],
-        "temperature": 0.3,
-        "max_tokens": 16000
-    }
-    
-    for attempt in range(max_retries + 1):
-        try:
-            logger.info(f"🤖 Вызов агента: {agent_name} (попытка {attempt + 1}/{max_retries + 1})")
-            response = requests.post(url, json=payload, headers=headers, timeout=180)
-            
-            if response.status_code != 200:
-                error_msg = f"❌ LLM вернул статус {response.status_code}: {response.text[:300]}"
-                logger.error(error_msg)
-                
-                if attempt == max_retries:
-                    raise RuntimeError(error_msg)
-                
-                continue  # ⭐ ВАЖНО: Переходим к следующей попытке, а не обрабатываем ошибку как успех
-                
-            data = response.json()
-            content = ""
-            
-            if "output_text" in data:
-                content = data["output_text"]
-            elif "output" in data:
-                for item in data["output"]:
-                    if item.get("type") == "message" and "content" in item:
-                        for block in item["content"]:
-                            if block.get("type") == "output_text":
-                                content += block.get("text", "")
-            
-            # Проверка на обрезанный JSON
-            content_stripped = content.strip()
-            if content_stripped.startswith('{') and not content_stripped.endswith('}'):
-                logger.warning(f"⚠️ Ответ {agent_name} обрезан. Попытка {attempt + 1}")
-                if attempt < max_retries:
-                    payload["max_tokens"] = min(payload["max_tokens"] * 2, 32000)
-                    continue
-                else:
-                    content = try_fix_truncated_json(content)
-                    if not content:
-                        raise ValueError("Ответ обрезан и не может быть восстановлен")
-            
-            # Подсчёт токенов
-            usage = data.get("usage", {})
-            tokens = usage.get("total_tokens", 0)
-            if tokens == 0:
-                tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-            
-            logger.info(f"✅ Агент {agent_name} ответил. Токенов: {tokens}")
-            return content, tokens
-            
-        except requests.exceptions.Timeout:
-            logger.error(f"⏱️ Таймаут вызова LLM для {agent_name}")
-            if attempt < max_retries:
-                continue
-            raise
-        except Exception as e:
-            logger.error(f"❌ Ошибка вызова LLM: {e}")
-            if attempt < max_retries:
-                continue
-            raise
-    
-    raise RuntimeError(f"Не удалось получить ответ от {agent_name}")
+    """Вызов активного LLM-провайдера (см. core.llm_engine)."""
+    from core.llm_engine import invoke
+
+    return invoke(agent_name, system_prompt, user_task, max_retries=max_retries)
 
 
 def build_agent_task(task_description: str, input_data: dict, qa_feedback: str, iteration_count: int) -> str:
