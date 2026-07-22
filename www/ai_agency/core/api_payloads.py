@@ -457,6 +457,19 @@ def _project_view_payload(project: Dict[str, Any]) -> Dict[str, Any]:
     project_id = project.get("Id")
     tasks_payload, review_tasks = _build_tasks_payload(project_id)
     metrics = _parse_metrics(project.get("metrics"))
+    iteration = metrics.get("iteration")
+    if iteration is None and project.get("iteration") is not None:
+        try:
+            iteration = int(project.get("iteration"))
+        except (TypeError, ValueError):
+            iteration = 1
+    try:
+        iteration = max(1, int(iteration or 1))
+    except (TypeError, ValueError):
+        iteration = 1
+    history = metrics.get("iteration_history")
+    if not isinstance(history, list):
+        history = []
     return {
         "project_id": project_id,
         "project_name": project.get("project_name") or "",
@@ -467,6 +480,9 @@ def _project_view_payload(project: Dict[str, Any]) -> Dict[str, Any]:
         "token_budget": project.get("token_budget") or Config.TOKEN_BUDGET,
         "final_report": project.get("final_report") or "",
         "metrics": metrics,
+        "iteration": iteration,
+        "iteration_history_count": len(history),
+        "can_refine": True,
         "completed_at": project.get("completed_at") or "",
         "goal": project.get("goal") or "",
         "tasks": tasks_payload,

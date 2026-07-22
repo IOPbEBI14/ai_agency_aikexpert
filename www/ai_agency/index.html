@@ -808,12 +808,17 @@
                 <div class="metric-label">Клиент</div>
                 <div class="metric-value" id="client-name">—</div>
             </div>
+            <div class="metric">
+                <div class="metric-label">Итерация</div>
+                <div class="metric-value" id="iteration-text">1</div>
+            </div>
         </section>
 
         <section class="controls">
             <button class="primary" id="btn-start" onclick="toggleNewProjectPanel()">Новый проект</button>
             <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
             <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
+            <button id="btn-refine" onclick="toggleRefinePanel()">Новая итерация</button>
             <button onclick="increaseTokens()">+ Токены</button>
             <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
@@ -881,6 +886,20 @@
             </p>
             <div class="project-list" id="project-list">
                 <div class="workflow-item"><span>Загрузка…</span></div>
+            </div>
+        </section>
+
+        <section class="panel" id="refine-panel">
+            <h2>Новая итерация проекта</h2>
+            <p class="hint" id="refine-hint">
+                Опишите замечания к предыдущему запуску. PM проанализирует отчёт и задачи,
+                создаст граф доработки на том же проекте (итерация N+1) и запустит работу.
+                Доступно для текущего проекта и любого из истории.
+            </p>
+            <textarea id="refine-comment" placeholder="Что доработать? Например: в workflow заменить doWhile на Loop Over Items; в документации уточнить критичные поля event_id…"></textarea>
+            <div class="panel-actions">
+                <button class="primary" onclick="submitRefine()">Запустить итерацию</button>
+                <button onclick="hideRefinePanel()">Отмена</button>
             </div>
         </section>
 
@@ -1163,19 +1182,23 @@ async function loadProjectsList() {
             const active = historyProjectId === p.id ? 'active' : '';
             const mark = p.is_current ? ' · текущий' : '';
             const report = p.has_final_report ? ' · отчёт' : '';
+            const iter = p.iteration ? ` · итер. ${p.iteration}` : '';
             const when = (p.completed_at || p.updated_at || '').replace('T', ' ').slice(0, 19);
             return `
+                <div class="project-item-wrap">
                 <button type="button" class="project-item ${active}" onclick="openProjectHistory(${Number(p.id)})">
                     <div>
                         <strong>${escapeHtml(p.project_name)}</strong>
                         <div class="meta">
-                            #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}
+                            #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}${iter}
                             ${when ? ` · ${escapeHtml(when)}` : ''}
                         </div>
                         ${p.goal ? `<div class="meta">${escapeHtml(p.goal)}</div>` : ''}
                     </div>
                     <span class="pill status-${escapeHtml(p.status || '')}">${escapeHtml(statusLabel(p.status))}</span>
                 </button>
+                <button type="button" class="btn" style="margin:4px 0 12px;" onclick="event.stopPropagation(); openRefineForProject(${Number(p.id)})">Доработать</button>
+                </div>
             `;
         }).join('');
     } catch (e) {
@@ -1257,6 +1280,18 @@ function renderMetrics() {
         `${counts.completed || 0}✓ · ${counts.in_progress || 0}▶ · ${counts.pending || 0}… · ${counts.failed || 0}✗`;
     document.getElementById('client-name').textContent = d.client || '—';
     document.getElementById('phase-text').textContent = `фаза: ${d.phase || '—'}`;
+    const iterEl = document.getElementById('iteration-text');
+    if (iterEl) {
+        const n = d.iteration || (d.metrics && d.metrics.iteration) || 1;
+        const hist = d.iteration_history_count || 0;
+        iterEl.textContent = hist ? `${n} (архив: ${hist})` : String(n);
+    }
+
+    const refineBtn = document.getElementById('btn-refine');
+    if (refineBtn) {
+        const pid = d.project_id || historyProjectId;
+        refineBtn.disabled = !pid || running || liveRunning;
+    }
 
     const dot = document.getElementById('live-dot');
     dot.className = 'dot';
@@ -1576,6 +1611,66 @@ async function submitHumanReview() {
         document.getElementById('review-comment').value = '';
         toast(data.pm_comment || 'Комментарий принят');
         setTimeout(refreshData, 800);
+    } catch (e) {
+        toast(String(e.message || e));
+    }
+}
+
+function toggleRefinePanel() {
+    const panel = document.getElementById('refine-panel');
+    const pid = state.project_id || historyProjectId;
+    if (!pid) {
+        toast('Сначала откройте проект (текущий или из истории)');
+        return;
+    }
+    const willShow = !panel.classList.contains('visible');
+    panel.classList.toggle('visible', willShow);
+    if (willShow) {
+        document.getElementById('refine-hint').textContent =
+            `Проект #${pid} · итерация ${(state.iteration || 1)} → ${(state.iteration || 1) + 1}. ` +
+            'PM построит граф доработки по вашим замечаниям.';
+        document.getElementById('refine-comment').focus();
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function hideRefinePanel() {
+    document.getElementById('refine-panel').classList.remove('visible');
+}
+
+async function openRefineForProject(projectId) {
+    await openProjectHistory(projectId);
+    toggleRefinePanel();
+}
+
+async function submitRefine() {
+    const human_prompt = document.getElementById('refine-comment').value.trim();
+    const project_id = state.project_id || historyProjectId;
+    if (!human_prompt || human_prompt.length < 5) {
+        toast('Опишите замечания подробнее (минимум несколько слов)');
+        return;
+    }
+    if (!project_id) {
+        toast('Нет project_id');
+        return;
+    }
+    try {
+        toast('PM анализирует замечания…');
+        const res = await fetch(`${API}/refine`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ human_prompt, project_id, resume: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.detail || 'Ошибка');
+        document.getElementById('refine-comment').value = '';
+        hideRefinePanel();
+        historyProjectId = null;
+        toast(
+            `Итерация ${data.iteration}: задач ${data.tasks_created}` +
+            (data.resumed ? ' · запуск' : '')
+        );
+        setTimeout(refreshData, 1000);
     } catch (e) {
         toast(String(e.message || e));
     }

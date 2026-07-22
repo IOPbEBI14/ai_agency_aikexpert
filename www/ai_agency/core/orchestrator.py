@@ -21,6 +21,15 @@ from pydantic import ValidationError
 from .agent_handlers import AgentHandlers
 from .config import Config
 from .nocodb import NocoDBClient, ProjectsClient, TasksClient
+from .project_iteration import (
+    VALID_AGENTS,
+    build_previous_tasks_digest,
+    enrich_task_input,
+    get_project_iteration,
+    normalize_iteration_task_ids,
+    parse_metrics,
+    prepare_iteration_metrics,
+)
 from .qa_gate import QAGate
 from .schemas import (
     AGENT_MODELS,
@@ -470,6 +479,218 @@ max_iterations по умолчанию: 3 для большинства аген
             return False
 
     # ══════════════════════════════════════════════════════════════════════════
+    # ИТЕРАЦИЯ ПРОЕКТА (замечания человека → PM-replan)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def start_project_iteration(self, human_remarks: str) -> Dict[str, Any]:
+        """Новая итерация на том же project_id: PM строит граф доработки.
+
+        Старые задачи и final_report сохраняются (отчёт — в metrics.iteration_history).
+        Новые task_id получают префикс iterN_.
+        """
+        remarks = (human_remarks or "").strip()
+        if not remarks:
+            raise ValueError("Нужны замечания человека для новой итерации")
+        if not self.current_project or not self.current_project.get("Id"):
+            raise ValueError("Нет загруженного проекта")
+        if self.agency_running:
+            raise ValueError("Оркестратор уже запущен — сначала остановите")
+
+        project_id = self.current_project["Id"]
+        current_iter = get_project_iteration(self.current_project)
+        next_iter = current_iter + 1
+        existing_tasks = self.tasks_db.get_tasks_by_project(project_id)
+        digest = build_previous_tasks_digest(existing_tasks)
+        previous_by_id = {
+            str(t.get("task_id")): t for t in existing_tasks if t.get("task_id")
+        }
+
+        metrics, next_iter = prepare_iteration_metrics(
+            self.current_project,
+            next_iteration=next_iter,
+            human_remarks=remarks,
+        )
+
+        logger.info(
+            "🔁 Итерация проекта #%s: %s → %s",
+            project_id, current_iter, next_iter,
+        )
+
+        pm_prompt = load_prompt("pm")
+        schema_prompt = self.build_prompt_with_schema(pm_prompt, "pm_task_graph")
+        prev_report = (self.current_project.get("final_report") or "")[:8000]
+
+        replan_prompt = f"""
+Ты — Project Manager. Человек запросил НОВУЮ ИТЕРАЦИЮ доработки проекта.
+
+ПРОЕКТ:
+Название: {self.current_project.get('project_name')}
+Клиент: {self.current_project.get('client_name')}
+Цель: {self.current_project.get('goal')}
+Текущая итерация (завершённая): {current_iter}
+Новая итерация: {next_iter}
+
+ФИНАЛЬНЫЙ ОТЧЁТ ПРЕДЫДУЩЕЙ ИТЕРАЦИИ (фрагмент):
+{prev_report or '(отчёта нет)'}
+
+ДАЙДЖЕСТ ЗАДАЧ ПРЕДЫДУЩИХ ИТЕРАЦИЙ:
+{json.dumps(digest, ensure_ascii=False, indent=2)[:14000]}
+
+ЗАМЕЧАНИЯ ЧЕЛОВЕКА (обязательно учесть):
+{remarks}
+
+ТВОЯ ЗАДАЧА:
+1. Проанализируй замечания относительно уже сделанного.
+2. Построй НОВЫЙ Task Graph ТОЛЬКО с задачами, нужными для доработки.
+   Не повторяй работу, которой человек доволен.
+3. task_id начинай с префикса iter{next_iter}_ (например iter{next_iter}_task_001).
+4. depends_on — ТОЛЬКО между новыми задачами этого графа.
+   Чтобы опереться на результат прошлой задачи, укажи в input_data:
+   "previous_task_ids": ["task_001", ...]
+5. Обычно нужны: developer и/или architect (если меняется архитектура),
+   qa, tech_writer (обновить документацию). Не добавляй hunter/sales без нужды.
+6. Для developer max_iterations=6, для остальных 3.
+
+ФОРМАТ — строго JSON pm_task_graph (tasks, excluded_agents, reasoning).
+"""
+
+        pm_task_graph, pm_tokens = self.call_agent_with_validation(
+            "PM", schema_prompt, replan_prompt, "pm_task_graph", max_retries=3
+        )
+
+        self.current_project["tokens_used"] = (
+            self.current_project.get("tokens_used", 0) or 0
+        ) + pm_tokens
+
+        tasks_list = list(pm_task_graph.tasks or [])
+        excluded_agents = list(getattr(pm_task_graph, "excluded_agents", []) or [])
+        reasoning = getattr(pm_task_graph, "reasoning", "") or ""
+
+        if not tasks_list:
+            raise RuntimeError("PM не вернул задачи для итерации")
+
+        from .task_graph_rules import enforce_sales_after_hunters, prefer_single_hunter
+
+        tasks_list, excluded_agents = prefer_single_hunter(
+            tasks_list, excluded_agents, goal=self.current_project.get("goal", "")
+        )
+        tasks_list, excluded_agents = enforce_sales_after_hunters(
+            tasks_list, excluded_agents
+        )
+        tasks_list = normalize_iteration_task_ids(tasks_list, next_iter)
+
+        created = 0
+        for task_data in tasks_list:
+            if "task_id" not in task_data:
+                continue
+            raw_agent = task_data.get("agent_name", "")
+            if not isinstance(raw_agent, str) or raw_agent not in VALID_AGENTS:
+                logger.error(
+                    "❌ Итерация: недопустимый agent_name=%r для %s",
+                    raw_agent, task_data.get("task_id"),
+                )
+                continue
+
+            input_json = enrich_task_input(
+                task_data,
+                project=self.current_project,
+                human_remarks=remarks,
+                iteration=next_iter,
+                previous_by_id=previous_by_id,
+            )
+            max_iter = task_data.get("max_iterations")
+            if raw_agent == "developer":
+                max_iter = max_iter or Config.DEVELOPER_MAX_ITERATIONS
+            else:
+                max_iter = max_iter or Config.MAX_TASK_ITERATIONS
+
+            self.tasks_db.create_task({
+                "task_id": task_data["task_id"],
+                "project_id": project_id,
+                "agent_name": raw_agent,
+                "task_description": task_data.get("task_description") or "",
+                "input_data": input_json,
+                "status": "pending",
+                "depends_on": json.dumps(
+                    task_data.get("depends_on") or [], ensure_ascii=False
+                ),
+                "iteration_count": 0,
+                "max_iterations": max_iter,
+                "qa_approved": "pending",
+                "created_at": datetime.now().isoformat(),
+            })
+            created += 1
+            logger.info("  → Итерация %s: %s [%s]", next_iter, task_data["task_id"], raw_agent)
+
+        if created == 0:
+            raise RuntimeError("Не удалось создать ни одной задачи итерации")
+
+        # Освобождаем другой in_progress
+        try:
+            active = self.projects_db.find_project_by_status("in_progress")
+            if active and active.get("Id") and active.get("Id") != project_id:
+                self.projects_db.update_project(active["Id"], {"status": "stopped"})
+        except Exception as e:
+            logger.warning("⚠️ Не удалось остановить другой активный проект: %s", e)
+
+        update_fields: Dict[str, Any] = {
+            "status": "in_progress",
+            "completed_at": "",
+            "tokens_used": self.current_project["tokens_used"],
+            "metrics": json.dumps(metrics, ensure_ascii=False),
+            "plan": pm_task_graph.model_dump_json(indent=2),
+            "excluded_agents": json.dumps(excluded_agents, ensure_ascii=False),
+            "reasoning": f"Итерация {next_iter}: {reasoning}"[:2000],
+        }
+        # Опциональное поле NocoDB (если колонки нет — update может частично упасть;
+        # metrics.iteration уже содержит номер).
+        try:
+            update_fields["iteration"] = next_iter
+            ok = self.projects_db.update_project(project_id, update_fields)
+            if not ok:
+                update_fields.pop("iteration", None)
+                self.projects_db.update_project(project_id, update_fields)
+        except Exception:
+            update_fields.pop("iteration", None)
+            self.projects_db.update_project(project_id, update_fields)
+
+        self.current_project.update({
+            "status": "in_progress",
+            "completed_at": "",
+            "metrics": update_fields["metrics"],
+            "iteration": next_iter,
+            "reasoning": update_fields["reasoning"],
+            "tokens_used": self.current_project["tokens_used"],
+        })
+
+        log_to_agent_logs(
+            project_id=project_id,
+            agent_name="PM",
+            status="completed",
+            task_description=(
+                f"Итерация {next_iter}: {created} задач по замечаниям человека. {reasoning}"
+            ),
+            full_response=json.dumps(
+                {
+                    "iteration": next_iter,
+                    "human_remarks": remarks[:2000],
+                    "tasks_created": created,
+                    "graph": pm_task_graph.model_dump(),
+                },
+                ensure_ascii=False,
+            ),
+            tokens_used=pm_tokens,
+        )
+
+        return {
+            "iteration": next_iter,
+            "tasks_created": created,
+            "project_id": project_id,
+            "reasoning": reasoning,
+            "pm_comment": reasoning or f"Создана итерация {next_iter}",
+        }
+
+    # ══════════════════════════════════════════════════════════════════════════
     # ФИНАЛИЗАЦИЯ
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -532,7 +753,15 @@ max_iterations по умолчанию: 3 для большинства аген
             )
 
             final_report = pm_final_report.final_report
-            metrics_json = json.dumps(pm_final_report.metrics, ensure_ascii=False)
+            # Сохраняем номер итерации и историю — PM metrics их не знает
+            merged_metrics = parse_metrics(pm_final_report.metrics)
+            prev_metrics = parse_metrics(self.current_project.get("metrics"))
+            if "iteration_history" in prev_metrics:
+                merged_metrics["iteration_history"] = prev_metrics["iteration_history"]
+            if "last_human_remarks" in prev_metrics:
+                merged_metrics["last_human_remarks"] = prev_metrics["last_human_remarks"]
+            merged_metrics["iteration"] = get_project_iteration(self.current_project)
+            metrics_json = json.dumps(merged_metrics, ensure_ascii=False)
             completed_at = datetime.now().isoformat()
 
             self.current_project.update({

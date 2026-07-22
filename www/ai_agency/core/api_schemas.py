@@ -76,6 +76,30 @@ class SetLlmProviderRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
+class RefineProjectRequest(BaseModel):
+    """POST /api/agency/refine — новая итерация по замечаниям человека.
+
+    Работает для текущего и любого проекта из истории (project_id).
+    """
+
+    human_prompt: str = Field(
+        ...,
+        min_length=5,
+        max_length=20000,
+        description="Замечания / что доработать относительно предыдущего запуска",
+    )
+    project_id: Optional[int] = Field(
+        default=None,
+        description="Id проекта (если не указан — текущий в оркестраторе)",
+    )
+    resume: bool = Field(
+        default=True,
+        description="Сразу запустить оркестратор после построения графа итерации",
+    )
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
 # ─── Responses (ключевые; остальное — Dict для гибкости фронта) ───────────────
 
 class AgencyActionResponse(BaseModel):
@@ -100,6 +124,16 @@ class HumanReviewResponse(BaseModel):
     task_id: Optional[str] = None
     pm_comment: str = ""
     updated_description: Optional[str] = None
+    resumed: bool = False
+    error: Optional[str] = None
+
+
+class RefineProjectResponse(BaseModel):
+    status: str
+    project_id: Optional[int] = None
+    iteration: int = 1
+    tasks_created: int = 0
+    pm_comment: str = ""
     resumed: bool = False
     error: Optional[str] = None
 

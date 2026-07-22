@@ -787,6 +787,32 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
 
+### Direction X — Итерации проекта после завершения (NEW)
+
+**Задача:** после `completed` человек даёт замечания → PM анализирует → доработка.
+Нужно и для текущего проекта, и для любого из истории.
+
+**Выбранный вариант: B — итерация на том же `project_id`** (не новый проект).
+
+| Почему не A (новый проект) | Почему B |
+|----------------------------|----------|
+| Дублирует goal/клиента, рвёт артефакты/outreach по Id | Сохраняет history, export, один бизнес-проект |
+| Сложнее resume/история | Близко к human-review; PM-replan добавляет `iterN_*` задачи |
+
+**Поток:**
+
+1. UI: «Новая итерация» / «Доработать» в истории → замечания.
+2. `POST /api/agency/refine` `{ human_prompt, project_id?, resume }`
+3. `initialize(project_id)` → `start_project_iteration()`:
+   - архив `final_report` в `metrics.iteration_history[]`
+   - `metrics.iteration += 1` (опц. поле `iteration` в NocoDB)
+   - PM (`pm_task_graph`): только задачи доработки; `task_id` = `iterN_…`
+   - `depends_on` только внутри нового графа; опора на прошлое — `previous_task_ids` в `input_data`
+4. `status=in_progress`, запуск `run()`; старые completed-задачи остаются.
+
+Файлы: `project_iteration.py`, `orchestrator.start_project_iteration`,
+`/api/agency/refine`, дашборд (`btn-refine`, история).
+
 ### Direction W — Документация интеграции (tech_writer) (NEW)
 
 **Проблема:** tech_writer мог выдать user_guide/КП без обязательного описания
@@ -1010,6 +1036,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Единый парсинг LLM | `schemas.py` → `call_and_parse_llm()` | |
 | Мульти-LLM | `llm_engine.py` + `/api/agency/llm/*` | OpenAI, Grok, Anthropic, DeepSeek, YandexGPT, GigaChat |
 | Dev decomposition | `dev_decomposition.py` | ≤1 full_workflow на blueprint (Direction V) |
+| Итерации проекта | `project_iteration.py` + `/api/agency/refine` | замечания → PM-replan на том же Id (Direction X) |
 | NocoDB клиенты | `nocodb.py` → 3 класса | |
 | NocoDB прокси | `main.py` → `nocodb_proxy()` | Защищён whitelist |
 | Промпты | `prompts/*.txt` | 9 файлов |
@@ -1021,4 +1048,4 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 ---
 
-**Последнее обновление:** Jul 21, 2026. Документация интеграции tech_writer (Direction W).
+**Последнее обновление:** Jul 22, 2026. Итерации проекта (Direction X).

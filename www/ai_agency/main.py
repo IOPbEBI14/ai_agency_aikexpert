@@ -28,6 +28,8 @@ from core.api_schemas import (
     HumanReviewRequest,
     HumanReviewResponse,
     IncreaseTokensResponse,
+    RefineProjectRequest,
+    RefineProjectResponse,
     SaveWorkflowRequest,
     SaveWorkflowResponse,
     SetLlmProviderRequest,
@@ -296,6 +298,19 @@ async def list_projects(limit: int = Query(default=50, ge=1, le=100)):
     items = []
     for p in projects:
         pid = p.get("Id")
+        metrics_raw = p.get("metrics")
+        iteration = 1
+        try:
+            if p.get("iteration") is not None:
+                iteration = max(1, int(p.get("iteration")))
+            elif isinstance(metrics_raw, str) and metrics_raw.strip():
+                m = json.loads(metrics_raw)
+                if isinstance(m, dict) and m.get("iteration") is not None:
+                    iteration = max(1, int(m["iteration"]))
+            elif isinstance(metrics_raw, dict) and metrics_raw.get("iteration") is not None:
+                iteration = max(1, int(metrics_raw["iteration"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            iteration = 1
         items.append({
             "id": pid,
             "project_name": p.get("project_name") or f"project-{pid}",
@@ -309,6 +324,7 @@ async def list_projects(limit: int = Query(default=50, ge=1, le=100)):
             "has_final_report": bool((p.get("final_report") or "").strip()),
             "is_current": pid is not None and pid == current_id,
             "goal": (p.get("goal") or "")[:200],
+            "iteration": iteration,
         })
     return {"projects": items, "current_project_id": current_id}
 
@@ -706,6 +722,57 @@ async def human_review(body: HumanReviewRequest):
     except Exception as e:
         logger.error(f"Ошибка human review: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/agency/refine", response_model=RefineProjectResponse)
+async def refine_project(body: RefineProjectRequest):
+    """Новая итерация проекта по замечаниям человека (текущий или из истории).
+
+    PM анализирует замечания, предыдущий отчёт и задачи; создаёт новый Task Graph
+    на том же project_id (номер итерации в metrics.iteration).
+    """
+    if orchestrator.agency_running or _agency_task_running():
+        raise HTTPException(
+            status_code=400,
+            detail="Агентство уже запущено — остановите текущий цикл перед итерацией",
+        )
+
+    target_id = body.project_id
+    if target_id is None and orchestrator.current_project:
+        target_id = orchestrator.current_project.get("Id")
+    if target_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите project_id или откройте проект (текущий / история)",
+        )
+
+    ok = await asyncio.to_thread(orchestrator.initialize, int(target_id))
+    if not ok or not orchestrator.current_project:
+        raise HTTPException(status_code=404, detail=f"Проект {target_id} не найден")
+
+    try:
+        info = await asyncio.to_thread(
+            orchestrator.start_project_iteration, body.human_prompt.strip()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("Ошибка refine: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    resumed = False
+    if body.resume and not orchestrator.agency_running and not _agency_task_running():
+        _start_orchestrator_background()
+        resumed = True
+
+    return RefineProjectResponse(
+        status="iteration_started",
+        project_id=info.get("project_id") or target_id,
+        iteration=int(info.get("iteration") or 1),
+        tasks_created=int(info.get("tasks_created") or 0),
+        pm_comment=info.get("pm_comment") or "",
+        resumed=resumed,
+    )
 
 
 @app.get("/api/agency/workflows", response_model=WorkflowsListResponse)

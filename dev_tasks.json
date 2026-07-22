@@ -89,5 +89,12 @@
     "priority": "medium",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 14,
+    "desc": "Итерации после completed: замечания человека → PM анализирует и дорабатывает; доступно для текущего и проектов из истории",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]
