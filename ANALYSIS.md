@@ -801,7 +801,8 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 **Поток:**
 
-1. UI: «Новая итерация» / «Доработать» в истории → замечания.
+1. UI: «Новая итерация» в панели управления (текущий/открытый проект);
+   в истории — кнопка «Доработать» в каждой строке списка и в баннере просмотра.
 2. `POST /api/agency/refine` `{ human_prompt, project_id?, resume }`
 3. `initialize(project_id)` → `start_project_iteration()`:
    - архив `final_report` в `metrics.iteration_history[]`

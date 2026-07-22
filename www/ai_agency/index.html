@@ -647,9 +647,29 @@
 
         .project-list {
             display: grid;
-            gap: 8px;
-            max-height: 360px;
+            gap: 10px;
+            max-height: 420px;
             overflow: auto;
+        }
+
+        .project-item-wrap {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            align-items: stretch;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            padding: 4px;
+        }
+
+        .project-item-wrap:hover {
+            border-color: var(--accent);
+        }
+
+        .project-item-wrap.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
         }
 
         .project-item {
@@ -658,26 +678,65 @@
             gap: 10px;
             align-items: center;
             padding: 10px 12px;
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            background: #fff;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
             cursor: pointer;
             text-align: left;
             font-family: var(--font);
             color: var(--ink);
+            width: 100%;
         }
 
-        .project-item:hover { border-color: var(--accent); }
+        .project-item:hover { background: transparent; border-color: transparent; }
 
         .project-item.active {
-            border-color: var(--accent);
-            background: var(--accent-soft);
+            border-color: transparent;
+            background: transparent;
         }
 
         .project-item .meta {
             font-size: 11px;
             color: var(--muted);
             margin-top: 4px;
+        }
+
+        .project-item-actions {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 4px 8px 4px 0;
+            gap: 6px;
+        }
+
+        .project-item-actions .refine-btn {
+            white-space: nowrap;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: #f7fffb;
+            cursor: pointer;
+            font-family: var(--font);
+        }
+
+        .project-item-actions .refine-btn:hover:not(:disabled) {
+            background: #0b463a;
+            border-color: #0b463a;
+            color: #f7fffb;
+        }
+
+        .project-item-actions .refine-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .history-banner-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
         }
 
         .new-project-panel {
@@ -818,7 +877,7 @@
             <button class="primary" id="btn-start" onclick="toggleNewProjectPanel()">Новый проект</button>
             <button id="btn-stop" onclick="stopAgency()" disabled>Остановить</button>
             <button id="btn-resume" onclick="resumeAgency()" disabled>Продолжить</button>
-            <button id="btn-refine" onclick="toggleRefinePanel()">Новая итерация</button>
+            <button id="btn-refine" onclick="toggleRefinePanel()" title="Новая итерация текущего или открытого проекта по вашим замечаниям">Новая итерация</button>
             <button onclick="increaseTokens()">+ Токены</button>
             <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
             <button onclick="refreshData()">Обновить</button>
@@ -876,13 +935,16 @@
                 <strong>Просмотр истории:</strong>
                 <span id="history-banner-text">—</span>
             </div>
-            <button class="primary" onclick="exitHistoryView()">К текущему запуску</button>
+            <div class="history-banner-actions">
+                <button type="button" class="primary" id="btn-history-refine" onclick="toggleRefinePanel()">Доработать</button>
+                <button type="button" onclick="exitHistoryView()">К текущему запуску</button>
+            </div>
         </section>
 
         <section class="history-panel" id="history-panel">
             <h2>Предыдущие запуски</h2>
             <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
-                Выберите проект, чтобы увидеть карточки агентов, статусы и итоговый отчёт.
+                Откройте проект для просмотра или нажмите «Доработать», чтобы запустить новую итерацию по замечаниям.
             </p>
             <div class="project-list" id="project-list">
                 <div class="workflow-item"><span>Загрузка…</span></div>
@@ -1184,20 +1246,27 @@ async function loadProjectsList() {
             const report = p.has_final_report ? ' · отчёт' : '';
             const iter = p.iteration ? ` · итер. ${p.iteration}` : '';
             const when = (p.completed_at || p.updated_at || '').replace('T', ' ').slice(0, 19);
+            const busy = liveRunning ? 'disabled' : '';
             return `
-                <div class="project-item-wrap">
-                <button type="button" class="project-item ${active}" onclick="openProjectHistory(${Number(p.id)})">
-                    <div>
-                        <strong>${escapeHtml(p.project_name)}</strong>
-                        <div class="meta">
-                            #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}${iter}
-                            ${when ? ` · ${escapeHtml(when)}` : ''}
+                <div class="project-item-wrap ${active}">
+                    <button type="button" class="project-item ${active}" onclick="openProjectHistory(${Number(p.id)})">
+                        <div>
+                            <strong>${escapeHtml(p.project_name)}</strong>
+                            <div class="meta">
+                                #${escapeHtml(p.id)} · ${escapeHtml(p.client_name)} · ${escapeHtml(statusLabel(p.status))}${mark}${report}${iter}
+                                ${when ? ` · ${escapeHtml(when)}` : ''}
+                            </div>
+                            ${p.goal ? `<div class="meta">${escapeHtml(p.goal)}</div>` : ''}
                         </div>
-                        ${p.goal ? `<div class="meta">${escapeHtml(p.goal)}</div>` : ''}
+                        <span class="pill status-${escapeHtml(p.status || '')}">${escapeHtml(statusLabel(p.status))}</span>
+                    </button>
+                    <div class="project-item-actions">
+                        <button type="button" class="refine-btn" ${busy}
+                            onclick="event.stopPropagation(); openRefineForProject(${Number(p.id)})"
+                            title="Новая итерация проекта #${Number(p.id)}">
+                            Доработать
+                        </button>
                     </div>
-                    <span class="pill status-${escapeHtml(p.status || '')}">${escapeHtml(statusLabel(p.status))}</span>
-                </button>
-                <button type="button" class="btn" style="margin:4px 0 12px;" onclick="event.stopPropagation(); openRefineForProject(${Number(p.id)})">Доработать</button>
                 </div>
             `;
         }).join('');
@@ -1291,6 +1360,13 @@ function renderMetrics() {
     if (refineBtn) {
         const pid = d.project_id || historyProjectId;
         refineBtn.disabled = !pid || running || liveRunning;
+        refineBtn.title = pid
+            ? `Доработка проекта #${pid} (итерация ${(d.iteration || 1)} → ${(d.iteration || 1) + 1})`
+            : 'Сначала откройте проект (текущий или из истории)';
+    }
+    const histRefine = document.getElementById('btn-history-refine');
+    if (histRefine) {
+        histRefine.disabled = !historyProjectId || running || liveRunning;
     }
 
     const dot = document.getElementById('live-dot');
