@@ -333,6 +333,34 @@ def _gigachat_access_token(credentials: str) -> str:
     return token
 
 
+def _needs_max_completion_tokens(model: str) -> bool:
+    """GPT-5 / o-series / ChatGPT-5.x: только max_completion_tokens (не max_tokens)."""
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    if "/" in m:
+        m = m.rsplit("/", 1)[-1]
+    # chatgpt5.4 / chatgpt-5.4 / gpt-5* / o1* / o3* / o4*
+    if m.startswith(("gpt-5", "gpt5", "chatgpt-5", "chatgpt5", "o1", "o3", "o4")):
+        return True
+    return False
+
+
+def _apply_chat_token_limit(
+    payload: Dict[str, Any],
+    spec: ProviderSpec,
+    max_tokens: int,
+) -> None:
+    """OpenAI GPT-5+ → max_completion_tokens; остальные openai-совместимые → max_tokens."""
+    model = _provider_model(spec)
+    if spec.id == "openai" and _needs_max_completion_tokens(model):
+        payload["max_completion_tokens"] = max_tokens
+        payload.pop("max_tokens", None)
+    else:
+        payload["max_tokens"] = max_tokens
+        payload.pop("max_completion_tokens", None)
+
+
 def _call_openai_chat(
     spec: ProviderSpec,
     system_prompt: str,
@@ -349,16 +377,34 @@ def _call_openai_chat(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: Dict[str, Any] = {
         "model": _provider_model(spec),
+        # Порядок важен для OpenAI prompt caching (GPT-4o+): стабильный system
+        # первым → общий префикс между вызовами одного агента (авто-кэш от 1024 tok).
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_task},
         ],
         "temperature": 0.3,
-        "max_tokens": max_tokens,
     }
+    _apply_chat_token_limit(payload, spec, max_tokens)
+
     resp = requests.post(url, json=payload, headers=headers, timeout=180, verify=verify)
+    # Fallback: модель отвергла max_tokens → повторить с max_completion_tokens
+    if (
+        resp.status_code == 400
+        and "max_tokens" in (resp.text or "")
+        and "max_completion_tokens" in (resp.text or "")
+        and "max_tokens" in payload
+    ):
+        logger.warning(
+            "⚠️ %s: max_tokens не поддерживается для %s → max_completion_tokens",
+            spec.label, payload.get("model"),
+        )
+        payload.pop("max_tokens", None)
+        payload["max_completion_tokens"] = max_tokens
+        resp = requests.post(url, json=payload, headers=headers, timeout=180, verify=verify)
+
     if resp.status_code != 200:
         raise RuntimeError(
             f"❌ LLM ({spec.label}) статус {resp.status_code}: {resp.text[:300]}"

@@ -206,7 +206,7 @@ LLM_BASE_URL=https://ai.api.cloud.yandex.net/v1
 LLM_FOLDER_ID=your_folder_id
 LLM_MODEL=yandexgpt
 
-# OpenAI
+# OpenAI (GPT-4o+ — автоматический prompt caching, настройка не нужна)
 # OPENAI_API_KEY=sk-...
 # OPENAI_MODEL=gpt-4o-mini
 # OPENAI_BASE_URL=https://api.openai.com/v1
