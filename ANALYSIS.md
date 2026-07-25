@@ -375,6 +375,20 @@ tech_writer   → QA Gate
 | `ProjectsClient` | `projects` | `find_project_by_name`, `get_or_create_project`, `update_project` |
 | `TasksClient` | `tasks` | `create_task`, `get_tasks_by_project`, `update_task`, `get_task_by_id` |
 
+### Надёжность HTTP (`nocodb_request`) — Direction Y
+
+Все read/write к NocoDB идут через `nocodb_request()`:
+
+| Параметр | Config / env | Default |
+|----------|--------------|---------|
+| Таймаут запроса | `NOCODB_TIMEOUT_SEC` | **60** с |
+| Число попыток | `NOCODB_MAX_ATTEMPTS` | **4** (1 + 3 повтора) |
+| Паузы между попытками | `NOCODB_RETRY_DELAYS_SEC` | **10, 30, 60** с |
+
+Ретраи только при временных сбоях: сеть, timeout, HTTP **429** / **5xx**.
+Клиентские **4xx** не повторяются. После исчерпания попыток — `NocoDBTransientError`
+(вызывающий код по-прежнему возвращает `None` / `False` / `[]`).
+
 ### API v2 vs API v3
 
 - **API v3** использует `id` (lowercase) в PATCH payload: `[{"id": 42, "fields": {...}}]`
@@ -787,6 +801,21 @@ email), хотя `client_hunter` честно вернул 0. Оба hunter ра
 
 Селлерский goal → `lead_hunter`; клиники/общий ICP → `client_hunter`.
 
+### Direction Y — Устойчивость NocoDB (NEW)
+
+**Проблема:** при недоступности NocoDB агенты «терялись» — статусы/задачи не
+обновлялись, поведение оркестратора становилось непредсказуемым (один сбой
+чтения/записи без повтора).
+
+**Решение:** единый `nocodb_request()` в `nocodb.py`:
+
+1. Таймаут — константа `Config.NOCODB_TIMEOUT_SEC` (default **60** с).
+2. При временной ошибке — до **3 повторов** с паузами **10 → 30 → 60** с
+   (`NOCODB_MAX_ATTEMPTS=4`, `NOCODB_RETRY_DELAYS_SEC=10,30,60`).
+3. Retryable: connection/timeout, HTTP 429/5xx; 4xx — сразу без sleep.
+
+Тесты: `tests/test_nocodb.py` → `TestNocodbRequestRetry`.
+
 ### Direction X — Итерации проекта после завершения (NEW)
 
 **Задача:** после `completed` человек даёт замечания → PM анализирует → доработка.
@@ -1066,7 +1095,7 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Мульти-LLM | `llm_engine.py` + `/api/agency/llm/*` | OpenAI, Grok, Anthropic, DeepSeek, YandexGPT, GigaChat |
 | Dev decomposition | `dev_decomposition.py` | ≤1 full_workflow на blueprint (Direction V) |
 | Итерации проекта | `project_iteration.py` + `/api/agency/refine` | замечания → PM-replan на том же Id (Direction X) |
-| NocoDB клиенты | `nocodb.py` → 3 класса | |
+| NocoDB клиенты | `nocodb.py` → 3 класса + `nocodb_request` | timeout/retry (Direction Y) |
 | NocoDB прокси | `main.py` → `nocodb_proxy()` | Защищён whitelist |
 | Промпты | `prompts/*.txt` | 9 файлов |
 | Конфигурация | `config.py` → `Config` | `.env` |
@@ -1077,4 +1106,4 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 ---
 
-**Последнее обновление:** Jul 23, 2026. OpenAI GPT-5: `max_completion_tokens` (Direction U).
+**Последнее обновление:** Jul 26, 2026. NocoDB: timeout 60s + retry 10/30/60 (Direction Y).

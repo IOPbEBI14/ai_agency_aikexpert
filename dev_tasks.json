@@ -96,5 +96,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 15,
+    "desc": "NocoDB: retry 3 раза с паузами 10/30/60 с при ошибках чтения/записи; таймаут константа (default 60 с)",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

@@ -1,12 +1,112 @@
-import requests
-import logging
 import json
-from typing import Dict, Any, Optional, List
+import logging
+import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
+
+import requests
+
 from .config import Config
 
 logger = logging.getLogger("NocoDBClient")
+
+
+class NocoDBTransientError(Exception):
+    """Временная ошибка NocoDB (сеть / 5xx / 429) — можно повторить."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
+
+
+def _is_retryable_exc(exc: BaseException) -> bool:
+    if isinstance(exc, NocoDBTransientError):
+        return True
+    if isinstance(exc, (
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ChunkedEncodingError,
+    )):
+        return True
+    # Общий RequestException без response (обрыв) — retry; с 4xx — нет
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = getattr(exc, "response", None)
+        code = getattr(resp, "status_code", None) if resp is not None else None
+        return bool(code and _is_retryable_status(code))
+    if isinstance(exc, requests.exceptions.RequestException):
+        resp = getattr(exc, "response", None)
+        if resp is None:
+            return True
+        return _is_retryable_status(getattr(resp, "status_code", 0) or 0)
+    return False
+
+
+def nocodb_request(
+    method: str,
+    url: str,
+    *,
+    headers: Optional[Dict[str, str]] = None,
+    json_body: Any = None,
+    timeout: Optional[float] = None,
+    raise_for_status: bool = False,
+) -> requests.Response:
+    """HTTP к NocoDB с таймаутом Config.NOCODB_TIMEOUT_SEC и ретраями.
+
+    При временных ошибках (сеть / timeout / 429 / 5xx) — до
+    NOCODB_MAX_ATTEMPTS попыток (default 4 = первая + 3 повтора)
+    с паузами из NOCODB_RETRY_DELAYS_SEC (default 10, 30, 60 сек).
+    """
+    timeout = Config.NOCODB_TIMEOUT_SEC if timeout is None else timeout
+    max_attempts = max(1, int(Config.NOCODB_MAX_ATTEMPTS))
+    delays: Tuple[int, ...] = tuple(Config.NOCODB_RETRY_DELAYS_SEC) or (10, 30, 60)
+
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.request(
+                method.upper(),
+                url,
+                headers=headers,
+                json=json_body,
+                timeout=timeout,
+            )
+            if _is_retryable_status(response.status_code):
+                raise NocoDBTransientError(
+                    f"HTTP {response.status_code}: {response.text[:200]}",
+                    status_code=response.status_code,
+                )
+            if raise_for_status:
+                response.raise_for_status()
+            return response
+        except Exception as e:
+            last_exc = e
+            retryable = _is_retryable_exc(e)
+            if (not retryable) or attempt >= max_attempts:
+                if isinstance(e, NocoDBTransientError) and attempt >= max_attempts:
+                    # Вернём последний response-подобный исход через RequestException
+                    logger.error(
+                        "❌ NocoDB %s %s: исчерпаны %s попыток — %s",
+                        method.upper(), url, max_attempts, e,
+                    )
+                raise
+            delay = delays[min(attempt - 1, len(delays) - 1)]
+            logger.warning(
+                "⚠️ NocoDB %s %s попытка %s/%s не удалась (%s). Повтор через %s с…",
+                method.upper(), url, attempt, max_attempts, e, delay,
+            )
+            time.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
+
+
+# Ловим и сетевые ошибки requests, и исчерпанные ретраи 5xx/429
+_NOCODB_REQUEST_ERRORS = (requests.exceptions.RequestException, NocoDBTransientError)
 
 
 class NocoDBClient:
@@ -24,12 +124,12 @@ class NocoDBClient:
         """Создаёт запись в agent_logs"""
         try:
             payload = [{"fields": data}]
-            response = requests.post(self.records_url, json=payload, headers=self.headers, timeout=120)
+            response = nocodb_request("POST", self.records_url, json_body=payload, headers=self.headers)
             response.raise_for_status()
             result = response.json()
             logger.info(f"✅ Сохранена запись: {data.get('agent_name')}")
             return result
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка сохранения: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 logger.error(f"Response: {e.response.text[:300]}")
@@ -42,7 +142,7 @@ class NocoDBClient:
         """
         try:
             url = f"{self.records_url}?limit={limit}"
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])
@@ -55,7 +155,7 @@ class NocoDBClient:
 
             logger.debug(f"📥 Получено {len(records)} записей из NocoDB")
             return records
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка чтения: {e}")
             return []
 
@@ -110,11 +210,11 @@ class ProjectsClient:
         try:
             sort_json = json.dumps([{"field": "UpdatedAt", "direction": "desc"}])
             url = f"{self.projects_url}?limit={limit}&sort={quote(sort_json)}"
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             if response.status_code != 200:
                 # Fallback без sort (поле UpdatedAt может отсутствовать)
                 url = f"{self.projects_url}?limit={limit}"
-                response = requests.get(url, headers=self.headers, timeout=120)
+                response = nocodb_request("GET", url, headers=self.headers)
             if response.status_code != 200:
                 logger.error(f"❌ list_projects: {response.status_code} — {response.text[:200]}")
                 return []
@@ -122,7 +222,7 @@ class ProjectsClient:
             records = [self._unpack_record(r) for r in data.get("records", [])]
             logger.debug(f"📥 list_projects: {len(records)} проектов")
             return records
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка list_projects: {e}")
             return []
 
@@ -137,7 +237,7 @@ class ProjectsClient:
             )
             logger.debug("🔍 Поиск проекта status=%s url=%s", status, url)
 
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             
             if response.status_code != 200:
                 logger.error(f"? NocoDB вернул {response.status_code}: {response.text[:200]}")
@@ -157,7 +257,7 @@ class ProjectsClient:
                 return project
             logger.debug("?? Проект status=%s не найден", status)
             return None
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"? Ошибка поиска проекта: {e}")
             return None
 
@@ -167,7 +267,7 @@ class ProjectsClient:
             url = self._build_where_url("project_name", project_name, limit=1)
             logger.info(f"🔍 Поиск проекта по имени: {url}")
             
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             
             if response.status_code != 200:
                 logger.error(f"❌ NocoDB вернул {response.status_code}: {response.text[:200]}")
@@ -181,7 +281,7 @@ class ProjectsClient:
                 logger.info(f"📂 Найден проект по имени: {project.get('project_name')} (ID: {project.get('Id')})")
                 return project
             return None
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка поиска проекта: {e}")
             return None
 
@@ -213,7 +313,7 @@ class ProjectsClient:
             logger.info(f"🆕 Создание проекта: {project_name}")
             logger.debug(f"   Payload: {payload}")
             
-            response = requests.post(self.projects_url, json=payload, headers=self.headers, timeout=120)
+            response = nocodb_request("POST", self.projects_url, json_body=payload, headers=self.headers)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка создания проекта: {response.status_code} — {response.text[:300]}")
@@ -244,7 +344,7 @@ class ProjectsClient:
 
             logger.info(f"✅ Создан новый проект: {project_name} (ID: {project.get('Id')})")
             return project
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка создания проекта: {e}")
             return {
                 "Id": None,
@@ -285,7 +385,7 @@ class ProjectsClient:
             
             logger.debug(f"?? PATCH payload: {json.dumps(payload, ensure_ascii=False)[:200]}")
             
-            response = requests.patch(self.projects_url, json=payload, headers=self.headers, timeout=120)
+            response = nocodb_request("PATCH", self.projects_url, json_body=payload, headers=self.headers)
             
             if response.status_code >= 400:
                 logger.error(f"? Ошибка обновления проекта: {response.status_code} — {response.text[:300]}")
@@ -293,7 +393,7 @@ class ProjectsClient:
             
             logger.debug("Проект обновлён: %s", project_id)
             return True
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"? Ошибка обновления проекта: {e}")
             return False
 
@@ -307,7 +407,7 @@ class ProjectsClient:
             # Bug fix: was self.records_url (AttributeError) — ProjectsClient has projects_url
             url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
             
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])
@@ -320,7 +420,7 @@ class ProjectsClient:
 
             logger.debug("Получено %s записей для проекта %s", len(records), project_id)
             return records
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f" Ошибка чтения записей проекта {project_id}: {e}")
             return []
 
@@ -328,7 +428,7 @@ class ProjectsClient:
         """Ищет проект по ID."""
         try:
             url = f"{self.projects_url}/{project_id}"
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             
             if response.status_code != 200:
                 logger.error(f" NocoDB вернул {response.status_code}: {response.text[:200]}")
@@ -338,7 +438,7 @@ class ProjectsClient:
             project = self._unpack_record(data)
             logger.info(f"📂 Найден проект по ID: {project.get('project_name')} (ID: {project.get('Id')})")
             return project
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка поиска проекта: {e}")
             return None            
             
@@ -390,7 +490,7 @@ class TasksClient:
             payload = [{"fields": task_data}]
             logger.debug(f"📝 POST payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
-            response = requests.post(self.tasks_url, json=payload, headers=self.headers, timeout=120)
+            response = nocodb_request("POST", self.tasks_url, json_body=payload, headers=self.headers)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка создания задачи: {response.status_code} — {response.text[:300]}")
@@ -408,7 +508,7 @@ class TasksClient:
             else:
                 return self._unpack_task(result)
                 
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка создания задачи: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 logger.error(f"Response: {e.response.text[:300]}")
@@ -420,7 +520,7 @@ class TasksClient:
             where_value = f"(project_id,eq,{project_id})"
             url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
             
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             
             if response.status_code != 200:
                 logger.error(f"❌ Ошибка чтения задач: {response.status_code} — {response.text[:200]}")
@@ -446,7 +546,7 @@ class TasksClient:
                 logger.warning(f"⚠️ {len(tasks_without_id)} задач без Id! Это приведёт к ошибкам обновления.")
             
             return tasks
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка чтения задач: {e}")
             return []
 
@@ -486,7 +586,7 @@ class TasksClient:
             logger.debug("📝 PATCH задача %s: %s", task_id, data)
             logger.debug(f"📝 PATCH payload: {json.dumps(payload, ensure_ascii=False)[:300]}")
             
-            response = requests.patch(self.tasks_url, json=payload, headers=self.headers, timeout=120)
+            response = nocodb_request("PATCH", self.tasks_url, json_body=payload, headers=self.headers)
             
             if response.status_code >= 400:
                 logger.error(f"❌ Ошибка обновления задачи {task_id}: {response.status_code} — {response.text[:300]}")
@@ -494,7 +594,7 @@ class TasksClient:
             
             logger.debug("✅ Задача обновлена: %s", task_id)
             return True
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка обновления задачи {task_id}: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 logger.error(f"Response: {e.response.text[:300]}")
@@ -506,11 +606,11 @@ class TasksClient:
             if not task_id:
                 return None
             url = f"{self.tasks_url}/{task_id}"
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
             data = response.json()
             return self._unpack_task(data)
-        except requests.exceptions.RequestException as e:
+        except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка чтения задачи {task_id}: {e}")
             return None
 
@@ -521,7 +621,7 @@ class TasksClient:
             where_value = f"(depends_on,like,%{parent_task_id}%)"
             url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
             
-            response = requests.get(url, headers=self.headers, timeout=120)
+            response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
             data = response.json()
             raw_records = data.get("records", [])

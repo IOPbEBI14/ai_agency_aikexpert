@@ -11,6 +11,19 @@ class Config:
     NOCODB_TABLE_ID = os.getenv("NOCODB_TABLE_ID")  # agent_logs
     NOCODB_PROJECTS_TABLE_ID = os.getenv("NOCODB_PROJECTS_TABLE_ID")
     NOCODB_TASKS_TABLE_ID = os.getenv("NOCODB_TASKS_TABLE_ID")  # НОВОЕ
+    # HTTP: таймаут одного запроса (сек); по умолчанию 1 минута
+    NOCODB_TIMEOUT_SEC = int(os.getenv("NOCODB_TIMEOUT_SEC", "60"))
+    # Всего попыток на запрос (включая первую). Default 4 = первая + 3 повтора
+    # с паузами 10 / 30 / 60 сек (NOCODB_RETRY_DELAYS_SEC).
+    NOCODB_MAX_ATTEMPTS = int(os.getenv("NOCODB_MAX_ATTEMPTS", "4"))
+    # Паузы перед 2-й, 3-й и 4-й попыткой (сек). Env: "10,30,60"
+    _nocodb_delays_raw = os.getenv("NOCODB_RETRY_DELAYS_SEC", "10,30,60")
+    try:
+        NOCODB_RETRY_DELAYS_SEC = tuple(
+            int(x.strip()) for x in _nocodb_delays_raw.split(",") if x.strip()
+        ) or (10, 30, 60)
+    except ValueError:
+        NOCODB_RETRY_DELAYS_SEC = (10, 30, 60)
     
     # LLM (мульти-провайдер: см. core/llm_engine.py и LLM_PROVIDER)
     # Активный провайдер: openai | grok | anthropic | deepseek | yandexgpt | gigachat

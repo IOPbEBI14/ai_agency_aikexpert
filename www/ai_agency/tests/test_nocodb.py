@@ -118,11 +118,11 @@ class TestUpdateProject:
         """API v3 требует 'id' (маленькая), не 'Id'."""
         captured = {}
 
-        def fake_patch(url, json, headers, timeout):
+        def fake_request(method, url, headers=None, json=None, timeout=None):
             captured["payload"] = json
             return _make_mock_response({})
 
-        with patch("requests.patch", side_effect=fake_patch):
+        with patch("requests.request", side_effect=fake_request):
             client.update_project(99, {"status": "completed"})
 
         assert captured["payload"][0]["id"] == 99
@@ -132,11 +132,11 @@ class TestUpdateProject:
         """completed_agents как list → должен стать JSON-строкой."""
         captured = {}
 
-        def fake_patch(url, json, headers, timeout):
+        def fake_request(method, url, headers=None, json=None, timeout=None):
             captured["payload"] = json
             return _make_mock_response({})
 
-        with patch("requests.patch", side_effect=fake_patch):
+        with patch("requests.request", side_effect=fake_request):
             client.update_project(1, {"completed_agents": ["analyst", "architect"]})
 
         fields = captured["payload"][0]["fields"]
@@ -144,7 +144,7 @@ class TestUpdateProject:
         assert json.loads(fields["completed_agents"]) == ["analyst", "architect"]
 
     def test_returns_false_on_4xx(self, client):
-        with patch("requests.patch", return_value=_make_mock_response({}, 400)):
+        with patch("requests.request", return_value=_make_mock_response({}, 400)):
             result = client.update_project(1, {"status": "bad"})
         assert result is False
 
@@ -199,11 +199,11 @@ class TestUpdateTask:
     def test_patch_uses_lowercase_id(self, client):
         captured = {}
 
-        def fake_patch(url, json, headers, timeout):
+        def fake_request(method, url, headers=None, json=None, timeout=None):
             captured["payload"] = json
             return _make_mock_response({})
 
-        with patch("requests.patch", side_effect=fake_patch):
+        with patch("requests.request", side_effect=fake_request):
             client.update_task(77, {"status": "completed"})
 
         assert captured["payload"][0]["id"] == 77
@@ -212,11 +212,11 @@ class TestUpdateTask:
     def test_patch_serializes_depends_on_list(self, client):
         captured = {}
 
-        def fake_patch(url, json, headers, timeout):
+        def fake_request(method, url, headers=None, json=None, timeout=None):
             captured["payload"] = json
             return _make_mock_response({})
 
-        with patch("requests.patch", side_effect=fake_patch):
+        with patch("requests.request", side_effect=fake_request):
             client.update_task(1, {"depends_on": ["task_001", "task_002"]})
 
         fields = captured["payload"][0]["fields"]
@@ -227,26 +227,117 @@ class TestUpdateTask:
         assert client.update_task(None, {"status": "ok"}) is False
 
     def test_returns_false_on_5xx(self, client):
-        with patch("requests.patch", return_value=_make_mock_response({}, 500)):
+        with patch("core.nocodb.time.sleep"), \
+             patch("requests.request", return_value=_make_mock_response({}, 500)):
             assert client.update_task(1, {"status": "ok"}) is False
 
     def test_updated_at_always_added(self, client):
         """Метка времени добавляется автоматически для аудита."""
         captured = {}
 
-        def fake_patch(url, json, headers, timeout):
+        def fake_request(method, url, headers=None, json=None, timeout=None):
             captured["payload"] = json
             return _make_mock_response({})
 
-        with patch("requests.patch", side_effect=fake_patch):
+        with patch("requests.request", side_effect=fake_request):
             client.update_task(1, {"status": "completed"})
 
         assert "updated_at" in captured["payload"][0]["fields"]
 
 
 # ══════════════════════════════════════════════════════════════════
+# nocodb_request — timeout + retry
+# ══════════════════════════════════════════════════════════════════
+
+class TestNocodbRequestRetry:
+    """Общий HTTP-слой: таймаут из Config, ретраи 10/30/60 при 5xx/сети."""
+
+    def test_default_timeout_from_config(self, monkeypatch):
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_TIMEOUT_SEC", 60)
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 1)
+        captured = {}
+
+        def fake_request(method, url, headers=None, json=None, timeout=None):
+            captured["timeout"] = timeout
+            return _make_mock_response({"ok": True})
+
+        with patch("requests.request", side_effect=fake_request):
+            mod.nocodb_request("GET", "http://noco/x")
+        assert captured["timeout"] == 60
+
+    def test_retries_on_5xx_with_backoff(self, monkeypatch):
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 4)
+        monkeypatch.setattr(Config, "NOCODB_RETRY_DELAYS_SEC", (10, 30, 60))
+        sleeps = []
+
+        def fake_sleep(sec):
+            sleeps.append(sec)
+
+        responses = [
+            _make_mock_response({}, 503),
+            _make_mock_response({}, 503),
+            _make_mock_response({}, 503),
+            _make_mock_response({"records": []}, 200),
+        ]
+
+        with patch("core.nocodb.time.sleep", side_effect=fake_sleep), \
+             patch("requests.request", side_effect=responses):
+            resp = mod.nocodb_request("GET", "http://noco/x")
+        assert resp.status_code == 200
+        assert sleeps == [10, 30, 60]
+
+    def test_no_retry_on_4xx(self, monkeypatch):
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 3)
+        with patch("core.nocodb.time.sleep") as mock_sleep, \
+             patch("requests.request", return_value=_make_mock_response({}, 404)):
+            resp = mod.nocodb_request("GET", "http://noco/x")
+        assert resp.status_code == 404
+        mock_sleep.assert_not_called()
+
+    def test_retries_on_timeout_then_succeeds(self, monkeypatch):
+        import requests
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 3)
+        monkeypatch.setattr(Config, "NOCODB_RETRY_DELAYS_SEC", (10, 30, 60))
+        ok = _make_mock_response({"ok": 1})
+        with patch("core.nocodb.time.sleep") as mock_sleep, \
+             patch(
+                 "requests.request",
+                 side_effect=[requests.exceptions.Timeout(), ok],
+             ):
+            resp = mod.nocodb_request("POST", "http://noco/x", json_body={})
+        assert resp.json() == {"ok": 1}
+        mock_sleep.assert_called_once_with(10)
+
+    def test_exhausted_retries_raise(self, monkeypatch):
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 4)
+        monkeypatch.setattr(Config, "NOCODB_RETRY_DELAYS_SEC", (10, 30, 60))
+        sleeps = []
+        with patch("core.nocodb.time.sleep", side_effect=lambda s: sleeps.append(s)), \
+             patch("requests.request", return_value=_make_mock_response({}, 502)):
+            with pytest.raises(mod.NocoDBTransientError):
+                mod.nocodb_request("GET", "http://noco/x")
+        assert sleeps == [10, 30, 60]
+
+
+# ══════════════════════════════════════════════════════════════════
 # nocodb_proxy (main.py) — безопасность
 # ══════════════════════════════════════════════════════════════════
+
 
 class TestNocodbProxy:
     """Безопасность nocodb_proxy: whitelist путей, методов, параметров."""

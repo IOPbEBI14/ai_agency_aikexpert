@@ -195,6 +195,10 @@ NOCODB_BASE_ID=your_base_id
 NOCODB_TABLE_ID=your_agent_logs_table_id
 NOCODB_PROJECTS_TABLE_ID=your_projects_table_id
 NOCODB_TASKS_TABLE_ID=your_tasks_table_id
+# Надёжность HTTP (опционально): таймаут 60с; 4 попытки с паузами 10/30/60
+# NOCODB_TIMEOUT_SEC=60
+# NOCODB_MAX_ATTEMPTS=4
+# NOCODB_RETRY_DELAYS_SEC=10,30,60
 
 # Активный LLM при старте (можно сменить на дашборде без рестарта):
 # openai | grok | anthropic | deepseek | yandexgpt | gigachat
