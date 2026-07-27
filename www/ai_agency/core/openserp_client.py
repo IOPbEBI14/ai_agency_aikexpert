@@ -41,7 +41,11 @@ class OpenSerpClient:
     """
 
     def __init__(self, base_url: Optional[str] = None, timeout: Optional[int] = None) -> None:
-        self.base_url = (base_url or Config.OPENSERP_BASE_URL or "").rstrip("/")
+        # None → Config; явный "" → не сконфигурирован (не подставлять дефолт из .env)
+        if base_url is None:
+            self.base_url = (Config.OPENSERP_BASE_URL or "").rstrip("/")
+        else:
+            self.base_url = (base_url or "").rstrip("/")
         self._timeout_override = timeout
 
     @property

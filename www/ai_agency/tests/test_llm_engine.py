@@ -61,9 +61,11 @@ class TestLlmEngineProviders:
             eng.set_active_provider("grok")
 
     @patch("core.llm_engine.requests.post")
-    def test_openai_chat_invoke(self, mock_post):
+    def test_openai_chat_invoke(self, mock_post, monkeypatch):
         from core import llm_engine as eng
 
+        # Явно gpt-4o-mini: в .env может быть gpt-5* → max_completion_tokens
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
         eng.set_active_provider("openai")
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -78,9 +80,9 @@ class TestLlmEngineProviders:
         assert tokens == 12
         url = mock_post.call_args[0][0]
         assert "chat/completions" in url
-        # default OPENAI_MODEL=gpt-4o-mini → max_tokens
         body = mock_post.call_args[1]["json"]
         assert "max_tokens" in body
+        assert "max_completion_tokens" not in body
 
     @patch("core.llm_engine.requests.post")
     def test_openai_gpt5_uses_max_completion_tokens(self, mock_post, monkeypatch):

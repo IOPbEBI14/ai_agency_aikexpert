@@ -28,9 +28,18 @@ def _fast_retries(monkeypatch):
 
 
 class TestOpenSerpClientSearch:
-    def test_not_configured_returns_empty(self):
+    def test_not_configured_returns_empty(self, monkeypatch):
+        # base_url="" не должен подставлять Config.OPENSERP_BASE_URL (живой OpenSERP)
+        monkeypatch.setattr("core.config.Config.OPENSERP_BASE_URL", "http://localhost:7000")
         client = OpenSerpClient(base_url="")
+        assert client.is_configured() is False
         assert client.search("query") == []
+
+    def test_default_uses_config_base_url(self, monkeypatch):
+        monkeypatch.setattr("core.config.Config.OPENSERP_BASE_URL", "http://openserp.test:7000")
+        client = OpenSerpClient()
+        assert client.base_url == "http://openserp.test:7000"
+        assert client.is_configured() is True
 
     def test_empty_query_returns_empty(self):
         client = OpenSerpClient(base_url="http://localhost:7000")
