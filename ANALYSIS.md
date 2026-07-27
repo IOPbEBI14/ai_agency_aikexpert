@@ -409,6 +409,10 @@ _PROXY_ALLOWED_PATH_RE = re.compile(r'^(\d+)?$')
 _PROXY_ALLOWED_PARAMS = frozenset({'limit', 'offset', 'where', 'sort'})
 ```
 
+OpenAPI: отдельные `operation_id` на каждый метод×путь (`nocodb_proxy_root_get`, …
+`nocodb_proxy_path_patch`) — иначе FastAPI предупреждает о Duplicate Operation ID
+при `methods=[GET,POST,PATCH]` на одном `api_route`.
+
 ---
 
 ## 11. Промпты и соответствие схемам

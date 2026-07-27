@@ -2,3 +2,5 @@ pytest>=7.4.0
 pytest-mock>=3.11.0
 pytest-asyncio>=0.21.0
 responses>=0.23.0
+# Starlette TestClient: httpx устарел → httpx2 (иначе StarletteDeprecationWarning)
+httpx2>=2.0.0

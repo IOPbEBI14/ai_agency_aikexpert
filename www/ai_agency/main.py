@@ -871,8 +871,12 @@ async def download_workflow(filename: str):
     return FileResponse(path, filename=safe, media_type="application/json")
 
 
-@app.api_route("/api/nocodb", methods=["GET", "POST", "PATCH"], name="nocodb_proxy_root")
-@app.api_route("/api/nocodb/{path:path}", methods=["GET", "POST", "PATCH"], name="nocodb_proxy_path")
+@app.get("/api/nocodb", operation_id="nocodb_proxy_root_get")
+@app.post("/api/nocodb", operation_id="nocodb_proxy_root_post")
+@app.patch("/api/nocodb", operation_id="nocodb_proxy_root_patch")
+@app.get("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_get")
+@app.post("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_post")
+@app.patch("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_patch")
 async def nocodb_proxy(request: Request, path: str = ""):
     """Read/write прокси для NocoDB API v3 (только agent_logs)."""
     if not _PROXY_ALLOWED_PATH_RE.match(path):

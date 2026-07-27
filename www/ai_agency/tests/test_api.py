@@ -84,7 +84,20 @@ class TestAgencyApiContract:
         schema = resp.json()
         assert "/api/agency/status" in schema["paths"]
         assert "/api/agency/start" in schema["paths"]
-
+        # Уникальные operationId (иначе FastAPI UserWarning Duplicate Operation ID)
+        op_ids = []
+        for path_item in schema["paths"].values():
+            for method, op in path_item.items():
+                if method.startswith("x-") or not isinstance(op, dict):
+                    continue
+                oid = op.get("operationId")
+                if oid:
+                    op_ids.append(oid)
+        assert op_ids, "OpenAPI без operationId"
+        assert len(op_ids) == len(set(op_ids)), (
+            "Дубли operationId: "
+            + ", ".join(sorted({x for x in op_ids if op_ids.count(x) > 1}))
+        )
     def test_start_success(self, client):
         c, mod = client
         mod.orchestrator.agency_running = False

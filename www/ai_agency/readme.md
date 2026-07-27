@@ -181,6 +181,8 @@ cd ai-agency
 ```bash
 pip install -r requirements.txt
 # или: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+# тесты (pytest + httpx2 для FastAPI TestClient без StarletteDeprecationWarning):
+pip install -r requirements-test.txt
 ```
 
 ### 3. Настройка `.env`
