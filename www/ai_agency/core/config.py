@@ -47,8 +47,11 @@ class Config:
 
     # n8n-validator: официальный движок (n8n-workflow + n8n-nodes-base)
     # auto — пробуем binary/npx; on — обязателен (fail если недоступен); off — только heuristic+local
+    # Для релизов / CI рекомендуется N8N_VALIDATOR_OFFICIAL=on (Node >= 22).
     N8N_VALIDATOR_OFFICIAL = os.getenv("N8N_VALIDATOR_OFFICIAL", "auto").strip().lower()
     N8N_VALIDATOR_OFFICIAL_TIMEOUT = int(os.getenv("N8N_VALIDATOR_OFFICIAL_TIMEOUT", "120"))
+    # Direction K в heuristic: ERROR на критичных HTTP/NocoDB без retry/error-ветки
+    N8N_VALIDATOR_RESILIENCE = os.getenv("N8N_VALIDATOR_RESILIENCE", "on").strip().lower()
     # Опционально: instance-level n8n MCP (Builder validate_workflow — для SDK/TS кода).
     # Для JSON от developer основной путь — n8n-workflow-validator (см. n8n_validator.py).
     N8N_MCP_URL = os.getenv("N8N_MCP_URL", "").rstrip("/")

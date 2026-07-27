@@ -103,5 +103,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 16,
+    "desc": "Фаза 1 roadmap: Direction K в коде (heuristic ERROR), стабилизация Layer C (Node≥22, official on), smoke/schemaDelta после developer",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

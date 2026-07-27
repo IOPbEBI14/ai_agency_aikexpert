@@ -24,6 +24,8 @@
     "xlsx: overrides → registry.npmjs.org (cdn.sheetjs.com часто таймаутит).",
     "Deprecation uuid/gm/glob — от зависимостей n8n, на валидатор не влияют.",
     "Слои: A heuristic | B validate-n8n.js | C n8n-workflow-validator",
-    "Env: N8N_VALIDATOR_OFFICIAL=auto|on|off"
+    "Env: N8N_VALIDATOR_OFFICIAL=auto|on|off (CI/release: on)",
+    "Direction K: N8N_VALIDATOR_RESILIENCE=on|off",
+    "Smoke: schemaDelta.missingKeys / N8N_PARAMETER → is_valid=False"
   ]
 }

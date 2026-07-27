@@ -402,6 +402,36 @@ class TestOfficialEngineLayer:
         assert "missing=" in issues[0]
         assert "extra=" in issues[0]
 
+    def test_smoke_blocks_schema_delta_on_exit_0(self, monkeypatch):
+        """Exit 0 + schemaDelta.missingKeys → fail (import smoke)."""
+        import core.n8n_validator as mod
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = __import__("json").dumps({
+                "valid": True,
+                "issues": [{
+                    "code": "N8N_PARAMETER_VALIDATION_ERROR",
+                    "severity": "error",
+                    "message": "Could not find property option",
+                    "location": {"nodeName": "Switch"},
+                    "context": {"schemaDelta": {"missingKeys": ["options"]}},
+                }],
+            })
+            m.stderr = ""
+            return m
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        ok, issues = mod._run_cli_validator(
+            ["npx", "--yes", "n8n-workflow-validator"],
+            _base_workflow(),
+            timeout=10,
+            label="Official",
+        )
+        assert ok is False
+        assert any("missing=" in i for i in issues)
+
     def test_run_cli_passes_json_flag_for_official(self, monkeypatch):
         import core.n8n_validator as mod
 
@@ -425,3 +455,153 @@ class TestOfficialEngineLayer:
         assert ok is True
         assert "--json" in captured["cmd"]
         assert captured["cmd"][0] == "npx"
+
+
+class TestDirectionKResilience:
+    """Фаза 1: критичные HTTP/NocoDB без retry/error-ветки → ERROR."""
+
+    def _mutating_http(self, **extra):
+        node = {
+            "name": "HTTP Create",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [200, 0],
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.example.com/items",
+                "sendBody": True,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ name: $json.name }) }}",
+            },
+        }
+        node.update(extra)
+        return node
+
+    def test_post_without_retry_blocked(self):
+        wf = _base_workflow(
+            nodes=[
+                {
+                    "name": "Schedule Trigger",
+                    "type": "n8n-nodes-base.scheduleTrigger",
+                    "typeVersion": 1.2,
+                    "position": [0, 0],
+                    "parameters": {
+                        "rule": {"interval": [{"field": "minutes", "minutesInterval": 10}]}
+                    },
+                },
+                self._mutating_http(),
+            ],
+            connections={
+                "Schedule Trigger": {
+                    "main": [[{"node": "HTTP Create", "type": "main", "index": 0}]]
+                }
+            },
+        )
+        ok, issues = validate_n8n_workflow_heuristic(wf)
+        assert ok is False
+        assert any("Direction K" in i and "retryOnFail" in i for i in issues)
+
+    def test_post_with_full_resilience_ok(self):
+        http = self._mutating_http(
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueErrorOutput",
+            notes="idempotency_key = external_id from source",
+            parameters={
+                "method": "POST",
+                "url": "https://api.example.com/items",
+                "sendBody": True,
+                "specifyBody": "json",
+                "jsonBody": (
+                    "={{ JSON.stringify({ external_id: $json.id, name: $json.name }) }}"
+                ),
+            },
+        )
+        wf = _base_workflow(
+            nodes=[
+                {
+                    "name": "Schedule Trigger",
+                    "type": "n8n-nodes-base.scheduleTrigger",
+                    "typeVersion": 1.2,
+                    "position": [0, 0],
+                    "parameters": {
+                        "rule": {"interval": [{"field": "minutes", "minutesInterval": 10}]}
+                    },
+                },
+                http,
+                {
+                    "name": "Log Error",
+                    "type": "n8n-nodes-base.set",
+                    "typeVersion": 3.4,
+                    "position": [400, 200],
+                    "parameters": {"assignments": {"assignments": []}},
+                },
+            ],
+            connections={
+                "Schedule Trigger": {
+                    "main": [[{"node": "HTTP Create", "type": "main", "index": 0}]]
+                },
+                "HTTP Create": {
+                    "main": [[]],
+                    "error": [[{"node": "Log Error", "type": "main", "index": 0}]],
+                },
+            },
+        )
+        ok, issues = validate_n8n_workflow_heuristic(wf)
+        assert ok is True, issues
+
+    def test_get_http_skips_resilience(self):
+        """GET не мутирует — Direction K не требует retry."""
+        ok, issues = validate_n8n_workflow_heuristic(_base_workflow())
+        assert ok is True
+        assert not any("Direction K" in i for i in issues)
+
+    def test_nocodb_update_needs_retry_and_error(self):
+        wf = _base_workflow()
+        wf["nodes"].append({
+            "name": "Noco Update",
+            "type": "n8n-nodes-base.nocoDb",
+            "typeVersion": 2,
+            "position": [400, 0],
+            "parameters": {
+                "operation": "update",
+                "tableId": "t1",
+                "rowId": "1",
+                "fieldsUi": {
+                    "fieldValues": [{"fieldName": "synced", "fieldValue": "true"}]
+                },
+            },
+            "credentials": {"nocoDbApiToken": {"id": "1", "name": "Noco"}},
+        })
+        wf["connections"]["HTTP Request"] = {
+            "main": [[{"node": "Noco Update", "type": "main", "index": 0}]]
+        }
+        ok, issues = validate_n8n_workflow_heuristic(wf)
+        assert ok is False
+        assert any("Direction K" in i for i in issues)
+
+    def test_resilience_can_be_disabled(self, monkeypatch):
+        monkeypatch.setenv("N8N_VALIDATOR_RESILIENCE", "off")
+        wf = _base_workflow(
+            nodes=[
+                {
+                    "name": "Schedule Trigger",
+                    "type": "n8n-nodes-base.scheduleTrigger",
+                    "typeVersion": 1.2,
+                    "position": [0, 0],
+                    "parameters": {
+                        "rule": {"interval": [{"field": "minutes", "minutesInterval": 10}]}
+                    },
+                },
+                self._mutating_http(),
+            ],
+            connections={
+                "Schedule Trigger": {
+                    "main": [[{"node": "HTTP Create", "type": "main", "index": 0}]]
+                }
+            },
+        )
+        ok, issues = validate_n8n_workflow_heuristic(wf)
+        assert ok is True
+        assert not any("Direction K" in i for i in issues)

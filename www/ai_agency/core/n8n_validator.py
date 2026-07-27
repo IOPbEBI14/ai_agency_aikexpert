@@ -1,8 +1,8 @@
 """
-Трёхуровневый валидатор n8n workflow.
+Трёхуровневый валидатор n8n workflow (+ smoke schemaDelta).
 
 Уровень A — Heuristic (Python, всегда):
-  Структурные проверки без внешних зависимостей (LLM-галлюцинации импорта).
+  Структурные проверки + Direction K (устойчивость критичных HTTP/NocoDB).
 
 Уровень B — Local JS (``validate-n8n.js``, без npm):
   Быстрый structural-gate, синхронизирован с heuristic.
@@ -10,13 +10,16 @@
 Уровень C — Official engine (``n8n-workflow-validator``):
   Реальный движок n8n (`n8n-workflow` + `n8n-nodes-base`) — то же, что редактор
   при импорте. Ищется в node_modules / global / ``npx --yes``.
-  Конфиг: ``N8N_VALIDATOR_OFFICIAL=auto|on|off``.
+  Конфиг: ``N8N_VALIDATOR_OFFICIAL=auto|on|off`` (для релизов/CI — ``on``).
+
+Smoke (поверх C): ``schemaDelta.missingKeys`` / N8N_PARAMETER ERROR → is_valid=False
+  даже если CLI вернул exit 0 с «предупреждениями».
 
 Опционально (будущее / instance): ``N8N_MCP_URL`` + ``N8N_MCP_ACCESS_TOKEN`` —
   официальный n8n Builder MCP (`validate_workflow` для SDK/TS кода). Для JSON
   от developer основным внешним шагом максимальной точности остаётся Layer C.
 
-Правило: любой ERROR от A/B/C → ``is_valid=False`` (developer получает qa_feedback).
+Правило: любой ERROR от A/B/C/smoke → ``is_valid=False`` (developer получает qa_feedback).
 
 Публичный API:
   validate_n8n_workflow(workflow)  → (is_valid: bool, issues: list[str])
@@ -39,7 +42,19 @@ logger = logging.getLogger("N8NValidator")
 
 _LOCAL_TIMEOUT = 30
 _ENV_DISABLE_LOCAL = "N8N_VALIDATOR_RUNTIME"  # off → не вызывать validate-n8n.js
+_ENV_RESILIENCE = "N8N_VALIDATOR_RESILIENCE"  # off → без Direction K ERROR
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Мутирующие HTTP-методы — требуют retry + error-ветку (Direction K)
+_MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_MUTATING_NOCODB_OPS = frozenset({"create", "update", "delete"})
+_IDEMPOTENCY_MARKERS = (
+    "external_id",
+    "idempotency",
+    "idempotency_key",
+    "dedup",
+    "unique_key",
+)
 
 # Кэш discovery (сбрасывается в тестах через monkeypatch)
 _local_bin: Optional[str] = None
@@ -89,6 +104,183 @@ def _official_timeout() -> int:
         return int(Config.N8N_VALIDATOR_OFFICIAL_TIMEOUT)
     except Exception:
         return 120
+
+
+def _resilience_enabled() -> bool:
+    raw = os.getenv(_ENV_RESILIENCE, "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    try:
+        from core.config import Config
+        val = str(getattr(Config, "N8N_VALIDATOR_RESILIENCE", "on") or "on").strip().lower()
+        return val not in ("0", "false", "no", "off")
+    except Exception:
+        return True
+
+
+def _is_blocking_smoke_issue(text: str) -> bool:
+    """schemaDelta / parameter ERROR — не пропускаем как «warning»."""
+    low = text.lower()
+    if "missing=" in low or "missingkeys" in low:
+        return True
+    if "n8n_parameter_validation_error" in low:
+        return True
+    if "[error]" in low and (
+        "schema" in low or "parameter" in low or "could not find" in low
+    ):
+        return True
+    return False
+
+
+def _http_method(node: Dict[str, Any]) -> str:
+    params = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+    method = params.get("method") or params.get("requestMethod") or "GET"
+    return str(method).strip().upper() or "GET"
+
+
+def _nocodb_operation(node: Dict[str, Any]) -> str:
+    params = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+    return str(params.get("operation") or "").strip().lower()
+
+
+def _is_critical_side_effect_node(node: Dict[str, Any], short: str) -> bool:
+    if short == "httpRequest":
+        return _http_method(node) in _MUTATING_HTTP_METHODS
+    if short == "nocoDb":
+        return _nocodb_operation(node) in _MUTATING_NOCODB_OPS
+    return False
+
+
+def _node_blob(node: Dict[str, Any]) -> str:
+    parts = [
+        json.dumps(node.get("parameters") or {}, ensure_ascii=False),
+        str(node.get("notes") or ""),
+        str(node.get("name") or ""),
+    ]
+    return " ".join(parts).lower()
+
+
+def _has_idempotency_marker(node: Dict[str, Any]) -> bool:
+    blob = _node_blob(node)
+    return any(m in blob for m in _IDEMPOTENCY_MARKERS)
+
+
+def _has_bounded_retry(node: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    if not node.get("retryOnFail"):
+        return False, "нет retryOnFail: true"
+    max_tries = node.get("maxTries")
+    if max_tries is None:
+        return False, "retryOnFail без maxTries (нужен конечный лимит, напр. 3)"
+    try:
+        n = int(max_tries)
+    except (TypeError, ValueError):
+        return False, f"maxTries должен быть числом, сейчас {max_tries!r}"
+    if n < 1 or n > 10:
+        return False, f"maxTries={n} вне диапазона 1..10"
+    wait = node.get("waitBetweenTries")
+    if wait is None:
+        return False, "нет waitBetweenTries (нужна пауза / backoff между попытками)"
+    try:
+        w = int(wait)
+    except (TypeError, ValueError):
+        return False, f"waitBetweenTries должен быть числом (мс), сейчас {wait!r}"
+    if w <= 0:
+        return False, "waitBetweenTries должен быть > 0"
+    return True, None
+
+
+def _connection_buckets_nonempty(outputs: Dict[str, Any], key: str) -> bool:
+    buckets = outputs.get(key)
+    if not isinstance(buckets, list):
+        return False
+    return any(isinstance(b, list) and len(b) > 0 for b in buckets)
+
+
+def _has_error_fallback(
+    node_name: str,
+    node: Dict[str, Any],
+    connections: Any,
+) -> Tuple[bool, Optional[str]]:
+    outs: Dict[str, Any] = {}
+    if isinstance(connections, dict):
+        raw = connections.get(node_name)
+        if isinstance(raw, dict):
+            outs = raw
+
+    on_error = str(node.get("onError") or "").strip()
+    continue_on_fail = bool(node.get("continueOnFail"))
+    has_error_conn = _connection_buckets_nonempty(outs, "error")
+
+    if on_error == "continueErrorOutput":
+        if has_error_conn:
+            return True, None
+        return False, (
+            'onError=continueErrorOutput, но в connections нет непустой ветки "error" '
+            "(резерв после исчерпания попыток)"
+        )
+    if has_error_conn:
+        return True, None
+    if continue_on_fail and _connection_buckets_nonempty(outs, "main"):
+        return True, None
+    return False, (
+        "нет резервной ветки: задайте onError=continueErrorOutput + connections.error "
+        "или continueOnFail=true с исходящим main (лог/алерт/сохранение данных)"
+    )
+
+
+def _check_direction_k_resilience(
+    node: Dict[str, Any],
+    label: str,
+    short: str,
+    connections: Any,
+    issues: List[str],
+) -> None:
+    """Direction K: retry/backoff/fallback (+ идемпотентность для create/POST)."""
+    if not _is_critical_side_effect_node(node, short):
+        return
+
+    ok_retry, retry_reason = _has_bounded_retry(node)
+    if not ok_retry:
+        issues.append(
+            f"[{label}] Direction K: критичная нода ({short}) — {retry_reason}. "
+            f"Нужно: retryOnFail=true, maxTries=3, waitBetweenTries>=1000 (мс)."
+        )
+
+    name = node.get("name") or label
+    ok_fb, fb_reason = _has_error_fallback(str(name), node, connections)
+    if not ok_fb:
+        issues.append(f"[{label}] Direction K: {fb_reason}.")
+
+    needs_idem = False
+    if short == "httpRequest" and _http_method(node) == "POST":
+        needs_idem = True
+    if short == "nocoDb" and _nocodb_operation(node) == "create":
+        needs_idem = True
+    if needs_idem and not _has_idempotency_marker(node):
+        issues.append(
+            f"[{label}] Direction K: create/POST без защиты от дублей. "
+            f"Добавьте external_id / idempotency_key в body/notes "
+            f"(или GET-before-create с уникальным ключом)."
+        )
+
+    if isinstance(connections, dict):
+        outs = connections.get(name)
+        if isinstance(outs, dict):
+            for key in ("error", "main"):
+                buckets = outs.get(key)
+                if not isinstance(buckets, list):
+                    continue
+                for bucket in buckets:
+                    if not isinstance(bucket, list):
+                        continue
+                    for link in bucket:
+                        if isinstance(link, dict) and link.get("node") == name:
+                            issues.append(
+                                f"[{label}] Direction K: connections.{key} ведёт на ту же ноду "
+                                f"— риск бесконечного цикла. Добавьте счётчик/Wait или Stop."
+                            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -292,6 +484,13 @@ def _run_cli_validator(
             logger.info(f"✅ {label}: workflow валиден")
             return True, []
         if result.returncode == 0 and issues:
+            blocking = [i for i in issues if _is_blocking_smoke_issue(i)]
+            if blocking:
+                logger.warning(
+                    f"❌ {label} smoke: schemaDelta/parameter ERROR "
+                    f"({len(blocking)}), несмотря на exit 0"
+                )
+                return False, issues
             logger.warning(f"⚠️  {label}: предупреждения ({len(issues)})")
             return True, issues
 
@@ -679,6 +878,8 @@ def validate_n8n_workflow_heuristic(workflow: Any) -> Tuple[bool, List[str]]:
             _check_nocodb_update(node, label, issues)
         _check_empty_options(node, short, label, issues)
         _check_credentials_keys(node, short, label, issues)
+        if _resilience_enabled():
+            _check_direction_k_resilience(node, label, short, connections, issues)
 
     for name, count in seen_names.items():
         if count > 1:
@@ -708,11 +909,12 @@ def _merge_issues(*groups: List[str]) -> List[str]:
 
 
 def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
-    """Трёхуровневая валидация n8n workflow.
+    """Трёхуровневая валидация n8n workflow + smoke schemaDelta.
 
-    A. Heuristic (всегда, блокирует).
+    A. Heuristic (всегда, блокирует) — структура + Direction K.
     B. Local validate-n8n.js (если доступен).
     C. Official n8n-workflow-validator / npx (если auto|on и доступен).
+    Smoke: schemaDelta.missingKeys / N8N_PARAMETER ERROR → fail.
 
     is_valid=False при ERROR от любого слоя (в т.ч. official engine).
     """
@@ -724,6 +926,7 @@ def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
     official_ok, official_issues = validate_n8n_workflow_official(workflow)
 
     all_issues = _merge_issues(heuristic_issues, local_issues, official_issues)
+    smoke_hit = any(_is_blocking_smoke_issue(i) for i in all_issues)
 
     if not heuristic_ok:
         logger.warning(f"❌ Workflow отклонён heuristic: {len(heuristic_issues)} проблем")
@@ -737,6 +940,10 @@ def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
         logger.warning(f"❌ Workflow отклонён official n8n-engine: {len(official_issues)} проблем")
         return False, all_issues or official_issues
 
+    if smoke_hit:
+        logger.warning("❌ Workflow отклонён smoke (schemaDelta / parameter ERROR)")
+        return False, all_issues
+
     layers = ["heuristic"]
     if local_ok is True:
         layers.append("local-js")
@@ -744,6 +951,7 @@ def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
         layers.append("official-engine")
     elif official_ok is None:
         layers.append("official-skipped")
+    layers.append("smoke")
 
     if all_issues:
         logger.info(
@@ -759,7 +967,8 @@ def build_n8n_feedback(issues: List[str]) -> str:
     """Формирует текст замечаний для возврата агенту developer."""
     header = (
         "Сгенерированный n8n workflow НЕ пройдёт импорт / проверку движком n8n "
-        '(ошибка "X is not iterable" / N8N_PARAMETER_VALIDATION_ERROR / структура). '
+        '(ошибка "X is not iterable" / N8N_PARAMETER_VALIDATION_ERROR / структура) '
+        "или не закрывает чек-лист устойчивости (Direction K). "
         "Исправь следующее и верни полный исправленный workflow:\n"
     )
     return header + "\n".join(f"- {i}" for i in issues)

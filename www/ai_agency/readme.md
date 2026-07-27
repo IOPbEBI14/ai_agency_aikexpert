@@ -258,7 +258,10 @@ GOOGLE_CX=your_custom_search_engine_id
 MAX_TASK_ITERATIONS=3
 DEVELOPER_MAX_ITERATIONS=6
 # Official n8n-engine validator (Layer C): auto | on | off
+# Для релизов / CI — on (нужен Node >= 22 и npm run install-validator)
 N8N_VALIDATOR_OFFICIAL=auto
+# Direction K в heuristic: on (default) | off
+N8N_VALIDATOR_RESILIENCE=on
 DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)
 DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и создание задач в Bpium для ОКК.
@@ -318,6 +321,8 @@ OPENSERP_USE_MEGA_FALLBACK=true
 2. Local `validate-n8n.js` — без npm
 3. **Official** `n8n-workflow-validator` (движок n8n) — binary / `npx --yes`  
    Env: `N8N_VALIDATOR_OFFICIAL=auto|on|off` (по умолчанию `auto`)
+   Direction K: `N8N_VALIDATOR_RESILIENCE=on|off` (по умолчанию `on`)
+   CI: `.github/workflows/ci.yml` — job с Node 22 + `N8N_VALIDATOR_OFFICIAL=on`
 
 Ошибки любого слоя блокируют задачу и возвращаются developer как `qa_feedback`.
 

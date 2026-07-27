@@ -616,6 +616,24 @@ npx n8n-workflow-validator --json workflow.json
 | `prompts/architect_prompt.txt` | Проектирование: error_handling[], rate limits, fallback в blueprint |
 | `prompts/developer_prompt.txt` | Сериализация: retryOnFail, backoff/jitter, идемпотентность, Error-ветка |
 | `prompts/qa_prompt.txt` + `qa_gate.py` | Приёмка по чек-листу устойчивости |
+| **`n8n_validator.py` heuristic (Фаза 1)** | **ERROR** на критичных `httpRequest` (POST/PUT/PATCH/DELETE) и `nocoDb` (create/update/delete): нет `retryOnFail`+`maxTries`+`waitBetweenTries`, нет error-ветки (`onError=continueErrorOutput` / `continueOnFail`), create/POST без `external_id`/`idempotency_key`, self-loop в connections |
+| Env `N8N_VALIDATOR_RESILIENCE` | `on` (default) / `off` — отключить Direction K ERROR в heuristic |
+
+**Smoke schemaDelta:** если Layer C вернул `missingKeys` / `N8N_PARAMETER_VALIDATION_ERROR`
+(даже при exit code 0) — `validate_n8n_workflow` → `is_valid=False` (developer retry).
+
+### Direction Z — Фаза 1 roadmap: качество поставки n8n (NEW)
+
+Реализация плана развития (§14 → Фаза 1):
+
+1. Direction K в **коде** heuristic (не только промпты) — см. таблицу выше.
+2. Layer C в CI: `.github/workflows/ci.yml` — Node **≥22**, `npm run install-validator`,
+   job с `N8N_VALIDATOR_OFFICIAL=on`.
+3. Smoke: блокировка по `schemaDelta.missingKeys` / parameter ERROR.
+4. Instance MCP / SDK-генерация — **не** в этой фазе (заготовки `N8N_MCP_*` без изменений).
+
+Тесты: `tests/test_n8n_validator.py` → `TestDirectionKResilience`, smoke schemaDelta.
+
 ---
 
 ### Branding — логотип, favicon, фирменные цвета (РЕАЛИЗОВАНО)
@@ -1059,6 +1077,10 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 2. React (Vite) дашборд: Task Graph, метрики токенов, Retry failed, syntax highlight
 3. Замена adaptive polling (2.5–10 с, см. Direction L) на настоящий push realtime
 
+### Roadmap — Фаза 1 (качество n8n) — РЕАЛИЗОВАНО (Direction Z)
+
+Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICIAL=on`, Node ≥22).
+
 ### Направление G. Параллельное выполнение задач (не реализовано)
 
 Текущий цикл выполняет задачи последовательно. Независимые задачи могут выполняться параллельно через `asyncio` / `ThreadPoolExecutor` внутри Orchestrator.
@@ -1102,8 +1124,8 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 | Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
 | Task Graph rules | `task_graph_rules.py` | sales обязателен после client_hunter/lead_hunter |
 | Outreach export | `outreach_export.py` + `/api/agency/outreach/export` | контакты ЛПР + выгрузка писем |
-| n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic → B local → C n8n-workflow-validator |
+| n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic+K → B local → C official + smoke (Direction Z) |
 
 ---
 
-**Последнее обновление:** Jul 26, 2026. NocoDB: timeout 60s + retry 10/30/60 (Direction Y).
+**Последнее обновление:** Jul 28, 2026. Фаза 1 n8n: Direction K + smoke + CI Layer C (Direction Z).
