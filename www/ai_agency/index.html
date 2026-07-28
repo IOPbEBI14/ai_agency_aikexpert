@@ -880,7 +880,7 @@
             <button id="btn-refine" onclick="toggleRefinePanel()" title="Новая итерация текущего или открытого проекта по вашим замечаниям">Новая итерация</button>
             <button onclick="increaseTokens()">+ Токены</button>
             <button type="button" id="btn-history-controls" onclick="toggleHistoryPanel()">История запусков</button>
-            <button onclick="refreshData()">Обновить</button>
+            <button onclick="refreshData({ force: true })">Обновить</button>
             <div class="llm-switch" title="Активная нейросеть для всех агентов">
                 <label for="llm-provider">Нейросеть</label>
                 <select id="llm-provider" onchange="onLlmProviderChange(this)">
@@ -1080,37 +1080,52 @@ function statusLabel(s) {
     })[s] || s || '—';
 }
 
-async function refreshData() {
+async function refreshData(opts) {
+    const force = !!(opts && opts.force);
     try {
         // В режиме истории не затираем просмотр live-статусом,
         // но обновляем кнопки управления по текущему агентству.
         if (historyProjectId) {
             const res = await fetch(`${API}/status`);
             if (res.ok) {
-                const live = await res.json();
-                liveRunning = !!live.running;
-                // «Новый проект» всегда доступен (остановит текущий и создаст новый)
-                document.getElementById('btn-start').disabled = false;
-                document.getElementById('btn-stop').disabled = !liveRunning;
-                document.getElementById('btn-resume').disabled =
-                    liveRunning || !isResumeAllowed(live);
-                if (live.llm) renderLlmSelector(live.llm);
+                applyLiveStatus(await res.json());
             }
-            renderHistoryChrome();
+            return;
+        }
+
+        // При активном WebSocket HTTP-poll не нужен (кнопка «Обновить» — force).
+        if (wsConnected && !force) {
             return;
         }
 
         const res = await fetch(`${API}/status`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        state = { ...state, ...data };
-        liveRunning = !!data.running;
-        renderAll();
+        applyLiveStatus(await res.json());
     } catch (e) {
         console.error(e);
         document.getElementById('system-status').textContent = 'API недоступен';
     }
 }
+
+function applyLiveStatus(data) {
+    if (!data || typeof data !== 'object') return;
+    liveRunning = !!data.running;
+    const btnStart = document.getElementById('btn-start');
+    const btnStop = document.getElementById('btn-stop');
+    const btnResume = document.getElementById('btn-resume');
+    if (btnStart) btnStart.disabled = false;
+    if (btnStop) btnStop.disabled = !liveRunning;
+    if (btnResume) btnResume.disabled = liveRunning || !isResumeAllowed(data);
+    if (data.llm) renderLlmSelector(data.llm);
+
+    if (historyProjectId) {
+        renderHistoryChrome();
+        return;
+    }
+    state = { ...state, ...data };
+    renderAll();
+}
+
 
 function renderAll() {
     renderMetrics();
@@ -1202,15 +1217,28 @@ function renderHistoryChrome() {
         banner.classList.add('visible');
         document.getElementById('history-banner-text').textContent =
             `#${historyProjectId} · ${state.project_name || '—'} · ${statusLabel(state.status)}`;
-        pollHint.textContent = 'режим истории (live-poll на паузе)';
+        pollHint.textContent = wsConnected
+            ? 'режим истории · WS live (кнопки)'
+            : 'режим истории (live-poll на паузе)';
     } else {
         banner.classList.remove('visible');
-        const sec = (currentPollIntervalMs() / 1000).toFixed(0);
-        pollHint.textContent = liveRunning
-            ? `live-обновление каждые ${sec} с`
-            : `обновление каждые ${sec} с`;
+        if (wsConnected) {
+            const sec = (liveRunning
+                ? (Number(window.__WS_PUSH_RUNNING_SEC) || 1.5)
+                : (Number(window.__WS_PUSH_IDLE_SEC) || 10)
+            ).toFixed(1).replace(/\.0$/, '');
+            pollHint.textContent = liveRunning
+                ? `WebSocket live ~${sec} с`
+                : `WebSocket ~${sec} с`;
+        } else {
+            const sec = (currentPollIntervalMs() / 1000).toFixed(0);
+            pollHint.textContent = liveRunning
+                ? `poll (fallback) каждые ${sec} с`
+                : `poll каждые ${sec} с`;
+        }
     }
 }
+
 
 async function toggleHistoryPanel() {
     const panel = document.getElementById('history-panel');
@@ -1918,25 +1946,103 @@ async function increaseTokens() {
 }
 
 /**
- * Адаптивный polling: пока агентство работает — опрашиваем чаще (ближе к
- * real-time), чтобы прогресс задач и токены обновлялись почти сразу.
- * В простое — реже, чтобы не грузить сервер зря.
+ * Фаза 2.1: WebSocket push статуса; HTTP-poll — только fallback при обрыве WS.
+ * Адаптивный polling оставлен как резерв (Direction L).
  */
 const POLL_MS_RUNNING = 2500;
 const POLL_MS_IDLE = 10000;
+const WS_RECONNECT_MS = 3000;
 let pollTimer = null;
+let statusSocket = null;
+let wsConnected = false;
+let wsReconnectTimer = null;
 
 function currentPollIntervalMs() {
     return liveRunning ? POLL_MS_RUNNING : POLL_MS_IDLE;
 }
 
+function statusWsUrl() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/api/agency/ws`;
+}
+
+function stopPollFallback() {
+    if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+    }
+}
+
+function startPollFallback() {
+    if (pollTimer || wsConnected) return;
+    pollLoop();
+}
+
 async function pollLoop() {
-    await refreshData();
+    await refreshData({ force: true });
+    if (wsConnected) {
+        pollTimer = null;
+        return;
+    }
     pollTimer = setTimeout(pollLoop, currentPollIntervalMs());
 }
 
+function connectStatusWs() {
+    if (statusSocket &&
+        (statusSocket.readyState === WebSocket.OPEN ||
+         statusSocket.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+    try {
+        statusSocket = new WebSocket(statusWsUrl());
+    } catch (e) {
+        console.warn('WebSocket недоступен, poll fallback', e);
+        wsConnected = false;
+        startPollFallback();
+        return;
+    }
+
+    statusSocket.onopen = () => {
+        wsConnected = true;
+        stopPollFallback();
+        renderHistoryChrome();
+    };
+
+    statusSocket.onmessage = (ev) => {
+        try {
+            const msg = JSON.parse(ev.data);
+            if (msg && msg.type === 'status' && msg.data) {
+                applyLiveStatus(msg.data);
+            } else if (msg && msg.type === 'pong') {
+                /* keepalive */
+            } else if (msg && (msg.running !== undefined || msg.tasks)) {
+                applyLiveStatus(msg);
+            }
+        } catch (e) {
+            console.error('WS message', e);
+        }
+    };
+
+    statusSocket.onclose = () => {
+        wsConnected = false;
+        statusSocket = null;
+        renderHistoryChrome();
+        startPollFallback();
+        wsReconnectTimer = setTimeout(connectStatusWs, WS_RECONNECT_MS);
+    };
+
+    statusSocket.onerror = () => {
+        try { statusSocket && statusSocket.close(); } catch (_) { /* ignore */ }
+    };
+}
+
 loadSavedWorkflows();
-pollLoop();
+connectStatusWs();
+refreshData({ force: true });
     </script>
 </body>
 </html>

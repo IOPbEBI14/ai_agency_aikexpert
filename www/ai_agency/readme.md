@@ -264,6 +264,9 @@ DEVELOPER_MAX_ITERATIONS=6
 N8N_VALIDATOR_OFFICIAL=auto
 # Direction K в heuristic: on (default) | off
 N8N_VALIDATOR_RESILIENCE=on
+# WebSocket push статуса дашборда (Фаза 2.1), мс
+# WS_PUSH_MS_RUNNING=1500
+# WS_PUSH_MS_IDLE=10000
 DEFAULT_PROJECT_NAME=Автоматизация WB
 DEFAULT_CLIENT_NAME=ООО 'Ромашка' (Селлер WB)
 DEFAULT_GOAL=Автоматизировать сбор отзывов с WB и создание задач в Bpium для ОКК.

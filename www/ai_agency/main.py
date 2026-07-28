@@ -16,13 +16,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from core import agency_ws
 from core import api_payloads as payloads
+from core import llm_engine
 from core.api_schemas import (
     AgencyActionResponse,
     HumanReviewRequest,
@@ -38,7 +40,6 @@ from core.api_schemas import (
     WorkflowsListResponse,
 )
 from core.config import Config
-from core import llm_engine
 from core.logging_setup import configure_logging, is_quiet_http_path
 from core.nocodb import NocoDBClient, ProjectsClient, TasksClient
 from core.orchestrator import Orchestrator
@@ -115,6 +116,17 @@ app.add_middleware(RequestLoggingMiddleware)
 
 # Статика: логотип/favicon (см. ANALYSIS.md → Branding)
 app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
+
+
+@app.on_event("startup")
+async def _startup_agency_ws() -> None:
+    agency_ws.set_status_builder(build_agency_status)
+    agency_ws.start_push_loop(lambda: bool(orchestrator.agency_running))
+
+
+@app.on_event("shutdown")
+async def _shutdown_agency_ws() -> None:
+    await agency_ws.stop_push_loop()
 
 
 def _safe_filename(name: str) -> str:
@@ -232,6 +244,11 @@ def _start_orchestrator_background() -> None:
         return
     orchestrator.agency_running = True
     agency_task = asyncio.create_task(asyncio.to_thread(orchestrator.run))
+    agency_ws.schedule_broadcast()
+
+
+def _notify_ws() -> None:
+    agency_ws.schedule_broadcast()
 
 
 @app.get("/")
@@ -246,6 +263,11 @@ async def serve_dashboard():
 @app.get("/api/agency/status")
 async def get_status():
     """Статус агентства + задачи текущего проекта."""
+    return await build_agency_status()
+
+
+async def build_agency_status() -> Dict[str, Any]:
+    """Снимок статуса для REST и WebSocket push (Фаза 2.1)."""
     current_project = orchestrator.current_project
     if current_project:
         view = await asyncio.to_thread(payloads._project_view_payload, current_project)
@@ -271,6 +293,12 @@ async def get_status():
     return _attach_llm_status(view)
 
 
+@app.websocket("/api/agency/ws")
+async def agency_status_ws(websocket: WebSocket):
+    """Push статуса задач/токенов (замена adaptive poll при открытом дашборде)."""
+    await agency_ws.handle_status_websocket(websocket)
+
+
 @app.get("/api/agency/llm/providers")
 async def get_llm_providers():
     """Список LLM-провайдеров и активный выбор."""
@@ -284,6 +312,7 @@ async def set_llm_provider(body: SetLlmProviderRequest):
         status = llm_engine.set_active_provider(body.provider)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    _notify_ws()
     return {"status": "ok", "llm": status}
 
 
@@ -481,6 +510,7 @@ async def start_agency(body: Optional[StartProjectRequest] = None):
         raise HTTPException(status_code=500, detail="Failed to initialize project")
 
     _start_orchestrator_background()
+    _notify_ws()
     return AgencyActionResponse(
         status="started",
         project=orchestrator.current_project.get("project_name"),
@@ -495,6 +525,7 @@ async def start_agency(body: Optional[StartProjectRequest] = None):
 async def stop_agency():
     """Остановка оркестратора."""
     await asyncio.to_thread(orchestrator.stop)
+    _notify_ws()
     return AgencyActionResponse(status="stopped")
 
 
@@ -535,6 +566,7 @@ async def resume_agency():
             "⏸ Resume → awaiting human review (project #%s %s)",
             project_id, name,
         )
+        _notify_ws()
         return AgencyActionResponse(
             status="awaiting_human_review",
             project=name,
@@ -553,6 +585,7 @@ async def resume_agency():
         orchestrator.current_project["status"] = "in_progress"
 
     _start_orchestrator_background()
+    _notify_ws()
     return AgencyActionResponse(
         status="resumed",
         project=name,
@@ -580,6 +613,7 @@ async def increase_tokens():
     orchestrator.current_project["token_budget"] = new_budget
 
     logger.info(f"Бюджет увеличен: {current_budget} → {new_budget}")
+    _notify_ws()
     return IncreaseTokensResponse(
         status="success", new_budget=new_budget, added=initial_budget
     )
@@ -715,6 +749,7 @@ async def human_review(body: HumanReviewRequest):
             _start_orchestrator_background()
             result.resumed = True
 
+        _notify_ws()
         return result
 
     except HTTPException:
@@ -765,6 +800,7 @@ async def refine_project(body: RefineProjectRequest):
         _start_orchestrator_background()
         resumed = True
 
+    _notify_ws()
     return RefineProjectResponse(
         status="iteration_started",
         project_id=info.get("project_id") or target_id,

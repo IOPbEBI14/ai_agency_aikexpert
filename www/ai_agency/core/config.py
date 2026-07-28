@@ -87,8 +87,10 @@ class Config:
     ).strip().lower() in ("1", "true", "yes", "on")
     CLIENT_HUNTER_SCRAPE_MAX = int(os.getenv("CLIENT_HUNTER_SCRAPE_MAX", 15))
 
-    # Project defaults
-    DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")
+    # WebSocket push статуса дашборда (Фаза 2.1), мс
+    WS_PUSH_MS_RUNNING = int(os.getenv("WS_PUSH_MS_RUNNING", "1500"))
+    WS_PUSH_MS_IDLE = int(os.getenv("WS_PUSH_MS_IDLE", "10000"))
+
     DEFAULT_CLIENT_NAME = os.getenv("DEFAULT_CLIENT_NAME", "ООО 'Ромашка' (Селлер WB)")
     DEFAULT_GOAL = os.getenv("DEFAULT_GOAL", "Автоматизировать сбор заявок с WB и создание задач в Bpium для ОКК.")
 

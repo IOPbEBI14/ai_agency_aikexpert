@@ -110,5 +110,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 17,
+    "desc": "Фаза 2.1: WebSocket /ws push статусов агентства (без полного React); fallback poll в дашборде",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]

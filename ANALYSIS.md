@@ -1074,12 +1074,27 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 Тесты: `tests/test_openserp.py` (retry 504, mega/fallback) + `tests/test_client_hunter.py`
 (primary/fallback/оба пусты) — 24 passed.
 
-### Направление H. UI на React + WebSocket (ТЗ №5) — СЛЕДУЮЩИЙ ЭТАП
+### Направление H. UI на React + WebSocket (ТЗ №5)
 
-После стабилизации FastAPI:
-1. WebSocket `/ws` в FastAPI (push статусов задач)
-2. React (Vite) дашборд: Task Graph, метрики токенов, Retry failed, syntax highlight
-3. Замена adaptive polling (2.5–10 с, см. Direction L) на настоящий push realtime
+| Подэтап | Статус | Содержание |
+|---------|--------|------------|
+| **2.1 WebSocket** | **РЕАЛИЗОВАНО** | `GET/WS /api/agency/ws` — push того же payload, что `GET /status`; vanilla `index.html` подключается к WS, HTTP-poll — fallback |
+| 2.2 React (Vite) | следующий | Task Graph, метрики, Retry failed, syntax highlight |
+| 2.3 | после 2.2 | полный отказ от poll при стабильном WS |
+
+**Фаза 2.1 (сейчас):**
+
+| Компонент | Роль |
+|-----------|------|
+| `core/agency_ws.py` | `StatusHub`, push-loop, ping/pong, `schedule_broadcast` |
+| `main.py` → `build_agency_status()` | общий снимок для REST и WS |
+| `main.py` → `@app.websocket("/api/agency/ws")` | snapshot при connect + подписка |
+| `index.html` | `connectStatusWs()`; при обрыве — poll 2.5/10 с |
+| Env | `WS_PUSH_MS_RUNNING` (default 1500), `WS_PUSH_MS_IDLE` (10000) |
+
+Немедленный push после start/stop/resume/refine/human-review/LLM switch/increase-tokens.
+
+Тесты: `tests/test_agency_ws.py`.
 
 ### Roadmap — Фаза 1 (качество n8n) — РЕАЛИЗОВАНО (Direction Z)
 
@@ -1128,8 +1143,9 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 | Поиск клиентов | `openserp_client.py` + `client_hunter_tools.py` | OpenSERP primary, Google API fallback |
 | Task Graph rules | `task_graph_rules.py` | sales обязателен после client_hunter/lead_hunter |
 | Outreach export | `outreach_export.py` + `/api/agency/outreach/export` | контакты ЛПР + выгрузка писем |
+| Status WebSocket | `agency_ws.py` + `/api/agency/ws` | Фаза 2.1 push (poll = fallback) |
 | n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic+K → B local → C official + smoke (Direction Z) |
 
 ---
 
-**Последнее обновление:** Jul 28, 2026. Фаза 1 n8n: Direction K + smoke + CI Layer C (Direction Z).
+**Последнее обновление:** Jul 28, 2026. Фаза 2.1: WebSocket `/api/agency/ws` push статуса.
