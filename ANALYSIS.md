@@ -640,6 +640,23 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AA — Выгрузка результата УТП / analyst (NEW)
+
+**Проблема:** проект «подготовка УТП» завершался (analyst + qa), но в UI не было
+ни блока артефакта, ни кнопки скачивания. В шапке только «Выгрузить письма»
+(outreach sales) — для УТП бесполезно. `AnalystResponse` без `summary` → пустой
+`output_preview`. Финальный отчёт PM мог отсутствовать — тогда результат «пропадал».
+
+| Исправление | Где |
+|-------------|-----|
+| Артефакт `usp_proposal` + markdown | `api_payloads._build_agent_artifact` / `_artifact_to_markdown` |
+| Preview из ROI/клиента | `_output_preview_for_agent` |
+| Download API | `GET /artifacts/download` разрешает `analyst` |
+| UI | карточка analyst, блок «Результаты для скачивания», кнопка «Скачать результат .md» |
+| Outreach-кнопки | скрываются, если нет client_hunter/sales |
+
+Тесты: `tests/test_api_payloads_artifacts.py`.
+
 ### Branding — логотип, favicon, фирменные цвета (РЕАЛИЗОВАНО)
 
 Символика отражает миссию агентства: надёжная оркестрация распределённых ИИ-агентов
@@ -1148,4 +1165,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 28, 2026. Фаза 2.1: WebSocket `/api/agency/ws` push статуса.
+**Последнее обновление:** Jul 29, 2026. Direction AA: выгрузка УТП/analyst + блок результатов.

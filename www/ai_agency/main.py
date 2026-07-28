@@ -380,7 +380,7 @@ async def download_artifact(
     project_id: int = Query(..., description="ID проекта"),
     task_id: str = Query(..., min_length=1, description="Логический task_id"),
 ):
-    """Скачать markdown-артефакт задачи (architect / tech_writer / crm / hunter / sales)."""
+    """Скачать markdown-артефакт задачи (analyst / architect / tech_writer / crm / hunter / sales)."""
     tasks = await asyncio.to_thread(tasks_db.get_tasks_by_project, project_id)
     task = next((t for t in tasks if t.get("task_id") == task_id), None)
     if not task:
@@ -388,7 +388,12 @@ async def download_artifact(
 
     agent_name = task.get("agent_name") or ""
     if agent_name not in (
-        "architect", "tech_writer", "crm_customizer", "client_hunter", "sales",
+        "analyst",
+        "architect",
+        "tech_writer",
+        "crm_customizer",
+        "client_hunter",
+        "sales",
     ):
         raise HTTPException(
             status_code=400,
@@ -401,6 +406,7 @@ async def download_artifact(
 
     markdown = payloads._artifact_to_markdown(agent_name, parsed)
     names = {
+        "analyst": "usp_proposal",
         "architect": "architecture",
         "tech_writer": "tech_writer_docs",
         "crm_customizer": "crm_setup_guide",

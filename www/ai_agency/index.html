@@ -986,6 +986,14 @@
             <div class="report-content" id="report-content"></div>
         </section>
 
+        <section class="final-report" id="project-deliverables">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;">
+                <h2>Результаты для скачивания</h2>
+                <button class="primary" type="button" onclick="downloadPrimaryResult()">Скачать основной результат</button>
+            </div>
+            <div id="deliverables-list" class="report-content"></div>
+        </section>
+
         <div class="section-title">
             <span>Project Manager</span>
         </div>
@@ -1009,8 +1017,9 @@
         <div class="section-title">
             <span>Задачи агентов</span>
             <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button type="button" onclick="downloadOutreach('md')">Выгрузить письма .md</button>
-                <button type="button" onclick="downloadOutreach('csv')">.csv</button>
+                <button type="button" class="primary" id="btn-download-result" onclick="downloadPrimaryResult()">Скачать результат .md</button>
+                <button type="button" id="btn-outreach-md" onclick="downloadOutreach('md')">Выгрузить письма .md</button>
+                <button type="button" id="btn-outreach-csv" onclick="downloadOutreach('csv')">.csv</button>
                 <span id="poll-hint">обновление каждые 10 с</span>
             </span>
         </div>
@@ -1134,6 +1143,8 @@ function renderAll() {
     renderReviewPanel();
     renderTasks();
     renderFinalReport();
+    renderDeliverables();
+    updateExportButtons();
     renderHistoryChrome();
 }
 
@@ -1527,6 +1538,7 @@ function renderTasks() {
 }
 
 function artifactDownloadLabel(agent) {
+    if (agent === 'analyst') return 'Скачать УТП / КП (.md)';
     if (agent === 'architect') return 'Скачать архитектуру (.md)';
     if (agent === 'tech_writer') return 'Скачать инструкции (.md)';
     if (agent === 'crm_customizer') return 'Скачать инструкцию CRM (.md)';
@@ -1535,9 +1547,115 @@ function artifactDownloadLabel(agent) {
     return 'Скачать (.md)';
 }
 
+function downloadableTasks() {
+    return (state.tasks || []).filter(
+        t => t && t.artifact && t.artifact.downloadable && t.task_id
+    );
+}
+
+function hasOutreachData() {
+    return (state.tasks || []).some(t =>
+        (t.artifact && t.artifact.outreach_export) ||
+        (t.agent_name === 'client_hunter' && t.artifact && t.artifact.kind === 'clients')
+    );
+}
+
+function updateExportButtons() {
+    const hasResult = !!(state.final_report && String(state.final_report).trim())
+        || downloadableTasks().length > 0;
+    const outreach = hasOutreachData();
+    const btnResult = document.getElementById('btn-download-result');
+    const btnMd = document.getElementById('btn-outreach-md');
+    const btnCsv = document.getElementById('btn-outreach-csv');
+    if (btnResult) btnResult.style.display = hasResult ? '' : 'none';
+    if (btnMd) btnMd.style.display = outreach ? '' : 'none';
+    if (btnCsv) btnCsv.style.display = outreach ? '' : 'none';
+}
+
+function renderDeliverables() {
+    const box = document.getElementById('project-deliverables');
+    const list = document.getElementById('deliverables-list');
+    if (!box || !list) return;
+    const arts = downloadableTasks();
+    if (!arts.length) {
+        box.classList.remove('visible');
+        list.innerHTML = '';
+        return;
+    }
+    box.classList.add('visible');
+    list.innerHTML = arts.map(t => {
+        const title = (t.artifact && t.artifact.title) || artifactDownloadLabel(t.agent_name);
+        const summary = (t.artifact && t.artifact.summary) || t.output_preview || '';
+        return `
+            <div class="workflow-item" style="margin-bottom:8px;">
+                <div>
+                    <strong>${escapeHtml(t.agent_name || '')}</strong>
+                    <span class="muted"> · ${escapeHtml(t.task_id || '')}</span>
+                    <div>${escapeHtml(title)}</div>
+                    ${summary ? `<div class="muted" style="margin-top:4px">${escapeHtml(String(summary).slice(0, 240))}</div>` : ''}
+                </div>
+                <button type="button" class="primary" onclick="downloadArtifact('${escapeHtml(t.task_id)}')">
+                    ${escapeHtml(artifactDownloadLabel(t.agent_name))}
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+function downloadPrimaryResult() {
+    if (state.final_report && String(state.final_report).trim()) {
+        downloadReport();
+        return;
+    }
+    const prefer = ['analyst', 'architect', 'tech_writer', 'crm_customizer', 'client_hunter', 'sales'];
+    const arts = downloadableTasks();
+    let task = null;
+    for (const agent of prefer) {
+        task = arts.find(t => t.agent_name === agent);
+        if (task) break;
+    }
+    if (!task) task = arts[0];
+    if (!task) {
+        toast('Нет финального отчёта и скачиваемых артефактов');
+        return;
+    }
+    downloadArtifact(task.task_id);
+}
+
+
 function renderArtifact(task) {
     const a = task.artifact;
     if (!a || !a.kind) return '';
+
+    if (a.kind === 'usp_proposal') {
+        const pains = (a.pain_points || []).map(p =>
+            `<li><strong>${escapeHtml(p.process || '—')}</strong>` +
+            `<span class="muted"> — ${escapeHtml(String(p.time_per_day_hours ?? '—'))} ч/день, ` +
+            `${escapeHtml(String(p.cost_per_month_rub ?? '—'))} руб/мес</span></li>`
+        ).join('');
+        const autos = (a.proposed_automation || []).map(x =>
+            `<li><strong>${escapeHtml(x.solution || '—')}</strong>` +
+            `<div class="muted">инструменты: ${escapeHtml((x.tools || []).join(', ') || '—')}; ` +
+            `сложность: ${escapeHtml(x.implementation_complexity || '—')}</div></li>`
+        ).join('');
+        const slides = (a.proposal_structure || []).map((s, i) =>
+            `<li>${i + 1}. ${escapeHtml(s)}</li>`
+        ).join('');
+        const roi = a.roi || {};
+        return `
+            <div class="artifact">
+                <h4>УТП / коммерческое предложение</h4>
+                ${a.client_name ? `<div><strong>Клиент:</strong> ${escapeHtml(a.client_name)}</div>` : ''}
+                <div class="muted" style="margin-top:4px">${escapeHtml(a.summary || '')}</div>
+                <div class="muted">Экономия: ${escapeHtml(String(roi.cost_saved_per_month_rub ?? '—'))} руб/мес · ` +
+                `окупаемость: ${escapeHtml(String(roi.payback_period_months ?? '—'))} мес</div>
+                ${pains ? `<h4>Боли</h4><ul>${pains}</ul>` : ''}
+                ${autos ? `<h4>Автоматизация</h4><ul>${autos}</ul>` : ''}
+                ${slides ? `<h4>Структура КП</h4><ul>${slides}</ul>` : ''}
+                ${a.notes ? `<div class="muted">${escapeHtml(a.notes)}</div>` : ''}
+            </div>
+        `;
+    }
 
     if (a.kind === 'architecture') {
         const systems = (a.systems || []).map(s =>

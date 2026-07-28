@@ -82,12 +82,7 @@ def _build_tasks_payload(project_id: Any):
             }
             parsed = _try_parse_json(t.get("output_data"))
             if parsed:
-                item["output_preview"] = (
-                    parsed.get("summary")
-                    or parsed.get("pm_comment")
-                    or parsed.get("approach")
-                    or ""
-                )[:1500]
+                item["output_preview"] = _output_preview_for_agent(agent_name, parsed)
                 n8n = parsed.get("n8n_json")
                 if isinstance(n8n, dict) and n8n.get("nodes"):
                     item["has_n8n_json"] = True
@@ -110,10 +105,89 @@ def _build_tasks_payload(project_id: Any):
     return tasks_payload, review_tasks
 
 
+def _output_preview_for_agent(agent_name: Optional[str], parsed: Dict[str, Any]) -> str:
+    """Короткий текст для карточки задачи (analyst без summary — из ROI/клиента)."""
+    preview = (
+        parsed.get("summary")
+        or parsed.get("pm_comment")
+        or parsed.get("approach")
+        or ""
+    )
+    if preview:
+        return str(preview)[:1500]
+
+    if agent_name == "analyst":
+        client = parsed.get("client_name") or "клиент"
+        roi = parsed.get("roi_calculation") if isinstance(parsed.get("roi_calculation"), dict) else {}
+        saved = roi.get("cost_saved_per_month_rub")
+        parts = [f"УТП / КП для {client}"]
+        if saved is not None:
+            parts.append(f"ROI рассчитан: экономия {saved} руб/мес")
+        pains = parsed.get("current_pain_points") or []
+        if isinstance(pains, list) and pains:
+            first = pains[0] if isinstance(pains[0], dict) else None
+            if first and first.get("process"):
+                parts.append(f"Боль: {first['process']}")
+        return ". ".join(parts)[:1500]
+
+    if agent_name == "qa":
+        feedback = parsed.get("feedback") or parsed.get("qa_feedback") or ""
+        score = parsed.get("score")
+        if score is not None:
+            return f"QA score={score}. {feedback}"[:1500]
+        return str(feedback)[:1500]
+
+    return ""
+
+
 def _build_agent_artifact(agent_name: Optional[str], parsed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Структурированный артефакт для карточек architect / tech_writer / crm_customizer."""
+    """Структурированный артефакт для карточек агентов (скачивание .md)."""
     if not agent_name or not parsed:
         return None
+
+    if agent_name == "analyst":
+        pains = []
+        for p in parsed.get("current_pain_points") or []:
+            if isinstance(p, dict):
+                pains.append({
+                    "process": p.get("process") or "",
+                    "time_per_day_hours": p.get("time_per_day_hours"),
+                    "cost_per_month_rub": p.get("cost_per_month_rub"),
+                })
+        autos = []
+        for a in parsed.get("proposed_automation") or []:
+            if isinstance(a, dict):
+                autos.append({
+                    "solution": a.get("solution") or "",
+                    "tools": a.get("tools") or [],
+                    "time_saved_hours_per_day": a.get("time_saved_hours_per_day"),
+                    "implementation_complexity": a.get("implementation_complexity") or "",
+                })
+        roi = parsed.get("roi_calculation") if isinstance(parsed.get("roi_calculation"), dict) else {}
+        structure = [
+            str(s) for s in (parsed.get("proposal_structure") or []) if s is not None
+        ]
+        return {
+            "kind": "usp_proposal",
+            "title": f"УТП / КП — {parsed.get('client_name') or 'клиент'}",
+            "summary": (
+                f"Экономия {roi.get('cost_saved_per_month_rub', '—')} руб/мес, "
+                f"окупаемость {roi.get('payback_period_months', '—')} мес"
+            ),
+            "client_name": parsed.get("client_name") or "",
+            "pain_points": pains[:12],
+            "proposed_automation": autos[:12],
+            "roi": {
+                "total_time_saved_hours_per_month": roi.get("total_time_saved_hours_per_month"),
+                "cost_saved_per_month_rub": roi.get("cost_saved_per_month_rub"),
+                "implementation_cost_rub": roi.get("implementation_cost_rub"),
+                "payback_period_months": roi.get("payback_period_months"),
+            },
+            "proposal_structure": structure[:20],
+            "notes": parsed.get("notes") or "",
+            "downloadable": True,
+            "download_name": "usp_proposal",
+        }
 
     if agent_name == "architect":
         systems = []
@@ -265,6 +339,73 @@ def _build_agent_artifact(agent_name: Optional[str], parsed: Dict[str, Any]) -> 
 def _artifact_to_markdown(agent_name: str, parsed: Dict[str, Any]) -> str:
     """Собирает markdown-файл из output_data агента."""
     lines: list = []
+
+    if agent_name == "analyst":
+        client = parsed.get("client_name") or "Клиент"
+        lines.append(f"# УТП / коммерческое предложение — {client}")
+        lines.append("")
+        roi = parsed.get("roi_calculation") if isinstance(parsed.get("roi_calculation"), dict) else {}
+        lines.append("## Экономика (ROI)")
+        lines.append(
+            f"- Экономия времени: {roi.get('total_time_saved_hours_per_month', '—')} ч/мес"
+        )
+        lines.append(
+            f"- Экономия денег: {roi.get('cost_saved_per_month_rub', '—')} руб/мес"
+        )
+        lines.append(
+            f"- Стоимость внедрения: {roi.get('implementation_cost_rub', '—')} руб"
+        )
+        lines.append(
+            f"- Окупаемость: {roi.get('payback_period_months', '—')} мес"
+        )
+        lines.append("")
+        pains = parsed.get("current_pain_points") or []
+        if pains:
+            lines.append("## Болевые точки")
+            for p in pains:
+                if not isinstance(p, dict):
+                    continue
+                lines.append(
+                    f"- **{p.get('process') or '—'}**: "
+                    f"{p.get('time_per_day_hours', '—')} ч/день, "
+                    f"{p.get('cost_per_month_rub', '—')} руб/мес"
+                )
+            lines.append("")
+        autos = parsed.get("proposed_automation") or []
+        if autos:
+            lines.append("## Предлагаемая автоматизация")
+            for a in autos:
+                if not isinstance(a, dict):
+                    continue
+                tools = a.get("tools") or []
+                tools_s = ", ".join(str(t) for t in tools) if isinstance(tools, list) else str(tools)
+                lines.append(f"### {a.get('solution') or 'Решение'}")
+                lines.append(f"- Инструменты: {tools_s or '—'}")
+                lines.append(
+                    f"- Экономия: {a.get('time_saved_hours_per_day', '—')} ч/день"
+                )
+                lines.append(
+                    f"- Сложность: {a.get('implementation_complexity') or '—'}"
+                )
+                lines.append("")
+        structure = parsed.get("proposal_structure") or []
+        if structure:
+            lines.append("## Структура КП / УТП")
+            for i, slide in enumerate(structure, 1):
+                lines.append(f"{i}. {slide}")
+            lines.append("")
+        if parsed.get("notes"):
+            lines.append("## Заметки")
+            lines.append(str(parsed["notes"]))
+            lines.append("")
+        handoff = parsed.get("handoff_to_architect")
+        if isinstance(handoff, dict) and handoff:
+            lines.append("## Передача архитектору")
+            lines.append("```json")
+            lines.append(json.dumps(handoff, ensure_ascii=False, indent=2))
+            lines.append("```")
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
 
     if agent_name == "architect":
         lines.append(f"# {parsed.get('summary') or 'Архитектура'}")

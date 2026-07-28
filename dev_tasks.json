@@ -117,5 +117,12 @@
     "priority": "high",
     "assignee": "coder_agent",
     "status": "todo"
+  },
+  {
+    "id": 18,
+    "desc": "USP/analyst: артефакт + скачивание .md; превью в карточке; кнопка «Скачать результат» (не только outreach)",
+    "priority": "high",
+    "assignee": "coder_agent",
+    "status": "todo"
   }
 ]
