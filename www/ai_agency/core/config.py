@@ -91,6 +91,8 @@ class Config:
     WS_PUSH_MS_RUNNING = int(os.getenv("WS_PUSH_MS_RUNNING", "1500"))
     WS_PUSH_MS_IDLE = int(os.getenv("WS_PUSH_MS_IDLE", "10000"))
 
+    # Project defaults
+    DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")
     DEFAULT_CLIENT_NAME = os.getenv("DEFAULT_CLIENT_NAME", "ООО 'Ромашка' (Селлер WB)")
     DEFAULT_GOAL = os.getenv("DEFAULT_GOAL", "Автоматизировать сбор заявок с WB и создание задач в Bpium для ОКК.")
 

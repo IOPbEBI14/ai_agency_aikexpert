@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -97,12 +98,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    """Startup/shutdown: WebSocket push-loop статуса (Фаза 2.1)."""
+    # build_agency_status резолвится при входе в lifespan (модуль уже загружен)
+    agency_ws.set_status_builder(build_agency_status)
+    agency_ws.start_push_loop(lambda: bool(orchestrator.agency_running))
+    yield
+    await agency_ws.stop_push_loop()
+
+
 app = FastAPI(
     title="AI Agency OS",
     description="HTTP API оркестратора ИИ-агентства (n8n / e-commerce automation)",
     version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=_app_lifespan,
 )
 
 app.add_middleware(
@@ -116,17 +128,6 @@ app.add_middleware(RequestLoggingMiddleware)
 
 # Статика: логотип/favicon (см. ANALYSIS.md → Branding)
 app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
-
-
-@app.on_event("startup")
-async def _startup_agency_ws() -> None:
-    agency_ws.set_status_builder(build_agency_status)
-    agency_ws.start_push_loop(lambda: bool(orchestrator.agency_running))
-
-
-@app.on_event("shutdown")
-async def _shutdown_agency_ws() -> None:
-    await agency_ws.stop_push_loop()
 
 
 def _safe_filename(name: str) -> str:
