@@ -47,6 +47,28 @@ _lock = threading.RLock()
 _active_provider_id: Optional[str] = None
 _gigachat_token: Optional[str] = None
 _gigachat_token_expires: float = 0.0
+_llm_semaphore: Optional[threading.Semaphore] = None
+
+
+def _llm_concurrency_limit() -> int:
+    n = Config.LLM_MAX_CONCURRENT or Config.MAX_PARALLEL_TASKS or 1
+    return max(1, int(n))
+
+
+def _get_llm_semaphore() -> threading.Semaphore:
+    """Общий семафор LLM: параллельные задачи делят rate budget (Фаза 3.1)."""
+    global _llm_semaphore
+    with _lock:
+        if _llm_semaphore is None:
+            _llm_semaphore = threading.Semaphore(_llm_concurrency_limit())
+        return _llm_semaphore
+
+
+def reset_llm_semaphore_for_tests() -> None:
+    """Сброс семафора после смены Config в тестах."""
+    global _llm_semaphore
+    with _lock:
+        _llm_semaphore = None
 
 
 @dataclass(frozen=True)
@@ -500,7 +522,20 @@ def invoke(
     user_task: str,
     max_retries: int = 2,
 ) -> Tuple[str, int]:
-    """Вызов активного LLM-провайдера с retry при обрезке JSON."""
+    """Вызов активного LLM-провайдера с retry при обрезке JSON.
+
+    Параллельные задачи разделяют семафор LLM_MAX_CONCURRENT / MAX_PARALLEL_TASKS.
+    """
+    with _get_llm_semaphore():
+        return _invoke_unlocked(agent_name, system_prompt, user_task, max_retries)
+
+
+def _invoke_unlocked(
+    agent_name: str,
+    system_prompt: str,
+    user_task: str,
+    max_retries: int = 2,
+) -> Tuple[str, int]:
     pid = get_active_provider_id()
     spec = PROVIDERS[pid]
     max_tokens = 16000

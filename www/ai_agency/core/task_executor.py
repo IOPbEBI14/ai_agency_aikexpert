@@ -110,9 +110,11 @@ class TaskExecutor:
             f"итерация {iteration_count + 1}/{max_iter}"
         )
 
-        # Загружаем промпт агента (с кэшем)
+        # Загружаем промпт агента (с кэшем, double-checked под lock)
         if agent_name not in self.agent_prompts_cache:
-            self.agent_prompts_cache[agent_name] = load_prompt(agent_name)
+            with self.orch.state_lock:
+                if agent_name not in self.agent_prompts_cache:
+                    self.agent_prompts_cache[agent_name] = load_prompt(agent_name)
         agent_prompt = self.agent_prompts_cache[agent_name]
 
         # Добавляем JSON Schema к промпту
@@ -131,13 +133,8 @@ class TaskExecutor:
                 agent_name, schema_prompt, agent_task
             )
 
-            # Обновляем бюджет токенов
-            self.orch.current_project["tokens_used"] = (
-                self.orch.current_project.get("tokens_used", 0) or 0
-            ) + agent_tokens
-            self.orch.projects_db.update_project(
-                project_id, {"tokens_used": self.orch.current_project["tokens_used"]}
-            )
+            # Обновляем бюджет токенов (thread-safe)
+            self.orch.add_tokens(agent_tokens)
 
             response_json = validated_response.model_dump_json(indent=2)
 
@@ -331,9 +328,10 @@ class TaskExecutor:
         input_data.update(pack)
         # Для post-filter в handle_lead_hunter (task.input_data в БД может быть старым)
         if self.orch.current_project is not None:
-            self.orch.current_project["_lead_hunter_serp"] = list(
-                pack.get("google_search_results") or []
-            )
+            with self.orch.state_lock:
+                self.orch.current_project["_lead_hunter_serp"] = list(
+                    pack.get("google_search_results") or []
+                )
         if not pack.get("google_search_results"):
             input_data["google_search_warning"] = (
                 "OpenSERP не дал сайтов брендов/ИМ (или только маркетплейсы/SaaS). "

@@ -1154,9 +1154,26 @@ docker run --rm -p 127.0.0.1:7000:7000 `
 
 Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICIAL=on`, Node ≥22).
 
-### Направление G. Параллельное выполнение задач (не реализовано)
+### Roadmap — Фаза 3.1 / Direction AD — Параллель независимых задач (NEW)
 
-Текущий цикл выполняет задачи последовательно. Независимые задачи могут выполняться параллельно через `asyncio` / `ThreadPoolExecutor` внутри Orchestrator.
+Закрывает **Направление G**: волна ready-задач с выполненным `depends_on`.
+
+| Компонент | Роль |
+|-----------|------|
+| `core/parallel_wave.py` | выбор волны: лимит, 1 hunter, architect solo, singleton-агенты |
+| `Orchestrator._execute_ready_wave` | `ThreadPoolExecutor` при `MAX_PARALLEL_TASKS>1` |
+| `Orchestrator.add_tokens` + `state_lock` | thread-safe токены/контекст |
+| `QAGate.last_feedback` | `threading.local` (без кросс-потоковой порчи) |
+| `llm_engine.invoke` | семафор `LLM_MAX_CONCURRENT` (0 → = `MAX_PARALLEL_TASKS`) |
+
+Env: `MAX_PARALLEL_TASKS` (default **3**), `LLM_MAX_CONCURRENT` (default 0 = как parallel).
+`MAX_PARALLEL_TASKS=1` — прежнее последовательное поведение.
+
+Тесты: `tests/test_parallel_wave.py`.
+
+### Направление G. Параллельное выполнение задач — РЕАЛИЗОВАНО (Фаза 3.1 / Direction AD)
+
+См. выше. Остаётся Фаза 3.2 — полноценный rate limiting LLM + UI бюджета.
 
 ### Направление H. Продуктовая готовность
 
@@ -1179,8 +1196,9 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 | Компонент | Файл | Примечание |
 |-----------|------|------------|
-| Главный цикл | `orchestrator.py` → `run()` | |
+| Главный цикл | `orchestrator.py` → `run()` + `_execute_ready_wave` | Фаза 3.1 parallel |
 | Task Graph | `orchestrator.py` → `_create_initial_task_graph()` | |
+| Parallel wave | `parallel_wave.py` → `select_parallel_wave` | Direction AD |
 | Deadlock resolution | `orchestrator.py` → `resolve_deadlock()` | |
 | Выполнение задачи | `task_executor.py` → `TaskExecutor.execute()` | |
 | QA Gate | `qa_gate.py` → `QAGate.run()` | |
@@ -1202,4 +1220,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 29, 2026. Direction AC: fix SQLITE_ERROR на refine/update_project.
+**Последнее обновление:** Jul 29, 2026. Direction AD / Фаза 3.1: параллель независимых задач.

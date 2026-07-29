@@ -4,6 +4,7 @@ QA Gate — проверка результатов задач через QA-а�
 """
 import json
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Dict
 
 from pydantic import BaseModel
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from .orchestrator import Orchestrator
 
 logger = logging.getLogger("QAGate")
-
 
 _AGENT_QA_CHECKLISTS: dict = {
     "client_hunter": """
@@ -89,9 +89,16 @@ class QAGate:
 
     def __init__(self, orchestrator: "Orchestrator") -> None:
         self.orch = orchestrator
-        # Хранит текст последнего сформированного фидбека.
-        # Используется handle_architect (update_status=False — QA не пишет в БД сам).
-        self.last_feedback: str = ""
+        # Thread-local: параллельные QA не затирают чужой фидбек (Фаза 3.1).
+        self._tls = threading.local()
+
+    @property
+    def last_feedback(self) -> str:
+        return getattr(self._tls, "last_feedback", "") or ""
+
+    @last_feedback.setter
+    def last_feedback(self, value: str) -> None:
+        self._tls.last_feedback = value or ""
 
     def run(
         self,
@@ -186,13 +193,8 @@ class QAGate:
             qa_approved = (qa_response.tests_failed == 0) and not has_critical
             logger.info(f"   QA approved: {qa_approved}")
 
-            # Обновляем бюджет токенов
-            self.orch.current_project["tokens_used"] = (
-                self.orch.current_project.get("tokens_used", 0) or 0
-            ) + qa_tokens
-            self.orch.projects_db.update_project(
-                project_id, {"tokens_used": self.orch.current_project["tokens_used"]}
-            )
+            # Обновляем бюджет токенов (thread-safe)
+            self.orch.add_tokens(qa_tokens)
 
             qa_feedback_text = self._build_feedback(qa_response)
             # Сохраняем последний фидбек для handle_architect (update_status=False)

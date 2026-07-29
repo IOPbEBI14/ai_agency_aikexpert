@@ -91,6 +91,12 @@ class Config:
     WS_PUSH_MS_RUNNING = int(os.getenv("WS_PUSH_MS_RUNNING", "1500"))
     WS_PUSH_MS_IDLE = int(os.getenv("WS_PUSH_MS_IDLE", "10000"))
 
+    # Фаза 3.1: параллельные независимые задачи (ThreadPool в Orchestrator.run)
+    # 1 = как раньше (строго последовательно). Рекомендуемый default: 3.
+    MAX_PARALLEL_TASKS = int(os.getenv("MAX_PARALLEL_TASKS", "3"))
+    # Сколько одновременных LLM-вызовов (общий бюджет). 0 = = MAX_PARALLEL_TASKS.
+    LLM_MAX_CONCURRENT = int(os.getenv("LLM_MAX_CONCURRENT", "0"))
+
     # Project defaults
     DEFAULT_PROJECT_NAME = os.getenv("DEFAULT_PROJECT_NAME", "Автоматизация WB")
     DEFAULT_CLIENT_NAME = os.getenv("DEFAULT_CLIENT_NAME", "ООО 'Ромашка' (Селлер WB)")

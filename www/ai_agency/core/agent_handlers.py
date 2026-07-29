@@ -185,12 +185,7 @@ class AgentHandlers:
                 max_retries=3,
             )
 
-            self.orch.current_project["tokens_used"] = (
-                self.orch.current_project.get("tokens_used", 0) or 0
-            ) + pm_tokens
-            self.orch.projects_db.update_project(
-                project_id, {"tokens_used": self.orch.current_project["tokens_used"]}
-            )
+            self.orch.add_tokens(pm_tokens)
 
             raw_subtasks = pm_decision.subtasks if hasattr(pm_decision, "subtasks") else []
             if not raw_subtasks:
@@ -352,33 +347,34 @@ class AgentHandlers:
                     max_scrapes=Config.CLIENT_HUNTER_SCRAPE_MAX,
                 )
 
-            self.orch.current_project["client_hunter_context"] = clients_payload
-            if response.handoff_to_sales:
-                self.orch.current_project["client_hunter_handoff_to_sales"] = (
-                    response.handoff_to_sales
-                )
-                logger.info(
-                    "client_hunter handoff_to_sales: %s",
-                    list(response.handoff_to_sales.keys()),
-                )
+            with self.orch.state_lock:
+                self.orch.current_project["client_hunter_context"] = clients_payload
+                if response.handoff_to_sales:
+                    self.orch.current_project["client_hunter_handoff_to_sales"] = (
+                        response.handoff_to_sales
+                    )
+                    logger.info(
+                        "client_hunter handoff_to_sales: %s",
+                        list(response.handoff_to_sales.keys()),
+                    )
 
-            # Также кладём в leads_context упрощённый вид — sales может использовать оба
-            if "leads_context" not in self.orch.current_project:
-                self.orch.current_project["leads_context"] = []
-            for c in clients_payload:
-                self.orch.current_project["leads_context"].append({
-                    "company_name": c["company_name"],
-                    "marketplace": "open_web",
-                    "category": c.get("niche") or "",
-                    "pain_points": c.get("pain_hypothesis") or [],
-                    "contact_telegram": c.get("contact_telegram"),
-                    "contact_email": c.get("contact_email"),
-                    "contact_phone": c.get("contact_phone"),
-                    "decision_maker_role": c.get("decision_maker_role"),
-                    "source": "google",
-                    "website": c.get("website"),
-                    "usp": c.get("usp"),
-                })
+                # Также кладём в leads_context упрощённый вид — sales может использовать оба
+                if "leads_context" not in self.orch.current_project:
+                    self.orch.current_project["leads_context"] = []
+                for c in clients_payload:
+                    self.orch.current_project["leads_context"].append({
+                        "company_name": c["company_name"],
+                        "marketplace": "open_web",
+                        "category": c.get("niche") or "",
+                        "pain_points": c.get("pain_hypothesis") or [],
+                        "contact_telegram": c.get("contact_telegram"),
+                        "contact_email": c.get("contact_email"),
+                        "contact_phone": c.get("contact_phone"),
+                        "decision_maker_role": c.get("decision_maker_role"),
+                        "source": "google",
+                        "website": c.get("website"),
+                        "usp": c.get("usp"),
+                    })
 
             contacts_n = sum(
                 1
@@ -465,27 +461,28 @@ class AgentHandlers:
                     dropped, len(raw_leads),
                 )
 
-            self.orch.current_project["leads_context"] = [
-                {
-                    "company_name": L.get("company_name"),
-                    "marketplace": L.get("marketplace"),
-                    "category": L.get("category"),
-                    "pain_points": L.get("pain_points") or [],
-                    "contact_telegram": L.get("contact_telegram"),
-                    "contact_email": L.get("contact_email"),
-                    "contact_phone": L.get("contact_phone"),
-                    "website": L.get("website") or L.get("source_url"),
-                    "source_url": L.get("source_url"),
-                    "source_query": L.get("source_query"),
-                    "source": L.get("source") or "openserp",
-                }
-                for L in verified
-            ]
+            with self.orch.state_lock:
+                self.orch.current_project["leads_context"] = [
+                    {
+                        "company_name": L.get("company_name"),
+                        "marketplace": L.get("marketplace"),
+                        "category": L.get("category"),
+                        "pain_points": L.get("pain_points") or [],
+                        "contact_telegram": L.get("contact_telegram"),
+                        "contact_email": L.get("contact_email"),
+                        "contact_phone": L.get("contact_phone"),
+                        "website": L.get("website") or L.get("source_url"),
+                        "source_url": L.get("source_url"),
+                        "source_query": L.get("source_query"),
+                        "source": L.get("source") or "openserp",
+                    }
+                    for L in verified
+                ]
 
-            if lead_response.handoff_to_sales:
-                self.orch.current_project["leads_handoff_to_sales"] = (
-                    lead_response.handoff_to_sales
-                )
+                if lead_response.handoff_to_sales:
+                    self.orch.current_project["leads_handoff_to_sales"] = (
+                        lead_response.handoff_to_sales
+                    )
 
             enriched_output = lead_response.model_dump()
             enriched_output["leads_found"] = verified
@@ -604,14 +601,15 @@ class AgentHandlers:
                 raw_messages = []
             messages = merge_messages_with_contacts(raw_messages, clients)
 
-            if "sales_context" not in self.orch.current_project:
-                self.orch.current_project["sales_context"] = []
-            self.orch.current_project["sales_context"].append({
-                "messages": messages,
-                "qualification_questions": sales_data.qualification_questions,
-                "next_steps": sales_data.next_steps,
-                "send_mode": "manual_export_only",
-            })
+            with self.orch.state_lock:
+                if "sales_context" not in self.orch.current_project:
+                    self.orch.current_project["sales_context"] = []
+                self.orch.current_project["sales_context"].append({
+                    "messages": messages,
+                    "qualification_questions": sales_data.qualification_questions,
+                    "next_steps": sales_data.next_steps,
+                    "send_mode": "manual_export_only",
+                })
 
             enriched_output = {
                 "messages": messages,
@@ -674,7 +672,8 @@ class AgentHandlers:
                     f"{list(analyst_data.handoff_to_architect.keys())}"
                 )
 
-            self.orch.current_project["analyst_context"] = analyst_context
+            with self.orch.state_lock:
+                self.orch.current_project["analyst_context"] = analyst_context
 
             if task_db_id:
                 self.orch.tasks_db.update_task(task_db_id, {

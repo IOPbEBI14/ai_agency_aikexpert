@@ -12,7 +12,9 @@ Orchestrator — главный класс, управляющий выполн�
 """
 import json
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +23,7 @@ from pydantic import ValidationError
 from .agent_handlers import AgentHandlers
 from .config import Config
 from .nocodb import NocoDBClient, ProjectsClient, TasksClient
+from .parallel_wave import select_parallel_wave
 from .project_iteration import (
     VALID_AGENTS,
     build_previous_tasks_digest,
@@ -70,6 +73,8 @@ class Orchestrator:
 
         self.current_project: Optional[Dict[str, Any]] = None
         self.agency_running: bool = False
+        # Параллельные волны задач (Фаза 3.1): токены / контекст / кэш промптов
+        self.state_lock = threading.RLock()
 
         # Субкомпоненты (держат ссылку на self, видят все актуальные атрибуты)
         self.qa_gate = QAGate(self)
@@ -77,6 +82,18 @@ class Orchestrator:
         self.task_executor = TaskExecutor(self)
 
         logger.info("🏗️ Orchestrator инициализирован")
+
+    def add_tokens(self, delta: int, *, persist: bool = True) -> int:
+        """Thread-safe инкремент tokens_used текущего проекта."""
+        if not self.current_project:
+            return 0
+        with self.state_lock:
+            total = (self.current_project.get("tokens_used") or 0) + (delta or 0)
+            self.current_project["tokens_used"] = total
+            project_id = self.current_project.get("Id")
+        if persist and project_id is not None:
+            self.projects_db.update_project(project_id, {"tokens_used": total})
+        return total
 
     # ══════════════════════════════════════════════════════════════════════════
     # ИНИЦИАЛИЗАЦИЯ
@@ -284,8 +301,8 @@ class Orchestrator:
                     break
                 continue
 
-            # ── Выполняем первую готовую задачу ─────────────────────────────
-            self.execute_task(ready_tasks[0], pm_prompt, all_tasks=tasks)
+            # ── Выполняем волну готовых независимых задач (Фаза 3.1) ─────────
+            self._execute_ready_wave(ready_tasks, pm_prompt, all_tasks=tasks)
 
         self.agency_running = False
         logger.info(
@@ -383,12 +400,7 @@ max_iterations по умолчанию: 3 для большинства аген
                 "PM", schema_prompt, task_graph_prompt, "pm_task_graph", max_retries=3
             )
 
-            self.current_project["tokens_used"] = (
-                self.current_project.get("tokens_used", 0) or 0
-            ) + pm_tokens
-            self.projects_db.update_project(
-                project_id, {"tokens_used": self.current_project["tokens_used"]}
-            )
+            self.add_tokens(pm_tokens)
 
             tasks_list = list(pm_task_graph.tasks or [])
             excluded_agents = list(getattr(pm_task_graph, "excluded_agents", []) or [])
@@ -558,9 +570,7 @@ max_iterations по умолчанию: 3 для большинства аген
             "PM", schema_prompt, replan_prompt, "pm_task_graph", max_retries=3
         )
 
-        self.current_project["tokens_used"] = (
-            self.current_project.get("tokens_used", 0) or 0
-        ) + pm_tokens
+        self.add_tokens(pm_tokens, persist=False)
 
         tasks_list = list(pm_task_graph.tasks or [])
         excluded_agents = list(getattr(pm_task_graph, "excluded_agents", []) or [])
@@ -768,12 +778,7 @@ max_iterations по умолчанию: 3 для большинства аген
                 "PM", schema_prompt, user_task, "pm_final_report"
             )
 
-            self.current_project["tokens_used"] = (
-                self.current_project.get("tokens_used", 0) or 0
-            ) + pm_tokens
-            self.projects_db.update_project(
-                project_id, {"tokens_used": self.current_project["tokens_used"]}
-            )
+            self.add_tokens(pm_tokens)
 
             final_report = pm_final_report.final_report
             # Сохраняем номер итерации и историю — PM metrics их не знает
@@ -870,12 +875,7 @@ max_iterations по умолчанию: 3 для большинства аген
                 "PM", schema_prompt, user_task, "pm_deadlock", max_retries=3
             )
 
-            self.current_project["tokens_used"] = (
-                self.current_project.get("tokens_used", 0) or 0
-            ) + pm_tokens
-            self.projects_db.update_project(
-                project_id, {"tokens_used": self.current_project["tokens_used"]}
-            )
+            self.add_tokens(pm_tokens)
 
             logger.info(
                 f"💡 PM: {pm_deadlock.solution} | {pm_deadlock.comment}"
@@ -1060,6 +1060,49 @@ max_iterations по умолчанию: 3 для большинства аген
             if all(dep_id in completed_ids for dep_id in depends_on):
                 ready.append(task)
         return ready
+
+    def _execute_ready_wave(
+        self,
+        ready_tasks: List[Dict[str, Any]],
+        pm_prompt: str,
+        all_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Запускает волну независимых ready-задач (последовательно при limit=1)."""
+        max_parallel = max(1, int(Config.MAX_PARALLEL_TASKS or 1))
+        wave = select_parallel_wave(ready_tasks, max_parallel)
+        if not wave:
+            return
+
+        ids = [t.get("task_id") for t in wave]
+        if len(wave) == 1:
+            logger.info("▶ Последовательное выполнение: %s", ids[0])
+            self.execute_task(wave[0], pm_prompt, all_tasks=all_tasks)
+            return
+
+        logger.info(
+            "⚡ Параллельная волна (%s/%s): %s",
+            len(wave), max_parallel, ids,
+        )
+        # Снимок графа для обогащения input_data — siblings не видят чужой mid-flight output
+        snapshot = list(all_tasks or [])
+
+        with ThreadPoolExecutor(
+            max_workers=len(wave), thread_name_prefix="agency-task"
+        ) as pool:
+            futures = {
+                pool.submit(self.execute_task, task, pm_prompt, snapshot): task
+                for task in wave
+            }
+            for fut in as_completed(futures):
+                task = futures[fut]
+                tid = task.get("task_id")
+                try:
+                    ok = fut.result()
+                    logger.info(
+                        "  ← %s: %s", tid, "ok" if ok else "fail/retry"
+                    )
+                except Exception:
+                    logger.exception("❌ Параллельная задача %s упала", tid)
 
     def _build_enriched_input_data(
         self, task: Dict[str, Any], all_tasks: List[Dict[str, Any]]
