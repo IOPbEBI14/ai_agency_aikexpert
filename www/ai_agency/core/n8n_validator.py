@@ -24,6 +24,8 @@ Smoke (поверх C): ``schemaDelta.missingKeys`` / N8N_PARAMETER ERROR → is
 Публичный API:
   validate_n8n_workflow(workflow)  → (is_valid: bool, issues: list[str])
   build_n8n_feedback(issues)       → str
+  apply_direction_k_autofix(workflow) → (workflow, patches: list[str])
+  check_one_workflow_per_task(...) → (ok, issues)
 """
 
 from __future__ import annotations
@@ -963,12 +965,183 @@ def validate_n8n_workflow(workflow: Any) -> Tuple[bool, List[str]]:
     return True, all_issues
 
 
+def apply_direction_k_autofix(
+    workflow: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Детерминированно закрывает типовые Direction K ERROR на критичных нодах.
+
+    LLM часто «забывает» retry/continueOnFail/idempotency на всех итерациях —
+    эти поля механические, патчим до валидации (Фаза AE / Direction AF).
+    """
+    if not isinstance(workflow, dict):
+        return workflow, []
+    nodes = workflow.get("nodes")
+    if not isinstance(nodes, list):
+        return workflow, []
+    connections = workflow.get("connections")
+    if not isinstance(connections, dict):
+        connections = {}
+        workflow["connections"] = connections
+
+    patches: List[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        short = _short_type(str(node.get("type") or ""))
+        if not _is_critical_side_effect_node(node, short):
+            continue
+        label = str(node.get("name") or short)
+
+        ok_retry, _ = _has_bounded_retry(node)
+        if not ok_retry:
+            node["retryOnFail"] = True
+            try:
+                mt = int(node.get("maxTries") or 0)
+            except (TypeError, ValueError):
+                mt = 0
+            if mt < 1 or mt > 10:
+                node["maxTries"] = 3
+            try:
+                wt = int(node.get("waitBetweenTries") or 0)
+            except (TypeError, ValueError):
+                wt = 0
+            if wt < 1000:
+                node["waitBetweenTries"] = 1000
+            patches.append(f"{label}: retryOnFail/maxTries/waitBetweenTries")
+
+        ok_fb, _ = _has_error_fallback(label, node, connections)
+        if not ok_fb:
+            # continueOnFail + исходящий main — достаточный резерв по heuristic
+            node["continueOnFail"] = True
+            outs = connections.get(label)
+            if not isinstance(outs, dict):
+                outs = {}
+                connections[label] = outs
+            if not _connection_buckets_nonempty(outs, "main"):
+                # Синтетическая NoOp-ветка, чтобы continueOnFail имел исходящий main
+                noop_name = f"Log after {label}"[:99]
+                if not any(
+                    isinstance(n, dict) and n.get("name") == noop_name for n in nodes
+                ):
+                    pos = node.get("position") if isinstance(node.get("position"), list) else [0, 0]
+                    nodes.append({
+                        "name": noop_name,
+                        "type": "n8n-nodes-base.noOp",
+                        "typeVersion": 1,
+                        "position": [int(pos[0]) + 220, int(pos[1]) + 120],
+                        "parameters": {},
+                    })
+                outs["main"] = [[{"node": noop_name, "type": "main", "index": 0}]]
+                connections[label] = outs
+            patches.append(f"{label}: continueOnFail + main fallback")
+
+        needs_idem = (
+            (short == "httpRequest" and _http_method(node) == "POST")
+            or (short == "nocoDb" and _nocodb_operation(node) == "create")
+        )
+        if needs_idem and not _has_idempotency_marker(node):
+            notes = str(node.get("notes") or "")
+            marker = "idempotency_key={{$execution.id}}"
+            if marker not in notes:
+                node["notes"] = (notes + " " + marker).strip()
+                node["notesInFlow"] = True
+                patches.append(f"{label}: notes idempotency_key")
+
+    return workflow, patches
+
+
+_TRIGGER_SHORT = frozenset({
+    "webhook", "telegramTrigger", "scheduleTrigger", "manualTrigger",
+    "emailReadImap", "cron", "formTrigger", "chatTrigger",
+})
+
+
+def count_entry_triggers(workflow: Any) -> List[str]:
+    """Имена entry-trigger нод (признак «несколько workflow в одном JSON»)."""
+    if not isinstance(workflow, dict):
+        return []
+    names: List[str] = []
+    for node in workflow.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        short = _short_type(str(node.get("type") or ""))
+        if short in _TRIGGER_SHORT:
+            names.append(str(node.get("name") or short))
+    return names
+
+
+def check_one_workflow_per_task(
+    *,
+    n8n_json: Any,
+    files: Optional[List[Any]] = None,
+    summary: str = "",
+) -> Tuple[bool, List[str]]:
+    """Жёсткое правило: одна developer-задача → один n8n workflow."""
+    issues: List[str] = []
+    n8n_files = 0
+    for f in files or []:
+        ftype = f.get("type") if isinstance(f, dict) else getattr(f, "type", None)
+        if ftype == "n8n_workflow":
+            n8n_files += 1
+    if n8n_files > 1:
+        issues.append(
+            f"ONE_WORKFLOW_PER_TASK: в files {n8n_files} элементов type=n8n_workflow. "
+            "Оставь ровно один; второй сценарий — отдельная developer-задача."
+        )
+
+    text = (summary or "").lower()
+    if any(
+        p in text
+        for p in (
+            "два workflow", "два n8n", "2 workflow", "2 n8n",
+            "two workflow", "нескольк workflow", "несколько workflow",
+            "два сценари", "2 сценари",
+        )
+    ):
+        issues.append(
+            "ONE_WORKFLOW_PER_TASK: summary описывает несколько workflow. "
+            "Верни только ОДИН n8n_json по текущей задаче."
+        )
+
+    triggers = count_entry_triggers(n8n_json)
+    if len(triggers) > 1:
+        issues.append(
+            "ONE_WORKFLOW_PER_TASK: в n8n_json несколько entry-trigger "
+            f"({', '.join(triggers)}). Один workflow = один триггер. "
+            "Разнеси сценарии по разным developer-задачам."
+        )
+
+    return (len(issues) == 0), issues
+
+
 def build_n8n_feedback(issues: List[str]) -> str:
     """Формирует текст замечаний для возврата агенту developer."""
     header = (
         "Сгенерированный n8n workflow НЕ пройдёт импорт / проверку движком n8n "
         '(ошибка "X is not iterable" / N8N_PARAMETER_VALIDATION_ERROR / структура) '
         "или не закрывает чек-лист устойчивости (Direction K). "
-        "Исправь следующее и верни полный исправленный workflow:\n"
+        "Исправь следующее и верни полный исправленный ОДИН workflow:\n"
     )
-    return header + "\n".join(f"- {i}" for i in issues)
+    body = "\n".join(f"- {i}" for i in issues)
+    k_issues = [i for i in issues if "Direction K" in i]
+    patch_hint = ""
+    if k_issues:
+        patch_hint = (
+            "\n\nОБЯЗАТЕЛЬНЫЙ ПАТЧ Direction K (на КАЖДОЙ критичной httpRequest/nocoDb "
+            "create/update/delete):\n"
+            '1) На корне ноды (рядом с "parameters"): '
+            '"retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000\n'
+            '2) Резерв: "continueOnFail": true И непустой connections.<Name>.main '
+            'ИЛИ onError="continueErrorOutput" + connections.<Name>.error → NoOp/Telegram\n'
+            '3) Для POST/create: в notes или jsonBody добавь '
+            '"idempotency_key" / "external_id" (напр. notes: '
+            '"idempotency_key={{$execution.id}}")\n'
+            "Нельзя игнорировать эти пункты на следующих итерациях — иначе снова fail.\n"
+        )
+    one_wf = [i for i in issues if "ONE_WORKFLOW_PER_TASK" in i]
+    if one_wf:
+        patch_hint += (
+            "\nОДИН WORKFLOW НА ЗАДАЧУ: не объединяй два сценария в один JSON. "
+            "Реализуй только workflow из input_data.workflow_id / текущего blueprint.\n"
+        )
+    return header + body + patch_hint

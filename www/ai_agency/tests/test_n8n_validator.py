@@ -605,3 +605,84 @@ class TestDirectionKResilience:
         ok, issues = validate_n8n_workflow_heuristic(wf)
         assert ok is True
         assert not any("Direction K" in i for i in issues)
+
+
+class TestDirectionKAutofixAndOneWorkflow:
+    def test_autofix_closes_direction_k(self):
+        from core.n8n_validator import apply_direction_k_autofix, validate_n8n_workflow_heuristic
+
+        wf = {
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "typeVersion": 2,
+                    "position": [0, 0],
+                    "parameters": {"path": "x", "httpMethod": "POST"},
+                },
+                {
+                    "name": "HTTP Send Telegram Message",
+                    "type": "n8n-nodes-base.httpRequest",
+                    "typeVersion": 4,
+                    "position": [220, 0],
+                    "parameters": {
+                        "method": "POST",
+                        "url": "https://api.telegram.org/bot/sendMessage",
+                        "sendBody": True,
+                        "specifyBody": "json",
+                        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+                    },
+                },
+            ],
+            "connections": {
+                "Webhook": {
+                    "main": [[{"node": "HTTP Send Telegram Message", "type": "main", "index": 0}]]
+                },
+                "HTTP Send Telegram Message": {
+                    "main": [[{"node": "Webhook", "type": "main", "index": 0}]]
+                },
+            },
+        }
+        # уберём self-loop для чистого теста fallback
+        wf["connections"]["HTTP Send Telegram Message"] = {
+            "main": [[{"node": "Webhook", "type": "main", "index": 0}]]
+        }
+        # Actually self-loop to webhook is weird - use empty and let autofix add NoOp
+        wf["connections"]["HTTP Send Telegram Message"] = {"main": [[]]}
+
+        ok_before, issues_before = validate_n8n_workflow_heuristic(wf)
+        assert ok_before is False
+        assert any("Direction K" in i for i in issues_before)
+
+        fixed, patches = apply_direction_k_autofix(wf)
+        assert patches
+        ok_after, issues_after = validate_n8n_workflow_heuristic(fixed)
+        assert ok_after is True, issues_after
+        assert not any("Direction K" in i for i in issues_after)
+
+    def test_one_workflow_rejects_two_triggers(self):
+        from core.n8n_validator import check_one_workflow_per_task
+
+        wf = {
+            "nodes": [
+                {"name": "WH1", "type": "n8n-nodes-base.webhook", "parameters": {}},
+                {"name": "WH2", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            ],
+            "connections": {},
+        }
+        ok, issues = check_one_workflow_per_task(
+            n8n_json=wf,
+            files=[{"type": "n8n_workflow"}, {"type": "n8n_workflow"}],
+            summary="Разработаны два workflow для Telegram",
+        )
+        assert ok is False
+        assert any("ONE_WORKFLOW_PER_TASK" in i for i in issues)
+
+    def test_feedback_includes_direction_k_recipe(self):
+        from core.n8n_validator import build_n8n_feedback
+
+        fb = build_n8n_feedback([
+            "[HTTP X] Direction K: нет retryOnFail: true. Нужно: retryOnFail=true..."
+        ])
+        assert "ОБЯЗАТЕЛЬНЫЙ ПАТЧ Direction K" in fb
+        assert "retryOnFail" in fb

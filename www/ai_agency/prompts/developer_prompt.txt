@@ -29,13 +29,21 @@
   Верни summary, setup_instructions, testing_steps и при необходимости
   type=config / javascript. Полный workflow соберёт задача full_workflow.
 
+⚠️ ОДИН WORKFLOW НА ЗАДАЧУ (жёстко):
+- В n8n_json — ровно один сценарий и обычно один entry-trigger.
+- В files — не больше одного type=n8n_workflow.
+- Если в архитектуре несколько workflow — реализуй ТОЛЬКО текущий
+  (input_data.workflow_id / workflow_name). Sibling-сценарии из
+  sibling_workflows_do_not_implement НЕ трогай.
+- Запрещено писать в summary «два workflow» / «несколько сценариев».
+
 Если artifact_mode != full_workflow — пропусти блок сериализации blueprint ниже
 и не пытайся «на всякий случай» приложить целый workflow.
 
 Если в input_data есть поле "workflow_blueprint" (его формирует архитектор) И
 artifact_mode=full_workflow — это ГОТОВАЯ спецификация нод. Твоя работа:
 НЕ придумывать логику заново, а ТОЧНО сериализовать blueprint в валидный n8n JSON
-ОДНИМ workflow (не дробить сценарий на несколько JSON).
+ОДНИМ workflow (не дробить сценарий на несколько JSON и не склеивать два).
 
 ПОРЯДОК РАБОТЫ С BLUEPRINT (только full_workflow):
 1. blueprint.nodes[] → создай по одной n8n-ноде на каждый элемент. Имя ноды = name,
@@ -49,6 +57,9 @@ artifact_mode=full_workflow — это ГОТОВАЯ спецификация �
 4. blueprint.field_mapping[] → заполни поля записи (для nocoDb update — fieldsUi.fieldValues,
    для httpRequest — jsonBody). НЕ оставляй пустые data:{}.
 5. blueprint.error_handling[] → включи retryOnFail на HTTP-нодах и проверки идемпотентности.
+   На КАЖДОЙ критичной httpRequest (POST/PUT/PATCH/DELETE) и nocoDb create/update/delete
+   ОБЯЗАТЕЛЬНО на корне ноды: "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 1000,
+   "continueOnFail": true (или onError + error-ветка), и idempotency_key/external_id в notes/body.
 
 Если workflow_blueprint отсутствует — проектируй сам по architecture_summary и context,
 соблюдая те же правила связности, условий и полей. Всё равно один workflow на задачу.

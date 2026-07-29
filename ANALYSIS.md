@@ -640,6 +640,27 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AE+AF — 1 workflow / task + Direction K autofix (NEW)
+
+**Замечания с прогона (developer `dev_001_2`, 6/6):**
+1. Одни и те же Direction K ERROR (retry / резервная ветка / idempotency) на всех
+   итерациях — LLM не применял механический чек-лист.
+2. В одной задаче developer сделал **два** Telegram workflow (агент→менеджер и
+   менеджер→агент).
+
+**Исправления:**
+
+| Слой | Что |
+|------|-----|
+| `extract_workflow_units` | `workflow_blueprints[]` → N независимых сценариев |
+| `normalize_developer_subtasks` | N units → N `full_workflow` (не склеивать) |
+| architect / PM / developer prompts | явный контракт: 1 workflow = 1 task |
+| `check_one_workflow_per_task` | >1 trigger / >1 n8n_workflow file / «два workflow» в summary → fail |
+| `apply_direction_k_autofix` | до валидации патчит retry/continueOnFail/idempotency |
+| `build_n8n_feedback` | обязательный JSON-рецепт Direction K + повтор-warning |
+
+Тесты: `test_dev_decomposition.py` (multi-unit), `test_n8n_validator.py` (autofix / one-wf).
+
 ### Direction AC — Refine/итерация: SQLITE_ERROR 422 при update_project (NEW)
 
 **Симптом:** после PM task graph на новой итерации:
@@ -970,7 +991,8 @@ blueprint в n8n JSON» → 4 почти одинаковых workflow под р
 | `task_executor` | n8n-валидация только для `full_workflow`; strip у prep/spec |
 
 Допустимо: `prep` (таблица/env) + одна `full_workflow`. Несколько `full_workflow` —
-только если в архитектуре явно несколько независимых сценариев.
+если architect вернул `workflow_blueprints[]` (Direction AE): **по одной задаче на
+каждый** независимый сценарий. Склеивать два сценария в один n8n_json запрещено.
 
 ### Direction U — Мульти-провайдерный LLM (NEW)
 
@@ -1202,4 +1224,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 29, 2026. Direction AC: fix SQLITE_ERROR на refine/update_project.
+**Последнее обновление:** Jul 30, 2026. Direction AE+AF: 1 workflow/task + Direction K autofix.

@@ -298,9 +298,10 @@ class ArchitectResponse(BaseModel):
         default=None,
         description=(
             "Node-level blueprint для developer. Содержит: "
-            "workflow_blueprint (nodes[], connections[], field_mapping[], error_handling[]), "
+            "workflow_blueprint (один сценарий) ИЛИ workflow_blueprints[] "
+            "(несколько независимых сценариев → по одной developer-задаче), "
             "api_endpoints[], credentials_needed[], implementation_order[]. "
-            "Разработчик сериализует этот blueprint в валидный n8n JSON."
+            "Разработчик сериализует один blueprint в один n8n JSON на задачу."
         ),
     )
 

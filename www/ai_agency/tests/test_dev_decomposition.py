@@ -3,6 +3,7 @@ from core.dev_decomposition import (
     MODE_FULL,
     MODE_PREP,
     build_developer_input_data,
+    extract_workflow_units,
     normalize_developer_subtasks,
     strip_n8n_from_spec_response,
 )
@@ -137,3 +138,78 @@ class TestStripN8n:
         assert data["workflow_name"] is None
         assert all(f["type"] != "n8n_workflow" for f in data["files"])
         assert any(f["name"] == "env.md" for f in data["files"])
+
+
+class TestExtractWorkflowUnits:
+    def test_single_blueprint(self):
+        units = extract_workflow_units({
+            "workflow_blueprint": {"nodes": [{"name": "A"}], "connections": []},
+        })
+        assert len(units) == 1
+        assert units[0]["workflow_id"] == "wf_1"
+
+    def test_multiple_blueprints(self):
+        units = extract_workflow_units({
+            "workflow_blueprints": [
+                {
+                    "workflow_id": "wf_a",
+                    "name": "Agent → Manager",
+                    "workflow_blueprint": {"nodes": [{"name": "W1"}], "connections": []},
+                },
+                {
+                    "workflow_id": "wf_b",
+                    "name": "Manager → Agent",
+                    "workflow_blueprint": {"nodes": [{"name": "W2"}], "connections": []},
+                },
+            ],
+        })
+        assert len(units) == 2
+        assert [u["workflow_id"] for u in units] == ["wf_a", "wf_b"]
+
+
+class TestMultiWorkflowNormalize:
+    def test_two_units_two_full_tasks(self):
+        units = [
+            {"workflow_id": "wf_a", "name": "A→M", "blueprint": {"nodes": []}},
+            {"workflow_id": "wf_b", "name": "M→A", "blueprint": {"nodes": []}},
+        ]
+        raw = [
+            {
+                "subtask_id": "dev_001",
+                "description": "Сделать оба telegram workflow",
+                "artifact_mode": "full_workflow",
+            }
+        ]
+        out = normalize_developer_subtasks(
+            raw, has_blueprint=True, workflow_units=units
+        )
+        fulls = [s for s in out if s["artifact_mode"] == MODE_FULL]
+        assert len(fulls) == 2
+        assert {s["workflow_id"] for s in fulls} == {"wf_a", "wf_b"}
+        assert all("НЕ реализуй другие" in s["description"] for s in fulls)
+
+    def test_unit_blueprint_in_input(self):
+        unit = {
+            "workflow_id": "wf_a",
+            "name": "Only A",
+            "blueprint": {"nodes": [{"name": "T"}], "connections": []},
+        }
+        payload = build_developer_input_data(
+            subtask={
+                "artifact_mode": MODE_FULL,
+                "context": "c",
+                "assigned_node_names": [],
+                "workflow_id": "wf_a",
+                "workflow_name": "Only A",
+            },
+            architecture_summary="arch",
+            blueprint={},
+            blueprint_str="{}",
+            workflow_unit=unit,
+            sibling_workflow_names=["Other"],
+        )
+        assert payload["workflow_id"] == "wf_a"
+        assert payload["one_workflow_per_task"] is True
+        assert payload["sibling_workflows_do_not_implement"] == ["Other"]
+        assert "wf_a" in payload["workflow_blueprint"]
+        assert "Only A" in payload["workflow_blueprint"]

@@ -254,7 +254,20 @@ data_flow. Разрыв «концептуальный data_flow → конкр�
 причина дефектов разработки (несоединённые ноды, пустые условия IF, отсутствующие
 поля update). workflow_blueprint закрывает этот разрыв.
 
-СТРУКТУРА handoff_to_developer.workflow_blueprint:
+НЕСКОЛЬКО НЕЗАВИСИМЫХ WORKFLOW:
+Если цель требует 2+ отдельных сценария (разные триггеры/продукты, напр.
+«агент→менеджер» и «менеджер→агент»), НЕ склеивай их в один workflow_blueprint.
+Верни массив handoff_to_developer.workflow_blueprints[]:
+[
+  { "workflow_id": "wf_agent_to_manager", "name": "Agent → Manager Telegram",
+    "workflow_blueprint": { "nodes": [...], "connections": [...], ... } },
+  { "workflow_id": "wf_manager_to_agent", "name": "Manager reply → Agent",
+    "workflow_blueprint": { "nodes": [...], "connections": [...], ... } }
+]
+PM создаст отдельную developer-задачу на каждый элемент. Один blueprint =
+один импортируемый n8n JSON.
+
+СТРУКТУРА handoff_to_developer.workflow_blueprint (один сценарий):
 {
   "nodes": [
     { "name": "Schedule Trigger", "type": "scheduleTrigger",

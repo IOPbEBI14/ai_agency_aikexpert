@@ -49,6 +49,7 @@ from .config import Config
 from .dev_decomposition import (
     MODE_FULL,
     build_developer_input_data,
+    extract_workflow_units,
     normalize_developer_subtasks,
 )
 from .schemas import (
@@ -125,15 +126,32 @@ class AgentHandlers:
         # Полный blueprint передаётся ТОЛЬКО задаче artifact_mode=full_workflow
         # (см. core/dev_decomposition.py). Иначе каждая dev_* сериализует весь
         # сценарий заново → дубли workflow.
+        # Direction AE: несколько независимых workflow → несколько full_workflow задач.
         blueprint = None
         if isinstance(agent_response, BaseModel):
             blueprint = getattr(agent_response, "handoff_to_developer", None)
         elif isinstance(agent_response, dict):
             blueprint = agent_response.get("handoff_to_developer")
+        workflow_units = extract_workflow_units(blueprint)
         blueprint_str = (
             json.dumps(blueprint, ensure_ascii=False, indent=2) if blueprint else ""
         )
-        has_blueprint = bool(blueprint_str and blueprint_str.strip() not in ("{}", "null"))
+        has_blueprint = bool(
+            workflow_units
+            or (blueprint_str and blueprint_str.strip() not in ("{}", "null"))
+        )
+
+        units_hint = ""
+        if len(workflow_units) > 1:
+            units_hint = (
+                "\nВ АРХИТЕКТУРЕ НЕСКОЛЬКО НЕЗАВИСИМЫХ WORKFLOW "
+                f"({len(workflow_units)}):\n"
+                + "\n".join(
+                    f"- {u['workflow_id']}: {u['name']}" for u in workflow_units
+                )
+                + "\nСоздай РОВНО по одной full_workflow-задаче на каждый "
+                "(поле workflow_id в subtask). НЕ объединяй их в одну задачу.\n"
+            )
 
         decompose_prompt = f"""
 Ты — Project Manager. Архитектор завершил проектирование. Разбей работу для developer.
@@ -143,7 +161,7 @@ class AgentHandlers:
 
 ЦЕЛЬ ПРОЕКТА:
 {self.orch.current_project.get('goal', '')}
-
+{units_hint}
 ФОРМАТ ОТВЕТА (строго JSON):
 {{
     "subtasks": [
@@ -153,24 +171,27 @@ class AgentHandlers:
             "depends_on": [],
             "context": "Краткий контекст",
             "artifact_mode": "full_workflow",
+            "workflow_id": "wf_1",
             "assigned_node_names": []
         }}
     ],
     "pm_comment": "Один workflow — одна задача сборки."
 }}
 
-ПРАВИЛА (КРИТИЧНО — иначе получатся 4 одинаковых workflow):
+ПРАВИЛА (КРИТИЧНО):
 1. Если в архитектуре ОДИН n8n-сценарий (один workflow_blueprint) — создай
    РОВНО ОДНУ задачу с artifact_mode="full_workflow". НЕ режь retry / ошибки /
    журнал / идемпотентность на отдельные developer-задачи с n8n JSON.
-2. artifact_mode:
-   - "full_workflow" — единственный исполнитель, который вернёт n8n_json (макс. 1);
+2. Если в цели или у architect НЕСКОЛЬКО независимых workflow
+   (разные триггеры/продукты, workflow_blueprints[]) — создай ОТДЕЛЬНУЮ
+   full_workflow-задачу на КАЖДЫЙ (с workflow_id). Запрещено писать
+   «сделай два workflow» в одной задаче.
+3. artifact_mode:
+   - "full_workflow" — возвращает n8n_json (1 workflow на задачу);
    - "prep" — таблицы CRM, credentials, env (без n8n_json);
    - "spec" — текстовая спецификация куска (без n8n_json). Редко нужно.
-3. Шаги цели вроде «базовый сценарий / 4 ошибки / retry / журнал / fallback» —
+4. Шаги цели вроде «базовый сценарий / 4 ошибки / retry / журнал / fallback» —
    это требования ВНУТРИ одной full_workflow-задачи, а не отдельные subtasks.
-4. Несколько full_workflow допустимы ТОЛЬКО если в архитектуре явно несколько
-   независимых workflow (разные триггеры/продукты).
 5. Максимум 5–7 подзадач; prep могут идти до full_workflow (depends_on).
 6. Верни ТОЛЬКО валидный JSON.
 """
@@ -185,12 +206,7 @@ class AgentHandlers:
                 max_retries=3,
             )
 
-            self.orch.current_project["tokens_used"] = (
-                self.orch.current_project.get("tokens_used", 0) or 0
-            ) + pm_tokens
-            self.orch.projects_db.update_project(
-                project_id, {"tokens_used": self.orch.current_project["tokens_used"]}
-            )
+            self.orch.add_tokens(pm_tokens)
 
             raw_subtasks = pm_decision.subtasks if hasattr(pm_decision, "subtasks") else []
             if not raw_subtasks:
@@ -199,25 +215,41 @@ class AgentHandlers:
                 return False
 
             subtasks = normalize_developer_subtasks(
-                raw_subtasks, has_blueprint=has_blueprint
+                raw_subtasks,
+                has_blueprint=has_blueprint,
+                workflow_units=workflow_units,
             )
             logger.info(
                 "📦 PM декомпозировал на %s подзадач → после нормализации %s "
-                "(blueprint=%s, full=%s)",
+                "(blueprint=%s, units=%s, full=%s)",
                 len(raw_subtasks),
                 len(subtasks),
                 has_blueprint,
+                len(workflow_units),
                 sum(1 for s in subtasks if s.get("artifact_mode") == MODE_FULL),
             )
+
+            units_by_id = {u["workflow_id"]: u for u in workflow_units}
+            sibling_names = [u["name"] for u in workflow_units]
 
             subtask_ids = []
             for sd in subtasks:
                 subtask_ids.append(sd.get("subtask_id", ""))
+                wid = sd.get("workflow_id") or ""
+                unit = units_by_id.get(wid)
+                if not unit and len(workflow_units) == 1 and sd.get("artifact_mode") == MODE_FULL:
+                    unit = workflow_units[0]
+                siblings = [
+                    n for n in sibling_names
+                    if n and n != (unit or {}).get("name") and n != sd.get("workflow_name")
+                ] if sd.get("artifact_mode") == MODE_FULL else []
                 input_payload = build_developer_input_data(
                     subtask=sd,
                     architecture_summary=agent_response_str,
                     blueprint=blueprint,
                     blueprint_str=blueprint_str,
+                    workflow_unit=unit,
+                    sibling_workflow_names=siblings or None,
                 )
                 self.orch.tasks_db.create_task({
                     "task_id": sd.get("subtask_id"),
@@ -233,9 +265,10 @@ class AgentHandlers:
                     "created_at": datetime.now().isoformat(),
                 })
                 logger.info(
-                    "  → Подзадача %s [%s]",
+                    "  → Подзадача %s [%s] workflow_id=%s",
                     sd.get("subtask_id"),
                     sd.get("artifact_mode"),
+                    sd.get("workflow_id") or "-",
                 )
 
             # Помечаем placeholder developer-задачу из initial task graph как "пропущена".

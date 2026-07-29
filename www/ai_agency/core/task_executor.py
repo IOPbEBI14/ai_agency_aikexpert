@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .config import Config
 from .dev_decomposition import MODE_FULL, strip_n8n_from_spec_response
-from .n8n_validator import build_n8n_feedback, validate_n8n_workflow
+from .n8n_validator import (
+    apply_direction_k_autofix,
+    build_n8n_feedback,
+    check_one_workflow_per_task,
+    validate_n8n_workflow,
+)
 from .schemas import AGENT_MODELS, DeveloperResponse, call_and_parse_llm, get_model_schema
 from .utils import (
     build_agent_task,
@@ -184,9 +189,66 @@ class TaskExecutor:
                 else:
                     n8n_json = getattr(validated_response, "n8n_json", None)
                     if isinstance(n8n_json, dict) and n8n_json.get("nodes"):
+                        files_raw = []
+                        if hasattr(validated_response, "files"):
+                            files_raw = [
+                                f.model_dump() if hasattr(f, "model_dump") else f
+                                for f in (validated_response.files or [])
+                            ]
+                        one_ok, one_issues = check_one_workflow_per_task(
+                            n8n_json=n8n_json,
+                            files=files_raw,
+                            summary=str(getattr(validated_response, "summary", "") or ""),
+                        )
+                        if not one_ok:
+                            n8n_feedback = build_n8n_feedback(one_issues)
+                            logger.error(
+                                "❌ %s: нарушено правило 1 workflow / task (%s)",
+                                task_name, len(one_issues),
+                            )
+                            self.orch.tasks_db.update_task(
+                                task_db_id,
+                                {
+                                    "status": "pending" if iteration_count + 1 < max_iter else "failed",
+                                    "qa_feedback": n8n_feedback,
+                                    "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
+                                },
+                            )
+                            if iteration_count + 1 >= max_iter:
+                                send_telegram_alert(
+                                    f"🚨 <b>Developer: несколько workflow в одной задаче</b>\n\n"
+                                    f"Задача: <code>{task_name}</code>\n"
+                                    f"Итераций: {iteration_count + 1}/{max_iter}"
+                                )
+                            return False
+
+                        # Direction AF: механический патч Direction K до валидации
+                        n8n_json, k_patches = apply_direction_k_autofix(n8n_json)
+                        if k_patches:
+                            logger.info(
+                                "🔧 Direction K autofix (%s): %s",
+                                task_name, "; ".join(k_patches[:8]),
+                            )
+                            dump = validated_response.model_dump()
+                            dump["n8n_json"] = n8n_json
+                            validated_response = DeveloperResponse(**dump)
+                            response_json = validated_response.model_dump_json(indent=2)
+
                         n8n_ok, n8n_issues = validate_n8n_workflow(n8n_json)
                         if not n8n_ok:
                             n8n_feedback = build_n8n_feedback(n8n_issues)
+                            # Если те же Direction K снова — усиливаем reminder
+                            prev_fb = str(task.get("qa_feedback") or "")
+                            if "Direction K" in prev_fb and any(
+                                "Direction K" in i for i in n8n_issues
+                            ):
+                                n8n_feedback = (
+                                    "⚠️ ПОВТОР ТЕХ ЖЕ Direction K ошибок — "
+                                    "примени обязательный патч из блока ниже "
+                                    "на КАЖДОЙ критичной ноде, не переписывай "
+                                    "весь workflow «с нуля» без этих полей.\n\n"
+                                    + n8n_feedback
+                                )
                             logger.error(
                                 f"❌ n8n workflow от developer не пройдёт импорт "
                                 f"({len(n8n_issues)} проблем): {task_name}"
