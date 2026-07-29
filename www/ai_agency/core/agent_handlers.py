@@ -41,7 +41,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
 
@@ -548,21 +548,58 @@ class AgentHandlers:
                         "contact_telegram": lead.get("contact_telegram"),
                         "decision_maker_role": None,
                     })
-            # Не писать письма «в пустоту» по галлюцинациям без карточек
+
+            # УТП / письмо клиенту проекта (без hunter): не затирать messages —
+            # иначе полный ответ остаётся только в agent_logs, а tasks → 0 писем.
+            if not clients:
+                fallback_name = _sales_fallback_client_name(self.orch.current_project)
+                if fallback_name:
+                    clients = [{
+                        "company_name": fallback_name,
+                        "website": None,
+                        "contact_email": None,
+                        "contact_phone": None,
+                        "contact_telegram": None,
+                        "decision_maker_role": None,
+                    }]
+                    logger.info(
+                        "sales: нет hunter-лидов — письма для клиента проекта «%s»",
+                        fallback_name,
+                    )
+
             allowed_names = {
-                (c.get("company_name") or "").strip().lower()
+                _norm_person_or_company(c.get("company_name"))
                 for c in clients
                 if c.get("company_name")
             }
+            allowed_names.discard("")
+
             raw_messages = [m.model_dump() for m in sales_data.messages]
             if allowed_names:
-                raw_messages = [
+                filtered = [
                     m for m in raw_messages
-                    if (m.get("lead_name") or "").strip().lower() in allowed_names
+                    if _lead_name_allowed(m.get("lead_name"), allowed_names)
                 ]
+                # Если LLM назвал получателя иначе, но клиент проекта один —
+                # сохраняем письма и нормализуем lead_name (не теряем текст).
+                if not filtered and raw_messages and len(allowed_names) == 1:
+                    only = next(iter(allowed_names))
+                    display = next(
+                        (c.get("company_name") for c in clients if c.get("company_name")),
+                        only,
+                    )
+                    for m in raw_messages:
+                        m["lead_name"] = display
+                    filtered = raw_messages
+                    logger.info(
+                        "sales: lead_name не совпал с «%s» — письма сохранены с нормализацией",
+                        display,
+                    )
+                raw_messages = filtered
             elif raw_messages:
+                # Нет ни hunter, ни client_name проекта — анти-галлюцинация
                 logger.warning(
-                    "sales: нет подтверждённых клиентов/лидов — письма очищены"
+                    "sales: нет подтверждённых клиентов/лидов и client_name — письма очищены"
                 )
                 raw_messages = []
             messages = merge_messages_with_contacts(raw_messages, clients)
@@ -593,7 +630,7 @@ class AgentHandlers:
                         f"(выгрузка .md/.json/.csv)"
                     ),
                 })
-            logger.info("✅ Sales: письма сохранены для выгрузки")
+            logger.info("✅ Sales: письма сохранены для выгрузки (%s)", len(messages))
             return True
 
         except Exception as e:
@@ -664,3 +701,41 @@ def _to_str(value: Any) -> str:
     if isinstance(value, dict):
         return json.dumps(value, indent=2, ensure_ascii=False)
     return str(value)
+
+
+def _norm_person_or_company(name: Any) -> str:
+    return " ".join(str(name or "").strip().lower().split())
+
+
+def _sales_fallback_client_name(project: Optional[Dict]) -> str:
+    """Имя клиента проекта / analyst для sales без hunter-лидов."""
+    if not isinstance(project, dict):
+        return ""
+    name = (project.get("client_name") or "").strip()
+    if name:
+        return name
+    ctx = project.get("analyst_context")
+    if isinstance(ctx, dict):
+        name = (ctx.get("client_name") or "").strip()
+        if name:
+            return name
+    if isinstance(ctx, list):
+        for item in ctx:
+            if isinstance(item, dict) and item.get("client_name"):
+                return str(item["client_name"]).strip()
+    return ""
+
+
+def _lead_name_allowed(lead_name: Any, allowed_names: set) -> bool:
+    """Точное или частичное совпадение имени получателя с карточкой клиента."""
+    n = _norm_person_or_company(lead_name)
+    if not n:
+        return False
+    if n in allowed_names:
+        return True
+    for a in allowed_names:
+        if len(a) < 4 or len(n) < 4:
+            continue
+        if a in n or n in a:
+            return True
+    return False

@@ -500,6 +500,60 @@ class TestOrchestratorNewAgents:
         assert "sales_context" in orchestrator.current_project
         assert len(orchestrator.current_project["sales_context"]) == 1
         assert len(orchestrator.current_project["sales_context"][0]["messages"]) == 1
+
+    @patch('core.agent_handlers.log_to_agent_logs')
+    def test_handle_sales_usp_without_hunter_keeps_letter(
+        self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data
+    ):
+        """УТП→письмо клиенту проекта: без hunter не очищать messages в tasks."""
+        from core.schemas import SalesResponse, SalesMessage
+        import json
+
+        orchestrator.current_project = sample_project_data
+        orchestrator.current_project["client_name"] = "Губанова Елена Сергеевна"
+        orchestrator.current_project.pop("client_hunter_context", None)
+        orchestrator.current_project.pop("leads_context", None)
+        orchestrator.current_project["analyst_context"] = {
+            "client_name": "Губанова Елена Сергеевна",
+        }
+
+        sales_response = SalesResponse(
+            messages=[
+                SalesMessage(
+                    lead_name="Губанова Е.С.",
+                    message_text="Уважаемая Елена Сергеевна! Наше УТП…",
+                    channel="email",
+                    subject="УТП для маркетплейса",
+                    personalization_points=["поддержка маркетплейса"],
+                )
+            ],
+            qualification_questions=[],
+            next_steps="Отправить письмо вручную",
+        )
+
+        result = orchestrator._handle_sales(
+            sample_task_data,
+            sample_task_data["Id"],
+            "iter2_task_001",
+            sales_response,
+            "pm_prompt",
+        )
+        assert result is True
+        msgs = orchestrator.current_project["sales_context"][-1]["messages"]
+        assert len(msgs) == 1
+        assert "УТП" in msgs[0]["message_text"]
+
+        # tasks.output_data должен содержать письма (не пустой список)
+        call_kwargs = None
+        for c in orchestrator.tasks_db.update_task.call_args_list:
+            args, kwargs = c
+            payload = args[1] if len(args) > 1 else kwargs.get("data")
+            if isinstance(payload, dict) and "output_data" in payload:
+                call_kwargs = payload
+        assert call_kwargs is not None
+        saved = json.loads(call_kwargs["output_data"])
+        assert len(saved["messages"]) == 1
+        assert "Подготовлено 1 писем" in call_kwargs.get("qa_feedback", "")
     
     @patch('core.agent_handlers.log_to_agent_logs')
     def test_handle_analyst(self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data, sample_task_data):

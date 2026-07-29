@@ -640,6 +640,22 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AB — Sales без hunter не затирает письма в tasks (NEW)
+
+**Проблема:** после итерации «УТП → письмо клиенту» sales писал полный текст в
+`agent_logs`, но в `tasks.output_data` оставалось `messages: []` («Писем: 0»).
+Причина: `handle_sales` очищал все письма, если не было `client_hunter_context` /
+`leads_context` (анти-галлюцинация для cold outreach). Для УТП клиент уже в
+`client_name` / `analyst_context` — очистка ошибочна.
+
+| Исправление | Где |
+|-------------|-----|
+| Fallback-клиент проекта / analyst | `agent_handlers.handle_sales` |
+| Частичное совпадение `lead_name` | `_lead_name_allowed` |
+| Один клиент + другое имя → нормализация, письма сохраняются | `handle_sales` |
+
+Тест: `test_handle_sales_usp_without_hunter_keeps_letter`.
+
 ### Direction AA — Выгрузка результата УТП / analyst (NEW)
 
 **Проблема:** проект «подготовка УТП» завершался (analyst + qa), но в UI не было
@@ -1165,4 +1181,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 29, 2026. Direction AA: выгрузка УТП/analyst + блок результатов.
+**Последнее обновление:** Jul 29, 2026. Direction AB: sales сохраняет письма клиенту проекта без hunter.
