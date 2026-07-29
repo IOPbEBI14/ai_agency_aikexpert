@@ -633,31 +633,54 @@ max_iterations по умолчанию: 3 для большинства аген
         except Exception as e:
             logger.warning("⚠️ Не удалось остановить другой активный проект: %s", e)
 
+        plan_json = pm_task_graph.model_dump_json(indent=2)
+        if len(plan_json) > 80000:
+            plan_json = pm_task_graph.model_dump_json()
+        if len(plan_json) > 80000:
+            plan_json = json.dumps(
+                {
+                    "iteration": next_iter,
+                    "tasks": [
+                        {
+                            "task_id": t.get("task_id"),
+                            "agent_name": t.get("agent_name"),
+                            "depends_on": t.get("depends_on") or [],
+                        }
+                        for t in tasks_list
+                        if isinstance(t, dict)
+                    ],
+                    "excluded_agents": excluded_agents,
+                    "reasoning": reasoning[:1500],
+                    "truncated": True,
+                },
+                ensure_ascii=False,
+            )
+
+        metrics_json = json.dumps(metrics, ensure_ascii=False)
         update_fields: Dict[str, Any] = {
             "status": "in_progress",
-            "completed_at": "",
+            # "" для DateTime → SQLITE_ERROR в NocoDB; null очищает поле
+            "completed_at": None,
             "tokens_used": self.current_project["tokens_used"],
-            "metrics": json.dumps(metrics, ensure_ascii=False),
-            "plan": pm_task_graph.model_dump_json(indent=2),
+            "metrics": metrics_json,
+            "plan": plan_json,
             "excluded_agents": json.dumps(excluded_agents, ensure_ascii=False),
             "reasoning": f"Итерация {next_iter}: {reasoning}"[:2000],
+            # Опциональная колонка NocoDB (если нет — resilient дропнет)
+            "iteration": next_iter,
         }
-        # Опциональное поле NocoDB (если колонки нет — update может частично упасть;
-        # metrics.iteration уже содержит номер).
-        try:
-            update_fields["iteration"] = next_iter
-            ok = self.projects_db.update_project(project_id, update_fields)
-            if not ok:
-                update_fields.pop("iteration", None)
-                self.projects_db.update_project(project_id, update_fields)
-        except Exception:
-            update_fields.pop("iteration", None)
-            self.projects_db.update_project(project_id, update_fields)
+
+        ok = self.projects_db.update_project_resilient(project_id, update_fields)
+        if not ok:
+            raise RuntimeError(
+                f"Не удалось обновить проект #{project_id} после создания задач итерации "
+                f"(NocoDB/SQLite). Задачи созданы ({created}), но статус/metrics не записаны."
+            )
 
         self.current_project.update({
             "status": "in_progress",
             "completed_at": "",
-            "metrics": update_fields["metrics"],
+            "metrics": metrics_json,
             "iteration": next_iter,
             "reasoning": update_fields["reasoning"],
             "tokens_used": self.current_project["tokens_used"],

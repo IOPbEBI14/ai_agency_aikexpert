@@ -21,7 +21,7 @@ class TestProjectIterationHelpers:
     def test_prepare_archives_report(self):
         project = {
             "metrics": '{"iteration": 1}',
-            "final_report": "# Отчёт v1",
+            "final_report": "# Отчёт v1\n" + ("x" * 20000),
             "completed_at": "2026-01-01",
         }
         metrics, nxt = prepare_iteration_metrics(
@@ -29,7 +29,10 @@ class TestProjectIterationHelpers:
         )
         assert nxt == 2
         assert metrics["iteration"] == 2
-        assert metrics["iteration_history"][0]["final_report"].startswith("# Отчёт")
+        hist0 = metrics["iteration_history"][0]
+        assert hist0["final_report"].startswith("# Отчёт")
+        assert len(hist0["final_report"]) <= 8000
+        assert hist0["final_report_chars"] == len(project["final_report"])
         assert "loop" in metrics["last_human_remarks"]
 
     def test_normalize_prefixes_and_external_deps(self):

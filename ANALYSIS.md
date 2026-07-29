@@ -640,6 +640,27 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AC — Refine/итерация: SQLITE_ERROR 422 при update_project (NEW)
+
+**Симптом:** после PM task graph на новой итерации:
+`ERR_DATABASE_OP_FAILED` / `SQLITE_ERROR` / `message: "near"` (два раза подряд).
+Refine всё равно мог вернуть 200 (задачи уже созданы), но статус/metrics проекта
+не записались.
+
+**Причины:**
+1. `completed_at: ""` — пустая строка в DateTime ломает SQL NocoDB/SQLite.
+2. Раздутый `metrics.iteration_history` (final_report до 50k × N) и огромный `plan`.
+3. Опциональная колонка `iteration` — первый PATCH падал, второй тоже из‑за п.1–2.
+
+| Исправление | Где |
+|-------------|-----|
+| `completed_at: null` вместо `""` | `orchestrator.start_project_iteration` + sanitize в `nocodb` |
+| Архив отчёта ≤ 8k в history | `prepare_iteration_metrics` |
+| Усечение/компакт `plan` | `start_project_iteration` |
+| `update_project_resilient` — дроп проблемных полей | `ProjectsClient` |
+
+Тесты: `test_empty_completed_at_sent_as_null`, `test_resilient_retries_without_failing_field`.
+
 ### Direction AB — Sales без hunter не затирает письма в tasks (NEW)
 
 **Проблема:** после итерации «УТП → письмо клиенту» sales писал полный текст в
@@ -1181,4 +1202,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 29, 2026. Direction AB: sales сохраняет письма клиенту проекта без hunter.
+**Последнее обновление:** Jul 29, 2026. Direction AC: fix SQLITE_ERROR на refine/update_project.

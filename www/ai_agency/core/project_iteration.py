@@ -185,21 +185,43 @@ def prepare_iteration_metrics(
     *,
     next_iteration: int,
     human_remarks: str,
+    report_archive_chars: int = 8000,
 ) -> Tuple[Dict[str, Any], int]:
-    """Архивирует отчёт и возвращает обновлённые metrics + next_iteration."""
+    """Архивирует отчёт и возвращает обновлённые metrics + next_iteration.
+
+    final_report в history режется (default 8k): полный текст в колонке
+    projects.final_report; иначе metrics раздувается и NocoDB/SQLite даёт 422.
+    """
     metrics = parse_metrics(project.get("metrics"))
     current = get_project_iteration(project)
     history = metrics.get("iteration_history")
     if not isinstance(history, list):
         history = []
+
+    report = project.get("final_report") or ""
+    if not isinstance(report, str):
+        report = str(report)
     history.append({
         "iteration": current,
-        "final_report": (project.get("final_report") or "")[:50000],
+        "final_report": report[:report_archive_chars],
+        "final_report_chars": len(report),
         "completed_at": project.get("completed_at") or "",
         "archived_at": datetime.now().isoformat(),
-        "human_remarks_for_next": human_remarks[:4000],
+        "human_remarks_for_next": human_remarks[:2000],
     })
+    # Сжимаем старые записи истории (если раньше писали по 50k)
+    compact_history = []
+    for item in history[-20:]:
+        if not isinstance(item, dict):
+            continue
+        h = dict(item)
+        fr = h.get("final_report") or ""
+        if isinstance(fr, str) and len(fr) > report_archive_chars:
+            h["final_report_chars"] = h.get("final_report_chars") or len(fr)
+            h["final_report"] = fr[:report_archive_chars]
+        compact_history.append(h)
+
     metrics["iteration"] = next_iteration
-    metrics["iteration_history"] = history[-20:]  # cap
+    metrics["iteration_history"] = compact_history
     metrics["last_human_remarks"] = human_remarks[:2000]
     return metrics, next_iteration

@@ -17,10 +17,11 @@ from unittest.mock import MagicMock, patch
 # Helpers
 # ══════════════════════════════════════════════════════════════════
 
-def _make_mock_response(json_data, status_code=200):
+def _make_mock_response(json_data, status_code=200, text=""):
     mock = MagicMock()
     mock.status_code = status_code
     mock.json.return_value = json_data
+    mock.text = text or json.dumps(json_data, ensure_ascii=False)
     mock.raise_for_status = MagicMock()
     return mock
 
@@ -147,6 +148,42 @@ class TestUpdateProject:
         with patch("requests.request", return_value=_make_mock_response({}, 400)):
             result = client.update_project(1, {"status": "bad"})
         assert result is False
+
+    def test_empty_completed_at_sent_as_null(self, client):
+        """Пустая дата → null (иначе NocoDB/SQLite: SQLITE_ERROR near …)."""
+        captured = {}
+
+        def fake_request(method, url, headers=None, json=None, timeout=None):
+            captured["payload"] = json
+            return _make_mock_response({})
+
+        with patch("requests.request", side_effect=fake_request):
+            client.update_project(1, {"status": "in_progress", "completed_at": ""})
+
+        fields = captured["payload"][0]["fields"]
+        assert fields["completed_at"] is None
+        assert fields["status"] == "in_progress"
+
+    def test_resilient_retries_without_failing_field(self, client):
+        calls = []
+
+        def fake_request(method, url, headers=None, json=None, timeout=None):
+            calls.append(json[0]["fields"])
+            if "iteration" in json[0]["fields"]:
+                return _make_mock_response(
+                    {}, 422, text='{"error":"ERR_DATABASE_OP_FAILED","message":"near","code":"SQLITE_ERROR"}'
+                )
+            return _make_mock_response({})
+
+        with patch("requests.request", side_effect=fake_request), \
+             patch("core.nocodb.time.sleep"):
+            ok = client.update_project_resilient(
+                1,
+                {"status": "in_progress", "iteration": 3, "tokens_used": 10},
+            )
+        assert ok is True
+        assert any("iteration" in c for c in calls)
+        assert any("iteration" not in c and c.get("status") == "in_progress" for c in calls)
 
     def test_returns_false_without_project_id(self, client):
         result = client.update_project(None, {"status": "ok"})

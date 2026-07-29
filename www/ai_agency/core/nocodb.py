@@ -108,6 +108,30 @@ def nocodb_request(
 # Ловим и сетевые ошибки requests, и исчерпанные ретраи 5xx/429
 _NOCODB_REQUEST_ERRORS = (requests.exceptions.RequestException, NocoDBTransientError)
 
+# DateTime-поля projects: пустая строка "" ломает SQLite в NocoDB (SQLITE_ERROR «near …»)
+_PROJECT_DATE_FIELDS = frozenset({
+    "completed_at", "created_at", "updated_at", "updateTime",
+})
+_PROJECT_JSON_FIELDS = frozenset({
+    "metrics", "plan", "excluded_agents", "completed_agents",
+})
+
+
+def _sanitize_project_patch_fields(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Готовит fields для PATCH projects: null вместо "" для дат, JSON → str."""
+    out: Dict[str, Any] = {}
+    for key, val in data.items():
+        if isinstance(val, str) and "\x00" in val:
+            val = val.replace("\x00", "")
+        if key in _PROJECT_DATE_FIELDS and val == "":
+            out[key] = None
+            continue
+        if key in _PROJECT_JSON_FIELDS and isinstance(val, (dict, list)):
+            out[key] = json.dumps(val, ensure_ascii=False)
+            continue
+        out[key] = val
+    return out
+
 
 class NocoDBClient:
     """Клиент для работы с таблицей agent_logs"""
@@ -374,28 +398,87 @@ class ProjectsClient:
                 logger.error("? Нельзя обновить проект без Id")
                 return False
 
-            data["updated_at"] = datetime.now().isoformat()
-
-            # Сериализация completed_agents в JSON
-            if "completed_agents" in data and isinstance(data["completed_agents"], list):
-                data["completed_agents"] = json.dumps(data["completed_agents"], ensure_ascii=False)
+            fields = _sanitize_project_patch_fields(data)
+            fields["updated_at"] = datetime.now().isoformat()
 
             # ВАЖНО: в API v3 поле называется "id" (с маленькой буквы), а не "Id"
-            payload = [{"id": project_id, "fields": data}]
-            
-            logger.debug(f"?? PATCH payload: {json.dumps(payload, ensure_ascii=False)[:200]}")
-            
-            response = nocodb_request("PATCH", self.projects_url, json_body=payload, headers=self.headers)
-            
+            payload = [{"id": project_id, "fields": fields}]
+
+            logger.debug(
+                "?? PATCH project %s keys=%s size≈%s",
+                project_id,
+                list(fields.keys()),
+                len(json.dumps(fields, ensure_ascii=False, default=str)),
+            )
+
+            response = nocodb_request(
+                "PATCH", self.projects_url, json_body=payload, headers=self.headers
+            )
+
             if response.status_code >= 400:
-                logger.error(f"? Ошибка обновления проекта: {response.status_code} — {response.text[:300]}")
+                logger.error(
+                    "? Ошибка обновления проекта: %s — %s",
+                    response.status_code,
+                    response.text[:500],
+                )
                 return False
-            
+
             logger.debug("Проект обновлён: %s", project_id)
             return True
         except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"? Ошибка обновления проекта: {e}")
             return False
+
+    def update_project_resilient(
+        self,
+        project_id: str,
+        data: Dict[str, Any],
+        *,
+        optional_fields: Optional[Tuple[str, ...]] = None,
+    ) -> bool:
+        """PATCH проекта с поэтапным исключением проблемных полей (SQLite/NocoDB 422).
+
+        optional_fields по умолчанию: iteration → plan → metrics → …
+        Минимальный набор (status/tokens) пробуем в конце.
+        """
+        base = _sanitize_project_patch_fields(data)
+        drop_order = optional_fields or (
+            "iteration",
+            "plan",
+            "metrics",
+            "excluded_agents",
+            "reasoning",
+            "completed_at",
+            "final_report",
+        )
+        attempt = dict(base)
+        if self.update_project(project_id, attempt):
+            return True
+
+        for key in drop_order:
+            if key not in attempt:
+                continue
+            attempt = {k: v for k, v in attempt.items() if k != key}
+            logger.warning(
+                "⚠️ update_project #%s: повтор без поля «%s» (осталось %s)",
+                project_id, key, list(attempt.keys()),
+            )
+            if self.update_project(project_id, attempt):
+                return True
+
+        # Последний шанс — только статус / токены
+        minimal = {
+            k: base[k]
+            for k in ("status", "tokens_used", "token_budget")
+            if k in base
+        }
+        if minimal and self.update_project(project_id, minimal):
+            logger.warning(
+                "⚠️ update_project #%s: сохранён только минимальный набор %s",
+                project_id, list(minimal.keys()),
+            )
+            return True
+        return False
 
     def get_recent_records_by_project(self, project_id: int, limit: int = 10) -> List[Dict[str, Any]]:
         """
