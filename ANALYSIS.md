@@ -1224,4 +1224,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Direction AE+AF: 1 workflow/task + Direction K autofix.
+**Последнее обновление:** Jul 30, 2026. Hotfix: `Orchestrator.add_tokens` (AttributeError в handle_architect).

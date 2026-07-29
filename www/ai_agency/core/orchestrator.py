@@ -12,6 +12,7 @@ Orchestrator — главный класс, управляющий выполн�
 """
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -70,6 +71,7 @@ class Orchestrator:
 
         self.current_project: Optional[Dict[str, Any]] = None
         self.agency_running: bool = False
+        self.state_lock = threading.RLock()
 
         # Субкомпоненты (держат ссылку на self, видят все актуальные атрибуты)
         self.qa_gate = QAGate(self)
@@ -77,6 +79,18 @@ class Orchestrator:
         self.task_executor = TaskExecutor(self)
 
         logger.info("🏗️ Orchestrator инициализирован")
+
+    def add_tokens(self, delta: int, *, persist: bool = True) -> int:
+        """Инкремент tokens_used текущего проекта (thread-safe)."""
+        if not self.current_project:
+            return 0
+        with self.state_lock:
+            total = (self.current_project.get("tokens_used") or 0) + (delta or 0)
+            self.current_project["tokens_used"] = total
+            project_id = self.current_project.get("Id")
+        if persist and project_id is not None:
+            self.projects_db.update_project(project_id, {"tokens_used": total})
+        return total
 
     # ══════════════════════════════════════════════════════════════════════════
     # ИНИЦИАЛИЗАЦИЯ
