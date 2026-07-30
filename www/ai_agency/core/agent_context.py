@@ -205,10 +205,28 @@ def last_attempt(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return attempts[-1] if attempts else None
 
 
+def build_system_memory_hint(agent_name: str = "") -> str:
+    """Короткий system-hint для ЛЮБОГО агента на retry (не только developer)."""
+    who = (agent_name or "агент").strip() or "агент"
+    return f"""
+═══════════════════════════════════════════════════════════
+ПАМЯТЬ ИТЕРАЦИЙ (Agent Context) — для агента «{who}»
+═══════════════════════════════════════════════════════════
+Если во входных данных есть agent_context / previous_attempt / блок
+«ПАМЯТЬ ИТЕРАЦИЙ» — это твоя предыдущая попытка. ОБЯЗАТЕЛЬНО:
+1) возьми previous_attempt как базу;
+2) исправь только open_issues и qa_feedback;
+3) НЕ генерируй ответ «с чистого листа», игнорируя прошлый артефакт.
+Это правило для всех ролей: developer, architect, analyst, sales,
+client_hunter, lead_hunter, qa, tech_writer, crm_customizer, PM.
+"""
+
+
 def build_retry_prompt_block(
     ctx: Dict[str, Any],
     *,
     qa_feedback: str = "",
+    agent_name: str = "",
     max_chars: int = PROMPT_CONTEXT_CHARS,
 ) -> str:
     """Текст для user-prompt: не начинай с нуля, патчь предыдущую попытку."""
@@ -216,9 +234,10 @@ def build_retry_prompt_block(
     if not attempts and not qa_feedback:
         return ""
 
+    who = agent_name or (last_attempt(ctx) or {}).get("agent_name") or "agent"
     lines: List[str] = [
         "═══════════════════════════════════════════════════════════",
-        "ПАМЯТЬ ИТЕРАЦИЙ (Agent Context) — НЕ ИГНОРИРУЙ",
+        f"ПАМЯТЬ ИТЕРАЦИЙ (Agent Context / {who}) — НЕ ИГНОРИРУЙ",
         "═══════════════════════════════════════════════════════════",
         "Ты УЖЕ делал попытки по этой задаче. ЗАПРЕЩЕНО генерировать результат",
         "«с нуля», игнорируя предыдущий артефакт. Возьми previous_attempt /",
@@ -226,15 +245,19 @@ def build_retry_prompt_block(
         "",
     ]
     lines.append(f"Всего попыток в истории: {len(attempts)}")
-    # Краткие итоги последних попыток
     for a in attempts[-4:]:
         dig = a.get("digest") or {}
+        extra = ""
+        if dig.get("node_count") is not None:
+            extra = f"nodes={dig.get('node_count')}; wf={dig.get('workflow_name') or '-'}; "
         lines.append(
-            f"- iter {a.get('iteration')}: status={a.get('status')}; "
-            f"nodes={dig.get('node_count')}; "
-            f"wf={dig.get('workflow_name') or '-'}; "
+            f"- iter {a.get('iteration')} [{a.get('agent_name') or who}]: "
+            f"status={a.get('status')}; {extra}"
             f"issues={len(a.get('issues') or [])}"
         )
+        summ = (dig.get("summary") or "")[:120]
+        if summ:
+            lines.append(f"    summary: {summ}")
         for iss in (a.get("issues") or [])[:5]:
             lines.append(f"    • {iss[:240]}")
 
@@ -262,31 +285,45 @@ def build_retry_prompt_block(
 def inject_retry_into_input_data(
     input_data: Dict[str, Any],
     ctx: Dict[str, Any],
+    *,
+    agent_name: str = "",
 ) -> Dict[str, Any]:
-    """Добавляет structured retry-контекст во вход задачи."""
+    """Добавляет structured retry-контекст во вход задачи (любой агент)."""
     out = dict(input_data or {})
     attempts = ctx.get("attempts") or []
     if not attempts:
         return out
     prev = last_attempt(ctx) or {}
+    who = agent_name or prev.get("agent_name") or "agent"
     out["agent_context"] = {
+        "agent_name": who,
         "attempt_count": len(attempts),
         "open_issues": ctx.get("open_issues") or [],
         "last_status": ctx.get("last_status"),
         "last_digest": prev.get("digest") or {},
         "instruction": (
-            "Исправь previous_attempt по open_issues. Не создавай новый workflow "
-            "с нуля, если previous_attempt уже есть."
+            f"Агент «{who}»: исправь previous_attempt по open_issues / qa_feedback. "
+            "Не генерируй новый результат с нуля, если previous_attempt уже есть."
         ),
     }
     preview = prev.get("artifact_preview") or ""
     if preview:
-        # Пытаемся отдать JSON, иначе строку
         try:
             out["previous_attempt"] = json.loads(preview.split("\n… [truncated")[0])
         except json.JSONDecodeError:
             out["previous_attempt_preview"] = preview[:ARTIFACT_PREVIEW_CHARS]
     return out
+
+
+def _context_agent_names(ctx: Dict[str, Any]) -> List[str]:
+    names = []
+    seen = set()
+    for a in ctx.get("attempts") or []:
+        n = (a.get("agent_name") or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    return names
 
 
 def list_project_contexts(
@@ -302,8 +339,11 @@ def list_project_contexts(
     for path in sorted(root.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            agents = _context_agent_names(data)
             items.append({
                 "task_id": data.get("task_id") or path.stem,
+                "agents": agents,
+                "agent_name": agents[-1] if agents else None,
                 "attempts": len(data.get("attempts") or []),
                 "last_status": data.get("last_status"),
                 "open_issues": len(data.get("open_issues") or []),
@@ -312,6 +352,72 @@ def list_project_contexts(
         except Exception:
             items.append({"task_id": path.stem, "error": "unreadable"})
     return items
+
+
+def list_agents_with_context(
+    project_id: Any,
+    *,
+    base: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Агрегация по agent_name: сколько задач/попыток у каждого агента."""
+    by_agent: Dict[str, Dict[str, Any]] = {}
+    for item in list_project_contexts(project_id, base=base):
+        tid = item.get("task_id")
+        ctx = load_task_context(project_id, tid, base=base)
+        for name in _context_agent_names(ctx) or [item.get("agent_name") or "unknown"]:
+            slot = by_agent.setdefault(name, {
+                "agent_name": name,
+                "tasks": [],
+                "attempts": 0,
+                "open_issues": 0,
+            })
+            if tid not in slot["tasks"]:
+                slot["tasks"].append(tid)
+            slot["attempts"] += len(ctx.get("attempts") or [])
+            slot["open_issues"] += len(ctx.get("open_issues") or [])
+    return sorted(by_agent.values(), key=lambda x: x["agent_name"])
+
+
+def get_agent_history(
+    project_id: Any,
+    agent_name: str,
+    *,
+    limit: int = 30,
+    base: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Плоская история попыток конкретного агента по всем задачам проекта."""
+    want = (agent_name or "").strip().lower()
+    rows: List[Dict[str, Any]] = []
+    for item in list_project_contexts(project_id, base=base):
+        tid = item.get("task_id")
+        ctx = load_task_context(project_id, tid, base=base)
+        for a in ctx.get("attempts") or []:
+            if (a.get("agent_name") or "").strip().lower() != want:
+                continue
+            rows.append({
+                "task_id": tid,
+                "iteration": a.get("iteration"),
+                "status": a.get("status"),
+                "ts": a.get("ts"),
+                "issues": a.get("issues") or [],
+                "digest": a.get("digest") or {},
+                "feedback_preview": (a.get("feedback") or "")[:400],
+            })
+    rows.sort(key=lambda r: r.get("ts") or "")
+    return rows[-limit:]
+
+
+def get_latest_task_for_agent(
+    project_id: Any,
+    agent_name: str,
+    *,
+    base: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """Последний task context, где этот агент оставлял попытки."""
+    hist = get_agent_history(project_id, agent_name, limit=100, base=base)
+    if not hist:
+        return None
+    return load_task_context(project_id, hist[-1]["task_id"], base=base)
 
 
 def clear_task_context(

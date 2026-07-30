@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from .config import Config
 from .agent_context import (
     build_retry_prompt_block,
+    build_system_memory_hint,
     inject_retry_into_input_data,
     load_task_context,
     record_attempt,
@@ -99,7 +100,9 @@ class TaskExecutor:
             )
             agent_ctx = load_task_context(project_id, task_name)
         if iteration_count > 0:
-            input_data = inject_retry_into_input_data(input_data, agent_ctx)
+            input_data = inject_retry_into_input_data(
+                input_data, agent_ctx, agent_name=agent_name or ""
+            )
 
         # Перед LLM подмешиваем РЕАЛЬНЫЙ OpenSERP (анти-галлюцинации)
         if agent_name == "client_hunter":
@@ -146,6 +149,9 @@ class TaskExecutor:
 
         # Добавляем JSON Schema к промпту
         schema_prompt = self._build_schema_prompt(agent_prompt, agent_name)
+        # Память итераций — system-hint для ЛЮБОГО агента (не только developer)
+        if iteration_count > 0:
+            schema_prompt = schema_prompt + "\n" + build_system_memory_hint(agent_name or "")
 
         # Для developer: добавляем версию n8n из .env в контекст задачи
         if agent_name == "developer":
@@ -155,7 +161,9 @@ class TaskExecutor:
         iteration_memory = ""
         if iteration_count > 0:
             iteration_memory = build_retry_prompt_block(
-                agent_ctx, qa_feedback=str(qa_feedback or "")
+                agent_ctx,
+                qa_feedback=str(qa_feedback or ""),
+                agent_name=agent_name or "",
             )
         agent_task = build_agent_task(
             task_description,

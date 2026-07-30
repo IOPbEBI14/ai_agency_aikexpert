@@ -640,6 +640,20 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AI — Agent Context MCP для любого агента (NEW)
+
+Расширение Direction AG: память и MCP не только для developer.
+
+| Слой | Что |
+|------|-----|
+| `TaskExecutor` | system-hint `build_system_memory_hint(agent)` на retry для **всех** ролей |
+| `inject_retry_into_input_data(..., agent_name=)` | нейтральная инструкция (не только workflow) |
+| MCP | `list_supported_agents`, `list_agents_with_memory`, `get_agent_history`, `get_latest_context_for_agent` |
+| Store API | `list_agents_with_context`, `get_agent_history`, `get_latest_task_for_agent` |
+
+Роли: pm, developer, architect, analyst, sales, client_hunter, lead_hunter, qa,
+tech_writer, crm_customizer.
+
 ### Direction AH — Исчерпание токенов → status=stopped (NEW)
 
 Раньше при остатке бюджета < 20% проект уходил в `needs_human_review`
@@ -662,7 +676,9 @@ npx n8n-workflow-validator --json workflow.json
 | `.cursor/mcp.json` | сервер `agency-agent-context` |
 
 Инструменты MCP: `get_task_context`, `get_retry_prompt`, `list_task_contexts`,
-`record_agent_attempt`, `clear_context`.
+`record_agent_attempt`, `clear_context` + (Direction AI)
+`list_supported_agents`, `list_agents_with_memory`, `get_agent_history`,
+`get_latest_context_for_agent`.
 
 Store: `www/ai_agency/data/agent_context/{project_id}/{task_id}.json` (в `.gitignore`).
 
@@ -1253,4 +1269,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Direction AH: бюджет токенов → status=stopped.
+**Последнее обновление:** Jul 30, 2026. Direction AI: Agent Context MCP для любого агента.
