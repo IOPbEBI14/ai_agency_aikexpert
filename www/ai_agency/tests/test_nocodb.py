@@ -370,6 +370,41 @@ class TestNocodbRequestRetry:
                 mod.nocodb_request("GET", "http://noco/x")
         assert sleeps == [10, 30, 60]
 
+    def test_sqlite_busy_uses_short_backoff_and_extra_attempts(self, monkeypatch):
+        """Direction AM: SQLITE_BUSY → короткие паузы и NOCODB_BUSY_MAX_ATTEMPTS."""
+        from core import nocodb as mod
+        from core.config import Config
+
+        monkeypatch.setattr(Config, "NOCODB_MAX_ATTEMPTS", 4)
+        monkeypatch.setattr(Config, "NOCODB_BUSY_MAX_ATTEMPTS", 6)
+        monkeypatch.setattr(
+            Config, "NOCODB_BUSY_RETRY_DELAYS_SEC", (0.5, 1.0, 2.0, 3.0, 5.0)
+        )
+        monkeypatch.setattr(Config, "NOCODB_SERIALIZE_REQUESTS", False)
+        busy_body = (
+            '{"error":"ERR_DATABASE_OP_FAILED",'
+            '"message":"The database is locked by another process or transaction.",'
+            '"code":"SQLITE_BUSY"}'
+        )
+        sleeps = []
+        responses = [
+            _make_mock_response({}, 500, text=busy_body),
+            _make_mock_response({}, 500, text=busy_body),
+            _make_mock_response({"records": []}, 200),
+        ]
+        with patch("core.nocodb.random.uniform", return_value=0.0), \
+             patch("core.nocodb.time.sleep", side_effect=lambda s: sleeps.append(s)), \
+             patch("requests.request", side_effect=responses):
+            resp = mod.nocodb_request("GET", "http://noco/x")
+        assert resp.status_code == 200
+        assert sleeps == [0.5, 1.0]
+
+    def test_is_sqlite_busy_message(self):
+        from core.nocodb import _is_sqlite_busy_message
+        assert _is_sqlite_busy_message('{"code":"SQLITE_BUSY"}')
+        assert _is_sqlite_busy_message("The database is locked by another process")
+        assert not _is_sqlite_busy_message('{"error":"NOT_FOUND"}')
+
 
 # ══════════════════════════════════════════════════════════════════
 # nocodb_proxy (main.py) — безопасность

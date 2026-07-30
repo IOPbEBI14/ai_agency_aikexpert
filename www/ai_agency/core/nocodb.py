@@ -1,5 +1,7 @@
 import json
 import logging
+import random
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,13 +13,33 @@ from .config import Config
 
 logger = logging.getLogger("NocoDBClient")
 
+# Сериализация HTTP внутри процесса: оркестратор + Flask/WS не бьют SQLite разом
+_NOCODB_HTTP_LOCK = threading.RLock()
+
 
 class NocoDBTransientError(Exception):
-    """Временная ошибка NocoDB (сеть / 5xx / 429) — можно повторить."""
+    """Временная ошибка NocoDB (сеть / 5xx / 429 / SQLITE_BUSY) — можно повторить."""
 
-    def __init__(self, message: str, *, status_code: Optional[int] = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        sqlite_busy: bool = False,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.sqlite_busy = sqlite_busy
+
+
+def _is_sqlite_busy_message(msg: str) -> bool:
+    """NocoDB latest на SQLite: ERR_DATABASE_OP_FAILED / SQLITE_BUSY."""
+    text = (msg or "").lower()
+    return (
+        "sqlite_busy" in text
+        or "database is locked" in text
+        or "database locked" in text
+    )
 
 
 def _is_retryable_status(status_code: int) -> bool:
@@ -46,6 +68,24 @@ def _is_retryable_exc(exc: BaseException) -> bool:
     return False
 
 
+def _delay_for_attempt(
+    *,
+    attempt: int,
+    sqlite_busy: bool,
+    default_delays: Tuple[float, ...],
+    busy_delays: Tuple[float, ...],
+) -> float:
+    """Пауза перед следующей попыткой; для SQLITE_BUSY — короче + jitter."""
+    delays = busy_delays if sqlite_busy else default_delays
+    if not delays:
+        delays = (1.0,)
+    base = float(delays[min(attempt - 1, len(delays) - 1)])
+    if sqlite_busy:
+        # Небольшой jitter, чтобы параллельные клиенты не били в одну фазу
+        return max(0.05, base + random.uniform(0.0, min(0.5, base * 0.25)))
+    return base
+
+
 def nocodb_request(
     method: str,
     url: str,
@@ -57,28 +97,59 @@ def nocodb_request(
 ) -> requests.Response:
     """HTTP к NocoDB с таймаутом Config.NOCODB_TIMEOUT_SEC и ретраями.
 
-    При временных ошибках (сеть / timeout / 429 / 5xx) — до
-    NOCODB_MAX_ATTEMPTS попыток (default 4 = первая + 3 повтора)
-    с паузами из NOCODB_RETRY_DELAYS_SEC (default 10, 30, 60 сек).
+    Обычные временные ошибки (сеть / timeout / 429 / 5xx):
+      NOCODB_MAX_ATTEMPTS + NOCODB_RETRY_DELAYS_SEC (default 10, 30, 60).
+
+    SQLITE_BUSY / database locked (NocoDB on SQLite, Direction AM):
+      больше коротких попыток NOCODB_BUSY_* + jitter; HTTP под process-lock.
     """
     timeout = Config.NOCODB_TIMEOUT_SEC if timeout is None else timeout
-    max_attempts = max(1, int(Config.NOCODB_MAX_ATTEMPTS))
-    delays: Tuple[int, ...] = tuple(Config.NOCODB_RETRY_DELAYS_SEC) or (10, 30, 60)
+    default_max = max(1, int(Config.NOCODB_MAX_ATTEMPTS))
+    busy_max = max(default_max, int(Config.NOCODB_BUSY_MAX_ATTEMPTS))
+    default_delays: Tuple[float, ...] = tuple(
+        Config.NOCODB_RETRY_DELAYS_SEC
+    ) or (10.0, 30.0, 60.0)
+    busy_delays: Tuple[float, ...] = tuple(
+        Config.NOCODB_BUSY_RETRY_DELAYS_SEC
+    ) or (0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0)
+    serialize = bool(Config.NOCODB_SERIALIZE_REQUESTS)
 
+    # max_attempts может вырасти после первой SQLITE_BUSY
+    max_attempts = default_max
     last_exc: Optional[BaseException] = None
-    for attempt in range(1, max_attempts + 1):
+    saw_busy = False
+
+    for attempt in range(1, busy_max + 1):
+        if attempt > max_attempts:
+            break
         try:
-            response = requests.request(
-                method.upper(),
-                url,
-                headers=headers,
-                json=json_body,
-                timeout=timeout,
-            )
-            if _is_retryable_status(response.status_code):
+            if serialize:
+                with _NOCODB_HTTP_LOCK:
+                    response = requests.request(
+                        method.upper(),
+                        url,
+                        headers=headers,
+                        json=json_body,
+                        timeout=timeout,
+                    )
+            else:
+                response = requests.request(
+                    method.upper(),
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    timeout=timeout,
+                )
+            body_preview = response.text[:400] if response.text else ""
+            busy = _is_sqlite_busy_message(body_preview)
+            if _is_retryable_status(response.status_code) or busy:
+                if busy:
+                    saw_busy = True
+                    max_attempts = busy_max
                 raise NocoDBTransientError(
-                    f"HTTP {response.status_code}: {response.text[:200]}",
+                    f"HTTP {response.status_code}: {body_preview[:200]}",
                     status_code=response.status_code,
+                    sqlite_busy=busy,
                 )
             if raise_for_status:
                 response.raise_for_status()
@@ -86,18 +157,37 @@ def nocodb_request(
         except Exception as e:
             last_exc = e
             retryable = _is_retryable_exc(e)
+            busy = bool(getattr(e, "sqlite_busy", False)) or _is_sqlite_busy_message(
+                str(e)
+            )
+            if busy:
+                saw_busy = True
+                max_attempts = busy_max
             if (not retryable) or attempt >= max_attempts:
                 if isinstance(e, NocoDBTransientError) and attempt >= max_attempts:
-                    # Вернём последний response-подобный исход через RequestException
                     logger.error(
-                        "❌ NocoDB %s %s: исчерпаны %s попыток — %s",
-                        method.upper(), url, max_attempts, e,
+                        "❌ NocoDB %s %s: исчерпаны %s попыток%s — %s",
+                        method.upper(),
+                        url,
+                        max_attempts,
+                        " (SQLITE_BUSY)" if saw_busy else "",
+                        e,
                     )
                 raise
-            delay = delays[min(attempt - 1, len(delays) - 1)]
+            delay = _delay_for_attempt(
+                attempt=attempt,
+                sqlite_busy=busy or saw_busy,
+                default_delays=default_delays,
+                busy_delays=busy_delays,
+            )
             logger.warning(
-                "⚠️ NocoDB %s %s попытка %s/%s не удалась (%s). Повтор через %s с…",
-                method.upper(), url, attempt, max_attempts, e, delay,
+                "⚠️ NocoDB %s %s попытка %s/%s не удалась (%s). Повтор через %.2f с…",
+                method.upper(),
+                url,
+                attempt,
+                max_attempts,
+                e,
+                delay,
             )
             time.sleep(delay)
 

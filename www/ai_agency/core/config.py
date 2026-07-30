@@ -20,10 +20,25 @@ class Config:
     _nocodb_delays_raw = os.getenv("NOCODB_RETRY_DELAYS_SEC", "10,30,60")
     try:
         NOCODB_RETRY_DELAYS_SEC = tuple(
-            int(x.strip()) for x in _nocodb_delays_raw.split(",") if x.strip()
-        ) or (10, 30, 60)
+            float(x.strip()) for x in _nocodb_delays_raw.split(",") if x.strip()
+        ) or (10.0, 30.0, 60.0)
     except ValueError:
-        NOCODB_RETRY_DELAYS_SEC = (10, 30, 60)
+        NOCODB_RETRY_DELAYS_SEC = (10.0, 30.0, 60.0)
+    # Direction AM: SQLITE_BUSY — больше коротких попыток (NocoDB на SQLite)
+    NOCODB_BUSY_MAX_ATTEMPTS = int(os.getenv("NOCODB_BUSY_MAX_ATTEMPTS", "8"))
+    _nocodb_busy_raw = os.getenv(
+        "NOCODB_BUSY_RETRY_DELAYS_SEC", "0.5,1,2,3,5,8,13"
+    )
+    try:
+        NOCODB_BUSY_RETRY_DELAYS_SEC = tuple(
+            float(x.strip()) for x in _nocodb_busy_raw.split(",") if x.strip()
+        ) or (0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0)
+    except ValueError:
+        NOCODB_BUSY_RETRY_DELAYS_SEC = (0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0)
+    # Сериализовать HTTP к NocoDB внутри одного процесса (оркестратор + API)
+    NOCODB_SERIALIZE_REQUESTS = os.getenv(
+        "NOCODB_SERIALIZE_REQUESTS", "on"
+    ).strip().lower() in ("1", "true", "yes", "on")
     
     # LLM (мульти-провайдер: см. core/llm_engine.py и LLM_PROVIDER)
     # Активный провайдер: openai | grok | anthropic | deepseek | yandexgpt | gigachat

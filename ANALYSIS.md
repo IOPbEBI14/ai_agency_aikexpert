@@ -640,6 +640,27 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AM — NocoDB SQLITE_BUSY после обновления (FIX)
+
+**Симптом (NocoDB latest + SQLite):**
+`HTTP 500 ERR_DATABASE_OP_FAILED / SQLITE_BUSY` —
+«The database is locked by another process or transaction» на GET
+`…/records?where=(status,eq,stopped)&sort=UpdatedAt`. Старый backoff 10→30→60 с
+не успевал разблокировать БД при конкуренции оркестратор + дашборд/API.
+
+**Исправление (`nocodb_request`):**
+
+| Механизм | Поведение |
+|----------|-----------|
+| Детект | `SQLITE_BUSY` / `database is locked` в теле ответа (в т.ч. при 422/500) |
+| Busy-retry | до `NOCODB_BUSY_MAX_ATTEMPTS` (default **8**), паузы **0.5…13** с + jitter |
+| Serialize | `NOCODB_SERIALIZE_REQUESTS=on` — RLock на HTTP внутри процесса |
+| Env | `NOCODB_BUSY_MAX_ATTEMPTS`, `NOCODB_BUSY_RETRY_DELAYS_SEC`, `NOCODB_SERIALIZE_REQUESTS` |
+
+На стороне NocoDB полезно WAL / увеличить busy_timeout SQLite, если локи остаются.
+
+Тесты: `test_sqlite_busy_uses_short_backoff_and_extra_attempts`.
+
 ### Direction AL — tech_writer: сабтаски + сборка отчёта в родителе (NEW)
 
 **Проблема:** `tech_writer_prompt` перегружен (12 тем интеграции + FAQ + КП + схема).
@@ -1319,4 +1340,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 31, 2026. Direction AL: tech_writer сабтаски tw_* + merge отчёта.
+**Последнее обновление:** Jul 31, 2026. Direction AM: NocoDB SQLITE_BUSY retry + serialize.
