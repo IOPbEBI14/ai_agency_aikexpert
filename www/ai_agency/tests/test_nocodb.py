@@ -71,6 +71,34 @@ class TestProjectsClientUnpack:
         assert client._unpack_record(None) == {}
 
 
+class TestBuildRecordsListUrl:
+    """Data API v3: page/pageSize вместо limit (openapi)."""
+
+    def test_page_size_and_sort(self):
+        from core.nocodb import build_records_list_url
+        url = build_records_list_url(
+            "http://noco/records",
+            where="(status,eq,stopped)",
+            page=1,
+            page_size=1,
+            sort_field="UpdatedAt",
+        )
+        assert "page=1" in url
+        assert "pageSize=1" in url
+        assert "where=" in url
+        assert "sort=" in url
+        assert "UpdatedAt" in url
+        assert "limit=" not in url
+
+
+class TestUnpackDataRecord:
+    def test_v3_id_to_Id(self):
+        from core.nocodb import unpack_data_record
+        out = unpack_data_record({"id": 7, "fields": {"status": "stopped"}})
+        assert out["Id"] == 7
+        assert out["status"] == "stopped"
+
+
 class TestBuildWhereUrl:
     """_build_where_url всегда возвращает str (исторический баг: return внутри if)."""
 
@@ -87,21 +115,24 @@ class TestBuildWhereUrl:
         url = client._build_where_url("status", "in_progress")
         assert isinstance(url, str), "Должна вернуться строка, а не None"
         assert "where=" in url
-        assert "limit=1" in url
+        assert "pageSize=1" in url
+        assert "page=1" in url
+        assert "limit=" not in url
 
     def test_returns_string_with_sort(self, client):
-        url = client._build_where_url("status", "completed", sort_field="updated_at")
+        url = client._build_where_url("status", "completed", sort_field="UpdatedAt")
         assert isinstance(url, str)
         assert "sort=" in url
+        assert "UpdatedAt" in url
 
     def test_field_and_value_encoded(self, client):
         """Спецсимволы в значении кодируются (url-encode)."""
         url = client._build_where_url("project_name", "Test Project", limit=5)
-        assert "limit=5" in url
+        assert "pageSize=5" in url
 
-    def test_custom_limit(self, client):
+    def test_custom_limit_maps_to_page_size(self, client):
         url = client._build_where_url("status", "in_progress", limit=10)
-        assert "limit=10" in url
+        assert "pageSize=10" in url
 
 
 class TestUpdateProject:
@@ -439,10 +470,24 @@ class TestNocodbProxy:
             resp = app_client.get("/api/nocodb")
         assert resp.status_code == 200
 
-    def test_delete_blocked(self, app_client):
-        """DELETE должен быть отклонён (405 — метод не зарегистрирован)."""
-        resp = app_client.delete("/api/nocodb")
-        assert resp.status_code == 405
+    def test_delete_allowed(self, app_client):
+        """DELETE разрешён (Data API v3 db-data-table-row-delete)."""
+        mock_resp = MagicMock()
+        mock_resp.content = b'{"records":[{"id":1,"deleted":true}]}'
+        mock_resp.status_code = 200
+        mock_resp.headers = {}
+
+        with patch("main.requests.request", return_value=mock_resp) as mock_req:
+            resp = app_client.request(
+                "DELETE",
+                "/api/nocodb",
+                json=[{"id": 1}],
+            )
+        assert resp.status_code == 200
+        mock_req.assert_called_once()
+        assert mock_req.call_args.kwargs.get("method") == "DELETE" or (
+            mock_req.call_args.args and mock_req.call_args.args[0] == "DELETE"
+        )
 
     def test_path_traversal_blocked(self, app_client):
         """Путь '../secret' должен вернуть 403 (не пробрасывается в NocoDB)."""
@@ -488,10 +533,12 @@ class TestNocodbProxy:
         url = captured_url[0]
         assert "secret" not in url
         assert "token" not in url
-        assert "limit=5" in url
+        # legacy limit → pageSize (Data API v3)
+        assert "pageSize=5" in url
+        assert "limit=5" not in url
 
     def test_allowed_params_passed_through(self, app_client):
-        """Разрешённые параметры (limit, offset, where, sort) пробрасываются."""
+        """page/pageSize/where/sort; legacy limit/offset маппятся в v3."""
         captured_url = []
 
         def fake_request(method, url, **kwargs):
@@ -506,5 +553,7 @@ class TestNocodbProxy:
             app_client.get("/api/nocodb?limit=10&offset=20")
 
         url = captured_url[0]
-        assert "limit=10" in url
-        assert "offset=20" in url
+        assert "pageSize=10" in url
+        assert "page=3" in url  # offset 20 / pageSize 10 → page 3
+        assert "limit=10" not in url
+        assert "offset=20" not in url

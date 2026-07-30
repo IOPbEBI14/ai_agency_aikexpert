@@ -15,3 +15,5 @@ www/ai_agency/core/__pycache__/nocodb.cpython-310.pyc
 *.pyc
 www/ai_agency/AI_Agency - tasks.json
 www/ai_agency/dev_tasks.json
+openapi (2).json
+www/ai_agency/__pycache__/main.cpython-310.pyc

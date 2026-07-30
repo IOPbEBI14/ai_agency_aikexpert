@@ -61,8 +61,12 @@ orchestrator = Orchestrator()
 agency_task: Optional[asyncio.Task] = None
 
 _PROXY_ALLOWED_PATH_RE = re.compile(r"^(\d+)?$")
-_PROXY_ALLOWED_PARAMS = frozenset({"limit", "offset", "where", "sort"})
-_PROXY_ALLOWED_METHODS = frozenset({"GET", "POST", "PATCH"})
+# Data API v3: page/pageSize/fields; limit/offset — legacy-алиасы (маппятся ниже)
+_PROXY_ALLOWED_PARAMS = frozenset({
+    "page", "pageSize", "where", "sort", "fields", "viewId",
+    "limit", "offset",
+})
+_PROXY_ALLOWED_METHODS = frozenset({"GET", "POST", "PATCH", "DELETE"})
 _HOP_BY_HOP = frozenset(
     {
         "connection",
@@ -917,11 +921,13 @@ async def download_workflow(filename: str):
 @app.get("/api/nocodb", operation_id="nocodb_proxy_root_get")
 @app.post("/api/nocodb", operation_id="nocodb_proxy_root_post")
 @app.patch("/api/nocodb", operation_id="nocodb_proxy_root_patch")
+@app.delete("/api/nocodb", operation_id="nocodb_proxy_root_delete")
 @app.get("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_get")
 @app.post("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_post")
 @app.patch("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_patch")
+@app.delete("/api/nocodb/{path:path}", operation_id="nocodb_proxy_path_delete")
 async def nocodb_proxy(request: Request, path: str = ""):
-    """Read/write прокси для NocoDB API v3 (только agent_logs)."""
+    """Read/write прокси для NocoDB Data API v3 (только agent_logs)."""
     if not _PROXY_ALLOWED_PATH_RE.match(path):
         logger.warning(f"Прокси: отклонён путь '{path}'")
         raise HTTPException(status_code=403, detail="Forbidden path")
@@ -938,6 +944,21 @@ async def nocodb_proxy(request: Request, path: str = ""):
         for k, v in request.query_params.items()
         if k in _PROXY_ALLOWED_PARAMS
     }
+    # Legacy limit/offset → v3 page/pageSize (openapi Data API)
+    if "pageSize" not in filtered_params and "limit" in filtered_params:
+        filtered_params["pageSize"] = filtered_params.pop("limit")
+    else:
+        filtered_params.pop("limit", None)
+    if "page" not in filtered_params and "offset" in filtered_params:
+        try:
+            offset = int(filtered_params.pop("offset") or 0)
+            page_size = int(filtered_params.get("pageSize") or 25)
+            filtered_params["page"] = str(max(1, offset // max(page_size, 1) + 1))
+        except ValueError:
+            filtered_params.pop("offset", None)
+    else:
+        filtered_params.pop("offset", None)
+
     if filtered_params:
         query_string = "&".join(f"{k}={v}" for k, v in filtered_params.items())
         nocodb_url += f"?{query_string}"
@@ -945,7 +966,7 @@ async def nocodb_proxy(request: Request, path: str = ""):
     headers = {"xc-token": Config.NOCODB_API_TOKEN, "Content-Type": "application/json"}
 
     body = None
-    if request.method in ("POST", "PATCH"):
+    if request.method in ("POST", "PATCH", "DELETE"):
         try:
             body = await request.json()
         except Exception:
@@ -958,7 +979,7 @@ async def nocodb_proxy(request: Request, path: str = ""):
             url=nocodb_url,
             headers=headers,
             json=body,
-            timeout=30,
+            timeout=Config.NOCODB_TIMEOUT_SEC,
         )
         out_headers = {
             k: v

@@ -223,50 +223,136 @@ def _sanitize_project_patch_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def build_records_list_url(
+    records_url: str,
+    *,
+    where: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 25,
+    sort_field: Optional[str] = None,
+    sort_direction: str = "desc",
+    sort: Optional[List[Dict[str, str]]] = None,
+    fields: Optional[List[str]] = None,
+) -> str:
+    """URL списка записей Data API v3 (openapi: page / pageSize / sort / where).
+
+    ``limit`` из старого кода передавайте как ``page_size``.
+    ``sort`` — JSON-массив ``[{field, direction}]``, URL-encoded (не nested qs).
+    """
+    parts: List[str] = []
+    if where:
+        parts.append(f"where={quote(where)}")
+    parts.append(f"page={max(1, int(page))}")
+    parts.append(f"pageSize={max(1, int(page_size))}")
+
+    sort_list = sort
+    if sort_list is None and sort_field:
+        direction = sort_direction if sort_direction in ("asc", "desc") else "desc"
+        sort_list = [{"field": sort_field, "direction": direction}]
+    if sort_list:
+        parts.append(f"sort={quote(json.dumps(sort_list, ensure_ascii=False))}")
+    if fields:
+        parts.append(f"fields={quote(','.join(fields))}")
+
+    return f"{records_url}?{'&'.join(parts)}"
+
+
+def unpack_data_record(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """DataRecordV3 → плоский dict; PK кладём в ``Id`` (совместимость приложения).
+
+    OpenAPI: ``{ id, fields, id_fields? }``.
+    """
+    if not raw:
+        return {}
+
+    if isinstance(raw.get("fields"), dict) or "fields" in raw:
+        fields = dict(raw.get("fields") or {})
+    else:
+        fields = {k: v for k, v in raw.items() if k not in ("id", "Id", "id_fields")}
+
+    record_id = raw.get("id")
+    if record_id is None:
+        record_id = raw.get("Id") or raw.get("row_id")
+    fields["Id"] = record_id
+
+    if record_id is None:
+        logger.warning(
+            "⚠️ Не удалось извлечь id записи Data API v3. Ключи: %s",
+            list(raw.keys()),
+        )
+    return fields
+
+
+def extract_records_payload(payload: Any) -> List[Dict[str, Any]]:
+    """Достаёт ``records[]`` из DataList/Insert/Update response."""
+    if isinstance(payload, dict):
+        recs = payload.get("records")
+        if isinstance(recs, list):
+            return recs
+        # одиночная DataReadResponseV3
+        if "id" in payload or "fields" in payload:
+            return [payload]
+        return []
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
+def xc_headers(token: Optional[str] = None) -> Dict[str, str]:
+    """Заголовок авторизации Data API v3 (``xc-token``)."""
+    return {
+        "xc-token": token if token is not None else Config.NOCODB_API_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+
 class NocoDBClient:
-    """Клиент для работы с таблицей agent_logs"""
+    """Клиент для работы с таблицей agent_logs (Data API v3)."""
 
     def __init__(self):
         self.records_url = Config.get_nocodb_records_url()
-        self.headers = {
-            "xc-token": Config.NOCODB_API_TOKEN,
-            "Content-Type": "application/json"
-        }
+        self.headers = xc_headers()
         logger.info(f"🔌 NocoDBClient инициализирован: {self.records_url}")
 
     def create_record(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Создаёт запись в agent_logs"""
+        """POST /records — DataInsertRequestV3[] → DataInsertResponseV3."""
         try:
             payload = [{"fields": data}]
-            response = nocodb_request("POST", self.records_url, json_body=payload, headers=self.headers)
+            response = nocodb_request(
+                "POST", self.records_url, json_body=payload, headers=self.headers
+            )
             response.raise_for_status()
             result = response.json()
             logger.info(f"✅ Сохранена запись: {data.get('agent_name')}")
             return result
         except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка сохранения: {e}")
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 logger.error(f"Response: {e.response.text[:300]}")
             return None
 
     def get_recent_records(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Получает последние записи из agent_logs.
-        Распаковывает fields на верхний уровень + сохраняет Id.
-        """
+        """GET /records?page=1&pageSize=N — последние записи agent_logs."""
         try:
-            url = f"{self.records_url}?limit={limit}"
+            url = build_records_list_url(
+                self.records_url,
+                page=1,
+                page_size=limit,
+                sort_field="CreatedAt",
+                sort_direction="desc",
+            )
             response = nocodb_request("GET", url, headers=self.headers)
+            if response.status_code != 200:
+                # fallback: без sort (кастомные таблицы могут не иметь CreatedAt)
+                url = build_records_list_url(
+                    self.records_url, page=1, page_size=limit
+                )
+                response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
-            data = response.json()
-            raw_records = data.get("records", [])
-
-            records = []
-            for r in raw_records:
-                fields = r.get("fields", {})
-                fields["Id"] = r.get("Id")
-                records.append(fields)
-
+            records = [
+                unpack_data_record(r)
+                for r in extract_records_payload(response.json())
+            ]
             logger.debug(f"📥 Получено {len(records)} записей из NocoDB")
             return records
         except _NOCODB_REQUEST_ERRORS as e:
@@ -275,65 +361,60 @@ class NocoDBClient:
 
 
 class ProjectsClient:
-    """Клиент для работы с таблицей projects"""
+    """Клиент для работы с таблицей projects (Data API v3)."""
 
     def __init__(self):
         self.projects_url = Config.get_nocodb_projects_url()
-        self.headers = {
-            "xc-token": Config.NOCODB_API_TOKEN,
-            "Content-Type": "application/json"
-        }
+        self.headers = xc_headers()
         logger.info(f"🔌 ProjectsClient инициализирован: {self.projects_url}")
 
     def _unpack_record(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Распаковывает запись NocoDB API v3.
-        ВАЖНО: в API v3 ID записи находится в поле 'id' (с маленькой буквы),
-        а не 'Id' как в API v2.
-        """
-        if not raw:
-            return {}
-        
-        fields = raw.get("fields", raw)
-        
-        # В API v3 ID записи может быть в разных полях
-        record_id = raw.get("id") or raw.get("Id") or raw.get("row_id")
-        fields["Id"] = record_id  # Сохраняем на верхнем уровне для совместимости
-        
-        # Логируем для отладки (убрать после исправления)
-        if record_id is None:
-            logger.warning(f"⚠️ Не удалось извлечь ID из записи. Ключи: {list(raw.keys())}")
-        
-        return fields
+        """Распаковывает DataRecordV3 (id + fields)."""
+        return unpack_data_record(raw)
 
-    def _build_where_url(self, field: str, value: str, limit: int = 1, sort_field: str = None) -> str:
-        """Строит URL с фильтрацией для NocoDB API v3.
-        Синтаксис: ?where=(field,eq,value)&limit=N&sort=[{"field":"...","direction":"..."}]
-        """
-        where_value = f"({field},eq,{value})"
-        url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
-
-        if sort_field:
-            sort_json = json.dumps([{"field": sort_field, "direction": "desc"}])
-            url += f"&sort={quote(sort_json)}"
-
-        return url  # Bug fix: was inside if-block → returned None when sort_field=None
+    def _build_where_url(
+        self,
+        field: str,
+        value: str,
+        limit: int = 1,
+        sort_field: str = None,
+        page: int = 1,
+    ) -> str:
+        """URL с where/pageSize/sort (``limit`` → ``pageSize``, совместимость)."""
+        return build_records_list_url(
+            self.projects_url,
+            where=f"({field},eq,{value})",
+            page=page,
+            page_size=limit,
+            sort_field=sort_field,
+            sort_direction="desc",
+        )
 
     def list_projects(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Возвращает список проектов (новые сверху)."""
         try:
-            sort_json = json.dumps([{"field": "UpdatedAt", "direction": "desc"}])
-            url = f"{self.projects_url}?limit={limit}&sort={quote(sort_json)}"
+            url = build_records_list_url(
+                self.projects_url,
+                page=1,
+                page_size=limit,
+                sort_field="UpdatedAt",
+                sort_direction="desc",
+            )
             response = nocodb_request("GET", url, headers=self.headers)
             if response.status_code != 200:
-                # Fallback без sort (поле UpdatedAt может отсутствовать)
-                url = f"{self.projects_url}?limit={limit}"
+                url = build_records_list_url(
+                    self.projects_url, page=1, page_size=limit
+                )
                 response = nocodb_request("GET", url, headers=self.headers)
             if response.status_code != 200:
-                logger.error(f"❌ list_projects: {response.status_code} — {response.text[:200]}")
+                logger.error(
+                    f"❌ list_projects: {response.status_code} — {response.text[:200]}"
+                )
                 return []
-            data = response.json()
-            records = [self._unpack_record(r) for r in data.get("records", [])]
+            records = [
+                self._unpack_record(r)
+                for r in extract_records_payload(response.json())
+            ]
             logger.debug(f"📥 list_projects: {len(records)} проектов")
             return records
         except _NOCODB_REQUEST_ERRORS as e:
@@ -341,7 +422,7 @@ class ProjectsClient:
             return []
 
     def find_project_by_status(self, status: str) -> Optional[Dict[str, Any]]:
-        """Ищет проект по статусу, сортируя по дате обновления (новейший первый)."""
+        """Ищет проект по статусу, сортируя по UpdatedAt (новейший первый)."""
         try:
             url = self._build_where_url(
                 field="status",
@@ -352,21 +433,27 @@ class ProjectsClient:
             logger.debug("🔍 Поиск проекта status=%s url=%s", status, url)
 
             response = nocodb_request("GET", url, headers=self.headers)
-            
             if response.status_code != 200:
-                logger.error(f"? NocoDB вернул {response.status_code}: {response.text[:200]}")
-                return None
-            
-            data = response.json()
-            records = data.get("records", [])
+                # fallback без sort — меньше нагрузка на SQLite / нет поля UpdatedAt
+                url = self._build_where_url("status", status, limit=1)
+                response = nocodb_request("GET", url, headers=self.headers)
 
+            if response.status_code != 200:
+                logger.error(
+                    "? NocoDB вернул %s: %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                return None
+
+            records = extract_records_payload(response.json())
             if records:
-                logger.debug(f"?? Первая запись: {json.dumps(records[0], ensure_ascii=False)[:300]}")
-                
                 project = self._unpack_record(records[0])
                 logger.debug(
                     "?? Найден проект status=%s name=%s id=%s",
-                    status, project.get("project_name"), project.get("Id"),
+                    status,
+                    project.get("project_name"),
+                    project.get("Id"),
                 )
                 return project
             logger.debug("?? Проект status=%s не найден", status)
@@ -380,19 +467,22 @@ class ProjectsClient:
         try:
             url = self._build_where_url("project_name", project_name, limit=1)
             logger.info(f"🔍 Поиск проекта по имени: {url}")
-            
-            response = nocodb_request("GET", url, headers=self.headers)
-            
-            if response.status_code != 200:
-                logger.error(f"❌ NocoDB вернул {response.status_code}: {response.text[:200]}")
-                return None
-            
-            data = response.json()
-            records = data.get("records", [])
 
+            response = nocodb_request("GET", url, headers=self.headers)
+
+            if response.status_code != 200:
+                logger.error(
+                    f"❌ NocoDB вернул {response.status_code}: {response.text[:200]}"
+                )
+                return None
+
+            records = extract_records_payload(response.json())
             if records:
                 project = self._unpack_record(records[0])
-                logger.info(f"📂 Найден проект по имени: {project.get('project_name')} (ID: {project.get('Id')})")
+                logger.info(
+                    f"📂 Найден проект по имени: {project.get('project_name')} "
+                    f"(ID: {project.get('Id')})"
+                )
                 return project
             return None
         except _NOCODB_REQUEST_ERRORS as e:
@@ -571,26 +661,20 @@ class ProjectsClient:
         return False
 
     def get_recent_records_by_project(self, project_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Получает последние записи для конкретного проекта.
-        Фильтрует по project_id.
-        """
+        """Последние записи projects с фильтром project_id (если поле есть)."""
         try:
-            where_value = f"(project_id,eq,{project_id})"
-            # Bug fix: was self.records_url (AttributeError) — ProjectsClient has projects_url
-            url = f"{self.projects_url}?where={quote(where_value)}&limit={limit}"
-            
+            url = build_records_list_url(
+                self.projects_url,
+                where=f"(project_id,eq,{project_id})",
+                page=1,
+                page_size=limit,
+            )
             response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
-            data = response.json()
-            raw_records = data.get("records", [])
-
-            records = []
-            for r in raw_records:
-                fields = r.get("fields", {})
-                fields["Id"] = r.get("Id")
-                records.append(fields)
-
+            records = [
+                unpack_data_record(r)
+                for r in extract_records_payload(response.json())
+            ]
             logger.debug("Получено %s записей для проекта %s", len(records), project_id)
             return records
         except _NOCODB_REQUEST_ERRORS as e:
@@ -598,55 +682,39 @@ class ProjectsClient:
             return []
 
     def find_project_by_id(self, project_id: int) -> Optional[Dict[str, Any]]:
-        """Ищет проект по ID."""
+        """GET /records/{recordId} — DataReadResponseV3."""
         try:
             url = f"{self.projects_url}/{project_id}"
             response = nocodb_request("GET", url, headers=self.headers)
-            
+
             if response.status_code != 200:
-                logger.error(f" NocoDB вернул {response.status_code}: {response.text[:200]}")
+                logger.error(
+                    f" NocoDB вернул {response.status_code}: {response.text[:200]}"
+                )
                 return None
-            
-            data = response.json()
-            project = self._unpack_record(data)
-            logger.info(f"📂 Найден проект по ID: {project.get('project_name')} (ID: {project.get('Id')})")
+
+            project = self._unpack_record(response.json())
+            logger.info(
+                f"📂 Найден проект по ID: {project.get('project_name')} "
+                f"(ID: {project.get('Id')})"
+            )
             return project
         except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка поиска проекта: {e}")
-            return None            
-            
+            return None
+
+
 class TasksClient:
-    """Клиент для работы с таблицей tasks"""
+    """Клиент для работы с таблицей tasks (Data API v3)."""
 
     def __init__(self):
         self.tasks_url = Config.get_nocodb_tasks_url()
-        self.headers = {
-            "xc-token": Config.NOCODB_API_TOKEN,
-            "Content-Type": "application/json"
-        }
+        self.headers = xc_headers()
         logger.info(f"🔌 TasksClient инициализирован: {self.tasks_url}")
 
     def _unpack_task(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Распаковывает запись задачи из NocoDB API v3.
-        КРИТИЧНО: извлекает id записи (с маленькой буквы).
-        """
-        if not raw:
-            return {}
-        
-        fields = raw.get("fields", raw)
-        
-        # В API v3 ID записи в поле "id" (с маленькой буквы)
-        record_id = raw.get("id") or raw.get("Id") or raw.get("row_id")
-        
-        # Сохраняем ID на верхнем уровне для использования в update_task
-        fields["Id"] = record_id
-        
-        if record_id is None:
-            logger.warning(f"⚠️ Не удалось извлечь ID задачи. Ключи записи: {list(raw.keys())}")
-            logger.debug(f"🔍 Полная запись: {json.dumps(raw, ensure_ascii=False)[:300]}")
-        
-        return fields
+        """Распаковывает DataRecordV3 задачи."""
+        return unpack_data_record(raw)
 
     def create_task(self, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Создаёт новую задачу"""
@@ -688,36 +756,46 @@ class TasksClient:
             return None
 
     def get_tasks_by_project(self, project_id: int) -> List[Dict[str, Any]]:
-        """Получает все задачи проекта"""
+        """Получает задачи проекта (pageSize до 200; при next — доп. страницы)."""
         try:
-            where_value = f"(project_id,eq,{project_id})"
-            url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
-            
-            response = nocodb_request("GET", url, headers=self.headers)
-            
-            if response.status_code != 200:
-                logger.error(f"❌ Ошибка чтения задач: {response.status_code} — {response.text[:200]}")
-                return []
-            
-            data = response.json()
-            raw_records = data.get("records", [])
-            
-            # Отладка: логируем первую запись
-            if raw_records:
-                first_record = raw_records[0]
-                logger.debug(f"🔍 Первая запись задачи: {json.dumps(first_record, ensure_ascii=False)[:300]}")
-            
-            tasks = []
-            for r in raw_records:
-                task = self._unpack_task(r)
-                tasks.append(task)
-            
-            logger.debug("📥 Получено %s задач для проекта %s", len(tasks), project_id)
+            tasks: List[Dict[str, Any]] = []
+            page = 1
+            page_size = 100
+            while page <= 20:  # защита от бесконечного цикла
+                url = build_records_list_url(
+                    self.tasks_url,
+                    where=f"(project_id,eq,{project_id})",
+                    page=page,
+                    page_size=page_size,
+                )
+                response = nocodb_request("GET", url, headers=self.headers)
+                if response.status_code != 200:
+                    logger.error(
+                        f"❌ Ошибка чтения задач: {response.status_code} — "
+                        f"{response.text[:200]}"
+                    )
+                    break
+                payload = response.json()
+                raw_records = extract_records_payload(payload)
+                if page == 1 and raw_records:
+                    logger.debug(
+                        "🔍 Первая запись задачи: %s",
+                        json.dumps(raw_records[0], ensure_ascii=False)[:300],
+                    )
+                for r in raw_records:
+                    tasks.append(self._unpack_task(r))
+                # DataListResponseV3.next — URL или null; без next останавливаемся
+                if not payload.get("next") or len(raw_records) < page_size:
+                    break
+                page += 1
 
+            logger.debug("📥 Получено %s задач для проекта %s", len(tasks), project_id)
             tasks_without_id = [t for t in tasks if not t.get("Id")]
             if tasks_without_id:
-                logger.warning(f"⚠️ {len(tasks_without_id)} задач без Id! Это приведёт к ошибкам обновления.")
-            
+                logger.warning(
+                    f"⚠️ {len(tasks_without_id)} задач без Id! "
+                    "Это приведёт к ошибкам обновления."
+                )
             return tasks
         except _NOCODB_REQUEST_ERRORS as e:
             logger.error(f"❌ Ошибка чтения задач: {e}")
@@ -791,27 +869,26 @@ class TasksClient:
         """Проверяет, завершены ли все подзадачи для родительской задачи"""
         try:
             # Ищем все подзадачи, которые зависят от parent_task_id
-            where_value = f"(depends_on,like,%{parent_task_id}%)"
-            url = f"{self.tasks_url}?where={quote(where_value)}&limit=100"
-            
+            url = build_records_list_url(
+                self.tasks_url,
+                where=f"(depends_on,like,%{parent_task_id}%)",
+                page=1,
+                page_size=100,
+            )
             response = nocodb_request("GET", url, headers=self.headers)
             response.raise_for_status()
-            data = response.json()
-            raw_records = data.get("records", [])
-            
+            raw_records = extract_records_payload(response.json())
+
             if not raw_records:
                 # Нет подзадач — значит это не родительская задача
                 return True
-            
-            # Проверяем статус всех подзадач
+
             for r in raw_records:
-                fields = r.get("fields", {})
-                status = fields.get("status")
-                if status != "completed":
+                task = unpack_data_record(r)
+                if task.get("status") != "completed":
                     return False
-            
+
             return True
         except Exception as e:
             logger.error(f"Ошибка проверки подзадач: {e}")
             return False
-            

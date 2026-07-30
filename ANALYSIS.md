@@ -640,6 +640,25 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AN — NocoDB Data API v3 по OpenAPI (UPDATE)
+
+**Источник:** `openapi (2).json` — Data API
+`/api/v3/data/{baseId}/{tableId}/records`.
+
+Расхождения старого клиента с актуальной схемой:
+
+| Было | Стало (OpenAPI) |
+|------|-----------------|
+| `?limit=N` | `?page=1&pageSize=N` |
+| `offset` | `page` (прокси маппит legacy) |
+| разный unpack `Id`/`id` | `unpack_data_record` → `DataRecordV3` |
+| ad-hoc URL | `build_records_list_url` + `xc-token` |
+
+Также: пагинация `get_tasks_by_project` по `next`, proxy допускает
+`page`/`pageSize`/`fields`/`DELETE`, `limit`→`pageSize`.
+
+Файлы: `core/nocodb.py`, `main.py` (proxy). Тесты: `test_nocodb.py`.
+
 ### Direction AM — NocoDB SQLITE_BUSY после обновления (FIX)
 
 **Симптом (NocoDB latest + SQLite):**
@@ -1340,4 +1359,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 31, 2026. Direction AM: NocoDB SQLITE_BUSY retry + serialize.
+**Последнее обновление:** Jul 31, 2026. Direction AN: NocoDB Data API v3 (page/pageSize) по OpenAPI.
