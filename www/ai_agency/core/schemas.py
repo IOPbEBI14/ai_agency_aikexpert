@@ -985,6 +985,47 @@ def _build_examples() -> dict:
             ],
             "notes": None,
         },
+        TechWriterSliceResponse: {
+            "summary": "Срез overview: цель, источник, API, события, лимиты",
+            "documents": [
+                {
+                    "title": "Документация интеграции: обзор",
+                    "type": "integration_guide",
+                    "audience": "Администратор интеграции",
+                    "sections": [
+                        {
+                            "title": "Цель интеграции",
+                            "content": "Сценарий принимает событие и передаёт во внешний сервис.",
+                            "screenshot_needed": False,
+                        },
+                        {
+                            "title": "Источник данных и получатель",
+                            "content": "Источник — webhook; получатель — внешний HTTP API.",
+                            "screenshot_needed": False,
+                        },
+                        {
+                            "title": "Версия API",
+                            "content": "Работаем с API v1 получателя; при смене версии проверить контракт.",
+                            "screenshot_needed": False,
+                        },
+                        {
+                            "title": "Способ получения событий (webhook)",
+                            "content": "Выбран webhook для near-realtime событий.",
+                            "screenshot_needed": False,
+                        },
+                        {
+                            "title": "Лимиты и постраничная выдача",
+                            "content": "Rate limit учтён через Wait; пагинация не используется.",
+                            "screenshot_needed": False,
+                        },
+                    ],
+                }
+            ],
+            "video_scripts": [],
+            "faq": [],
+            "checklist": [],
+            "notes": "doc_slice=overview",
+        },
         LeadHunterResponse: {
             "leads_found": [
                 {

@@ -195,15 +195,18 @@ class TestTaskExecutorLogsParseFail:
         orch.projects_db.update_project = MagicMock()
         orch.tasks_db.update_task = MagicMock()
         orch.tasks_db.get_tasks_by_project = MagicMock(return_value=[])
-        orch._build_enriched_input_data = MagicMock(return_value={})
+        # Сабтаск tw_* (не placeholder) — иначе execute уйдёт в декомпозицию AL
+        orch._build_enriched_input_data = MagicMock(
+            return_value={"doc_slice": "overview"}
+        )
 
         executor = TaskExecutor(orch)
         task = {
             "Id": 7,
-            "task_id": "task_005",
+            "task_id": "tw_001",
             "agent_name": "tech_writer",
-            "task_description": "Документация",
-            "input_data": "{}",
+            "task_description": "Документация: обзор",
+            "input_data": json.dumps({"doc_slice": "overview"}),
             "status": "pending",
             "iteration_count": 0,
             "tokens_used": 0,
