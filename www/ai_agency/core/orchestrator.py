@@ -211,24 +211,32 @@ class Orchestrator:
 
             # ── Проверка бюджета токенов ────────────────────────────────────
             remaining = token_budget - tokens_used
-            if remaining < token_budget * 0.2:
-                logger.warning(f"⚠️ Бюджет на исходе: {tokens_used}/{token_budget}")
-                self.current_project["status"] = "needs_human_review"
+            if remaining < token_budget * 0.1:
+                logger.warning(
+                    "⏹ Бюджет токенов исчерпан (%s/%s) — остановка со статусом stopped",
+                    tokens_used, token_budget,
+                )
+                self.current_project["status"] = "stopped"
                 self.projects_db.update_project(
                     project_id,
-                    {"status": "needs_human_review", "tokens_used": tokens_used},
+                    {"status": "stopped", "tokens_used": tokens_used},
                 )
                 log_to_agent_logs(
                     project_id=project_id,
                     agent_name="PM",
-                    status="needs_review",
+                    status="stopped",
                     task_description=(
-                        f"Автоматическая остановка: "
-                        f"использовано {tokens_used} из {token_budget} токенов."
+                        f"Остановка: бюджет токенов на исходе "
+                        f"({tokens_used} из {token_budget}). "
+                        f"Увеличьте бюджет и нажмите «Продолжить»."
                     ),
                     full_response=json.dumps(
-                        {"reason": "budget_exhausted", "tokens_used": tokens_used,
-                         "token_budget": token_budget},
+                        {
+                            "reason": "budget_exhausted",
+                            "tokens_used": tokens_used,
+                            "token_budget": token_budget,
+                            "status": "stopped",
+                        },
                         ensure_ascii=False,
                     ),
                     tokens_used=0,

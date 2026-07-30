@@ -251,7 +251,7 @@ _create_initial_task_graph()
 
 run() — главный цикл:
   while agency_running and iteration < MAX_TOTAL_ITERATIONS:
-    ├─ Проверка бюджета токенов → needs_human_review если > 80%
+    ├─ Проверка бюджета токенов → **stopped**, если осталось < 10% бюджета
     ├─ Загрузка задач из NocoDB
     ├─ Восстановление зависших in_progress → pending (> 5 минут)
     ├─ Проверка: все completed? → finalize()
@@ -639,6 +639,12 @@ npx n8n-workflow-validator --json workflow.json
 Тесты: `tests/test_n8n_validator.py` → `TestDirectionKResilience`, smoke schemaDelta.
 
 ---
+
+### Direction AH — Исчерпание токенов → status=stopped (NEW)
+
+Раньше при остатке бюджета < 20% проект уходил в `needs_human_review`
+(путаница с human-review по замечаниям). Теперь: **`stopped`** + лог PM
+`budget_exhausted`. Продолжение: увеличить бюджет («+токены») и Resume.
 
 ### Direction AG — Agent Context MCP + память итераций (NEW)
 
@@ -1247,4 +1253,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Direction AG: Agent Context MCP + память итераций developer.
+**Последнее обновление:** Jul 30, 2026. Direction AH: бюджет токенов → status=stopped.

@@ -138,20 +138,30 @@ class TestOrchestratorRun:
         # Проверяем, что execute_task был вызван
         mock_execute.assert_called()
     
-    def test_run_stops_on_budget_exhaustion(self, orchestrator, mock_nocodb_clients, sample_project_data):
-        """Тест остановки при исчерпании бюджета."""
-        # Бюджет почти исчерпан
+    @patch("core.orchestrator.log_to_agent_logs")
+    def test_run_stops_on_budget_exhaustion(
+        self, mock_log, orchestrator, mock_nocodb_clients, sample_project_data
+    ):
+        """При исчерпании бюджета проект → stopped (не needs_human_review)."""
         sample_project_data["tokens_used"] = 49000
         sample_project_data["token_budget"] = 50000
         orchestrator.current_project = sample_project_data
-        
-        mock_nocodb_clients['tasks'].get_tasks_by_project.return_value = []
-        
+
+        mock_nocodb_clients["tasks"].get_tasks_by_project.return_value = []
+
         orchestrator.MAX_TOTAL_ITERATIONS = 1
         orchestrator.run()
-        
-        # Проверяем, что проект переведён в needs_human_review
-        mock_nocodb_clients['projects'].update_project.assert_called()
+
+        assert orchestrator.current_project["status"] == "stopped"
+        stopped_updates = [
+            c.args[1]
+            for c in mock_nocodb_clients["projects"].update_project.call_args_list
+            if len(c.args) > 1 and isinstance(c.args[1], dict) and c.args[1].get("status") == "stopped"
+        ]
+        assert stopped_updates, "ожидался update_project(..., status=stopped)"
+        assert mock_log.called
+        # status= передаётся keyword-only в log_to_agent_logs
+        assert mock_log.call_args.kwargs.get("status") == "stopped"
 
 class TestOrchestratorExecuteTask:
     """Тесты метода execute_task()."""
