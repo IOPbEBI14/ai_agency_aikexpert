@@ -807,17 +807,17 @@ class TestDocumentType:
         )
 
         sections = [
-            DocumentSection(title="Цель интеграции", content="Задача сценария.", screenshot_needed=False),
-            DocumentSection(title="Источник данных и получатель", content="Webhook → API.", screenshot_needed=False),
-            DocumentSection(title="Версия API", content="API v1.", screenshot_needed=False),
-            DocumentSection(title="Способ получения событий (webhook)", content="Webhook.", screenshot_needed=False),
-            DocumentSection(title="Лимиты и постраничная выдача", content="Rate limit.", screenshot_needed=False),
-            DocumentSection(title="Критичные поля", content="event_id.", screenshot_needed=False),
-            DocumentSection(title="Контракт данных", content="JSON contract.", screenshot_needed=False),
-            DocumentSection(title="Обработка ошибок", content="503 retry.", screenshot_needed=False),
-            DocumentSection(title="Адаптер / нормализация", content="Set node.", screenshot_needed=False),
-            DocumentSection(title="Тестирование", content="Сценарии.", screenshot_needed=False),
-            DocumentSection(title="Сопровождение", content="Ответственный.", screenshot_needed=False),
+            DocumentSection(title="Цель интеграции", content="Задача сценария — передать событие в API.", screenshot_needed=False),
+            DocumentSection(title="Источник данных и получатель", content="Источник webhook, получатель HTTP API.", screenshot_needed=False),
+            DocumentSection(title="Версия API", content="Работаем с API v1 получателя.", screenshot_needed=False),
+            DocumentSection(title="Способ получения событий (webhook)", content="Выбран webhook для near-realtime.", screenshot_needed=False),
+            DocumentSection(title="Лимиты и постраничная выдача", content="Rate limit учтён; пагинация не нужна.", screenshot_needed=False),
+            DocumentSection(title="Критичные поля", content="Поле event_id обязательно и неизменно.", screenshot_needed=False),
+            DocumentSection(title="Контракт данных", content="JSON contract: event_id + payload.", screenshot_needed=False),
+            DocumentSection(title="Обработка ошибок", content="503 — retry с backoff; 401 — стоп.", screenshot_needed=False),
+            DocumentSection(title="Адаптер / нормализация", content="Set-нода нормализует payload.", screenshot_needed=False),
+            DocumentSection(title="Тестирование", content="Сценарии успеха, 503 и дубля.", screenshot_needed=False),
+            DocumentSection(title="Сопровождение", content="Ответственный — команда интеграции.", screenshot_needed=False),
         ]
         resp = TechWriterResponse(
             summary="Документация интеграции",

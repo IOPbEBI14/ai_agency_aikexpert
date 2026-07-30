@@ -442,8 +442,8 @@ def _group_covered(blob: str, group: tuple[str, ...]) -> bool:
 class TechWriterResponse(BaseModel):
     """Ответ технического писателя."""
 
-    summary: str = Field(description="Что было создано")
-    documents: List[Document] = Field(description="Список документов")
+    summary: str = Field(description="Что было создано", min_length=10)
+    documents: List[Document] = Field(description="Список документов", min_length=1)
     video_scripts: List[VideoScript] = Field(description="Список видео-скриптов")
     faq: List[FAQItem] = Field(description="Список FAQ")
     checklist: List[str] = Field(description="Чек-лист")
@@ -452,6 +452,29 @@ class TechWriterResponse(BaseModel):
     @model_validator(mode="after")
     def validate_integration_docs(self) -> "TechWriterResponse":
         """После разработки обязателен guide интеграции с ключевыми разделами."""
+        # Пустые/placeholder секции — типичный «странный» ответ без пользы
+        thin_sections: list[str] = []
+        for doc in self.documents:
+            for s in doc.sections or []:
+                body = (s.content or "").strip()
+                if len(body) < 20:
+                    thin_sections.append(f"{doc.title}/{s.title}")
+                # Контент-секция = сериализованный JSON целиком — битый формат
+                if body.startswith("{") and '"sections"' in body[:200]:
+                    raise ValueError(
+                        f"Секция «{s.title}» содержит вложенный JSON-документ "
+                        "вместо текста. Разверни содержание в обычный текст."
+                    )
+        if thin_sections:
+            raise ValueError(
+                "Секции слишком короткие/пустые (минимум 20 символов content): "
+                + ", ".join(thin_sections[:8])
+            )
+
+        empty_checklist = [c for c in (self.checklist or []) if not str(c).strip()]
+        if empty_checklist:
+            raise ValueError("checklist содержит пустые пункты")
+
         guides = [
             d for d in self.documents
             if d.type in ("integration_guide", "tech_guide")
@@ -1083,6 +1106,70 @@ def get_model_example(model_class: type) -> str:
         logger.warning(f"Не удалось сериализовать пример для {model_class.__name__}: {e}")
         return "{}"
         
+class LLMParseError(ValueError):
+    """Ошибка парсинга/валидации ответа LLM с сохранением raw-текста.
+
+    raw_response нужен оркестратору: без него «странный» JSON tech_writer
+    (и других агентов) исчезал — не попадал ни в agent_logs, ни в output_data.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_name: str = "",
+        raw_response: str = "",
+        cause: Optional[BaseException] = None,
+    ) -> None:
+        super().__init__(message)
+        self.agent_name = agent_name
+        self.raw_response = raw_response or ""
+        self.cause = cause
+
+
+def _truncate_for_log(text: str, limit: int = 12000) -> str:
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    tail = limit - head
+    return (
+        text[:head]
+        + f"\n…[truncated {len(text) - limit} chars]…\n"
+        + text[-tail:]
+    )
+
+
+def _extract_balanced_json(text: str, start: int, open_c: str, close_c: str) -> str:
+    """Вырезает первый сбалансированный JSON-объект/массив с учётом строк."""
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == open_c:
+            depth += 1
+        elif ch == close_c:
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise ValueError(
+        f"JSON не закрыт (ожидали '{close_c}'). Фрагмент: {text[start:start + 200]}..."
+    )
+
+
 def extract_json_from_text(text: str) -> str:
     """
     Извлекает JSON из текста ответа LLM.
@@ -1090,138 +1177,175 @@ def extract_json_from_text(text: str) -> str:
     """
     if not text or not text.strip():
         raise ValueError("Пустой ответ")
-    
+
     text = text.strip()
-    
+
     # Удаляем markdown-обёртки ```json ... ``` или ``` ... ```
-    import re
-    markdown_pattern = r'```(?:json)?\s*(.*?)\s*```'
+    markdown_pattern = r"```(?:json)?\s*(.*?)\s*```"
     matches = re.findall(markdown_pattern, text, re.DOTALL)
     if matches:
         # Берём последний матч (обычно это основной JSON)
         text = matches[-1].strip()
-    
-    # Ищем первый { или [
-    start_obj = text.find('{')
-    start_arr = text.find('[')
-    
+
+    start_obj = text.find("{")
+    start_arr = text.find("[")
+
     if start_obj == -1 and start_arr == -1:
         raise ValueError(f"JSON не найден в ответе. Текст: {text[:200]}...")
-    
-    # Определяем, что идёт первым
+
     if start_obj == -1:
-        start = start_arr
-        end_char = ']'
+        start, open_c, close_c = start_arr, "[", "]"
     elif start_arr == -1:
-        start = start_obj
-        end_char = '}'
+        start, open_c, close_c = start_obj, "{", "}"
+    elif start_obj < start_arr:
+        start, open_c, close_c = start_obj, "{", "}"
     else:
-        if start_obj < start_arr:
-            start = start_obj
-            end_char = '}'
-        else:
-            start = start_arr
-            end_char = ']'
-    
-    # Ищем последний закрывающий символ
-    end = text.rfind(end_char)
-    
-    if end == -1 or end <= start:
-        raise ValueError(f"JSON не найден (нет закрывающей скобки {end_char}). Текст: {text[:200]}...")
-    
-    result = text[start:end+1]
-    
-    # Проверяем, что это валидный JSON
+        start, open_c, close_c = start_arr, "[", "]"
+
+    result = _extract_balanced_json(text, start, open_c, close_c)
+
     try:
         json.loads(result)
         return result
     except json.JSONDecodeError as e:
-        # Если не валидно, пробуем восстановить
-        raise ValueError(f"Найденный текст не является валидным JSON: {result[:100]}... Ошибка: {e}")
-        
+        raise ValueError(
+            f"Найденный текст не является валидным JSON: {result[:100]}... Ошибка: {e}"
+        ) from e
+
+
 def call_and_parse_llm(
     call_llm_func,
     agent_name: str,
     system_prompt: str,
     user_task: str,
     response_model: Type[T],
-    max_retries: int = 2
-) -> T:
+    max_retries: int = 2,
+):
     """
     Вызывает LLM, парсит JSON и валидирует через Pydantic.
-    
-    Args:
-        call_llm_func: Функция call_llm из main.py
-        agent_name: Имя агента
-        system_prompt: Системный промпт
-        user_task: Задача для агента
-        response_model: Pydantic-модель для валидации
-        max_retries: Максимальное количество попыток
-    
+
     Returns:
-        Валидированная Pydantic-модель
-    
+        (validated_model, tokens)
+
     Raises:
-        ValueError: Если LLM не смог вернуть валидный JSON
+        LLMParseError: если после retries ответ всё ещё невалиден (с raw_response)
     """
     current_prompt = user_task
-    
+    last_raw = ""
+    last_tokens = 0
+
+    def _fail(message: str, cause: Optional[BaseException] = None) -> None:
+        logger.error(
+            "❌ %s parse/validate fail (%s): %s | raw_preview=%s",
+            agent_name,
+            response_model.__name__,
+            message,
+            _truncate_for_log(last_raw, 1500).replace("\n", " ")[:1500],
+        )
+        raise LLMParseError(
+            message,
+            agent_name=agent_name,
+            raw_response=last_raw,
+            cause=cause,
+        )
+
     for attempt in range(max_retries + 1):
         try:
-            # Вызываем LLM
-            raw_response, tokens = call_llm_func(agent_name, system_prompt, current_prompt)
-            
-            logger.info(f"📏 Получен ответ от {agent_name}: {len(raw_response)} символов")
-            
-            # Извлекаем JSON
-            json_str = extract_json_from_text(raw_response)
+            raw_response, tokens = call_llm_func(
+                agent_name, system_prompt, current_prompt
+            )
+            last_raw = raw_response or ""
+            last_tokens = tokens
+            logger.info(
+                "📏 Получен ответ от %s: %s символов (попытка %s/%s)",
+                agent_name,
+                len(last_raw),
+                attempt + 1,
+                max_retries + 1,
+            )
+
+            json_str = extract_json_from_text(last_raw)
             data_dict = json.loads(json_str)
-            
-            # Валидируем через Pydantic
-            validated_model = response_model(**data_dict)
-            
-            logger.info(f"✅ Успешная валидация для {response_model.__name__}")
-            return validated_model, tokens
-            
-        except json.JSONDecodeError as e:
-            logger.warning(f"⚠️ Попытка {attempt+1}: невалидный JSON: {e}")
-            
-            if attempt == max_retries:
+
+            # Корневой объект должен быть dict под Pydantic-модель агента
+            if not isinstance(data_dict, dict):
                 raise ValueError(
-                    f"LLM не смог вернуть валидный JSON для {response_model.__name__}: {e}"
+                    f"Ожидался JSON-объект для {response_model.__name__}, "
+                    f"получен {type(data_dict).__name__}"
                 )
-            
-            # Отправляем ошибку в LLM для исправления
+
+            validated_model = response_model(**data_dict)
+            logger.info("✅ Успешная валидация для %s", response_model.__name__)
+            return validated_model, last_tokens
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "⚠️ Попытка %s: невалидный JSON (%s): %s",
+                attempt + 1,
+                agent_name,
+                e,
+            )
+            if attempt == max_retries:
+                _fail(
+                    f"LLM не смог вернуть валидный JSON для "
+                    f"{response_model.__name__}: {e}",
+                    cause=e,
+                )
             current_prompt = (
                 f"{user_task}\n\n"
                 f"⚠️ ТВОЙ ПРЕДЫДУЩИЙ ОТВЕТ БЫЛ НЕВАЛИДНЫМ.\n"
                 f"Ошибка: {e}\n"
-                f"Ты должен вернуть ТОЛЬКО валидный JSON, строго соответствующий схеме. "
-                f"Убедись, что все скобки закрыты, все кавычки экранированы.\n"
-                f"Попробуй снова."
+                f"Фрагмент ответа:\n{_truncate_for_log(last_raw, 2000)}\n\n"
+                f"Верни ТОЛЬКО валидный JSON по схеме. "
+                f"Закрой все скобки и экранируй кавычки внутри строк."
             )
-            
+
         except ValidationError as e:
-            logger.warning(f"⚠️ Попытка {attempt+1}: ошибка валидации Pydantic: {e}")
-            
+            logger.warning(
+                "⚠️ Попытка %s: ошибка валидации Pydantic (%s): %s",
+                attempt + 1,
+                agent_name,
+                e,
+            )
             if attempt == max_retries:
-                raise ValueError(
-                    f"LLM вернул JSON, но он не соответствует схеме {response_model.__name__}: {e}"
+                _fail(
+                    f"LLM вернул JSON, но он не соответствует схеме "
+                    f"{response_model.__name__}: {e}",
+                    cause=e,
                 )
-            
-            # Отправляем ошибку валидации в LLM
             current_prompt = (
                 f"{user_task}\n\n"
-                f"⚠️ ТВОЙ ПРЕДЫДУЩИЙ ОТВЕТ ПРОШЁЛ ПАРСИНГ JSON, НО НЕ ПРОШЁЛ ВАЛИДАЦИЮ.\n"
+                f"⚠️ ОТВЕТ РАСПАРСЕН, НО НЕ ПРОШЁЛ ВАЛИДАЦИЮ СХЕМЫ.\n"
                 f"Ошибки:\n{e}\n"
-                f"Ты должен исправить эти ошибки и вернуть ТОЛЬКО валидный JSON.\n"
-                f"Попробуй снова."
+                f"Фрагмент ответа:\n{_truncate_for_log(last_raw, 2000)}\n\n"
+                f"Исправь ошибки и верни ТОЛЬКО валидный JSON."
             )
-        
+
+        except LLMParseError:
+            raise
+
         except Exception as e:
-            logger.error(f"❌ Неожиданная ошибка при парсинге: {e}")
-            
+            logger.error(
+                "❌ Попытка %s: ошибка парсинга (%s): %s",
+                attempt + 1,
+                agent_name,
+                e,
+            )
             if attempt == max_retries:
-                raise ValueError(f"Не удалось получить валидный ответ от {agent_name}: {e}")
-    
-    raise ValueError(f"Не удалось получить валидный ответ от {agent_name} после {max_retries+1} попыток")        
+                _fail(
+                    f"Не удалось получить валидный ответ от {agent_name}: {e}",
+                    cause=e,
+                )
+            current_prompt = (
+                f"{user_task}\n\n"
+                f"⚠️ НЕ УДАЛОСЬ ИЗВЛЕЧЬ/РАСПАРСИТЬ JSON.\n"
+                f"Ошибка: {e}\n"
+                f"Фрагмент ответа:\n{_truncate_for_log(last_raw, 2000)}\n\n"
+                f"Верни ТОЛЬКО один валидный JSON-объект по схеме, "
+                f"без markdown и текста вокруг."
+            )
+
+    _fail(
+        f"Не удалось получить валидный ответ от {agent_name} "
+        f"после {max_retries + 1} попыток"
+    )

@@ -21,7 +21,13 @@ from .n8n_validator import (
     check_one_workflow_per_task,
     validate_n8n_workflow,
 )
-from .schemas import AGENT_MODELS, DeveloperResponse, call_and_parse_llm, get_model_schema
+from .schemas import (
+    AGENT_MODELS,
+    DeveloperResponse,
+    LLMParseError,
+    call_and_parse_llm,
+    get_model_schema,
+)
 from .utils import (
     build_agent_task,
     call_llm,
@@ -384,6 +390,54 @@ class TaskExecutor:
             update_last_agent_log(project_id, agent_name, "completed")
             logger.info(f"✅ Задача QA {task_name} выполнена")
             return True
+
+        except LLMParseError as e:
+            # Сырой ответ LLM раньше терялся: не было ни agent_logs, ни output_data
+            raw = e.raw_response or ""
+            parse_artifact = {
+                "error": "llm_parse_or_validation_failed",
+                "agent_name": agent_name,
+                "message": str(e)[:2000],
+                "raw_response": raw[:20000],
+                "raw_length": len(raw),
+                "truncated": len(raw) > 20000,
+            }
+            artifact_json = json.dumps(parse_artifact, ensure_ascii=False, default=str)
+            logger.error(
+                "❌ %s: parse/validate fail для %s (%s символов raw)",
+                task_name,
+                agent_name,
+                len(raw),
+            )
+            try:
+                log_to_agent_logs(
+                    project_id=project_id,
+                    agent_name=agent_name,
+                    status="error",
+                    task_description=(
+                        f"[{task_name}] Parse/validate fail "
+                        f"(итерация {iteration_count + 1}): {str(e)[:300]}"
+                    ),
+                    full_response=artifact_json,
+                    tokens_used=0,
+                )
+            except Exception as log_err:
+                logger.warning("⚠️ Не удалось записать raw в agent_logs: %s", log_err)
+
+            self._reject_attempt(
+                project_id=project_id,
+                task_db_id=task_db_id,
+                task_name=task_name,
+                agent_name=agent_name,
+                iteration=iteration_count + 1,
+                max_iter=max_iter,
+                agent_tokens=0,
+                task=task,
+                feedback=f"Ошибка парсинга/валидации: {str(e)[:500]}",
+                issues=[str(e)[:300]],
+                artifact=parse_artifact,
+            )
+            return False
 
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения задачи {task_name}: {e}", exc_info=True)

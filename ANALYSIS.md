@@ -640,6 +640,25 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AK — tech_writer: логирование и валидация «странного» JSON (FIX)
+
+**Проблема:** при сбое парсинга/Pydantic-валидации raw-ответ tech_writer
+(и других агентов) терялся: не писался в `agent_logs`, не сохранялся в
+`output_data`. Retry по `extract_json`/`ValueError` шёл без фрагмента ответа.
+Извлечение JSON через `rfind('}')` ломалось на `}` внутри строк.
+
+**Исправление:**
+
+| Слой | Изменение |
+|------|-----------|
+| `schemas.LLMParseError` | Исключение с `raw_response` / `agent_name` |
+| `extract_json_from_text` | Balanced brace-matching с учётом строк |
+| `call_and_parse_llm` | Лог preview; retry с фрагментом raw; финальный `LLMParseError` |
+| `TaskExecutor` | `status=error` в agent_logs + `output_data` с raw (до 20k) |
+| `TechWriterResponse` | min content секций, запрет вложенного JSON в `content` |
+
+Тесты: `tests/test_tech_writer_parse.py`.
+
 ### Direction AJ — Parent developer → completed после всех сабтасков (FIX)
 
 **Регрессия:** `startswith("dev_")` не ловил `iterN_dev_*` после refine →
@@ -1282,4 +1301,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Direction AJ: parent developer completed после сабтасков (iterN_dev_*).
+**Последнее обновление:** Jul 31, 2026. Direction AK: tech_writer raw JSON log + validation.
