@@ -1,11 +1,25 @@
 {
   "mcpServers": {
     "agency-dev-assistant": {
-      "command": "D:/Users/Алексей/AppData/Local/Programs/Python/Python312/python.exe",
+      "command": "python3",
       "args": [
-        "d:/AndroidSDK/Projects/ai_agency_aikexpert/agency_dev_mcp.py"
+        "/home/rdpuser/www/ai_agency/agency_dev_mcp.py"
       ],
-      "env": {}
+      "cwd": "/home/rdpuser/www/ai_agency",
+      "env": {
+        "PYTHONPATH": "/home/rdpuser/www/ai_agency",
+        "AGENCY_ANALYSIS_MD": "/home/rdpuser/www/ai_agency/ANALYSIS.md"
+      }
+    },
+    "agency-agent-context": {
+      "command": "python3",
+      "args": [
+        "/home/rdpuser/www/ai_agency/agency_agent_context_mcp.py"
+      ],
+      "cwd": "/home/rdpuser/www/ai_agency",
+      "env": {
+        "PYTHONPATH": "/home/rdpuser/www/ai_agency"
+      }
     }
   }
 }

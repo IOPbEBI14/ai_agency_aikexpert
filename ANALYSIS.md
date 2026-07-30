@@ -640,6 +640,28 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AG — Agent Context MCP + память итераций (NEW)
+
+**Проблема:** developer на retry получал только `qa_feedback`, без предыдущего
+`n8n_json` → каждый раз генерировал workflow «с нуля» и повторял те же ошибки.
+
+**Решение:**
+
+| Компонент | Роль |
+|-----------|------|
+| `core/agent_context.py` | JSON-store попыток: digest, preview, open_issues |
+| `TaskExecutor` | на fail пишет attempt + `output_data`; на retry inject в prompt |
+| `build_agent_task(..., iteration_memory=)` | блок «НЕ генерируй с нуля» |
+| `agency_agent_context_mcp.py` | MCP для Cursor: get/list/record/clear context |
+| `.cursor/mcp.json` | сервер `agency-agent-context` |
+
+Инструменты MCP: `get_task_context`, `get_retry_prompt`, `list_task_contexts`,
+`record_agent_attempt`, `clear_context`.
+
+Store: `www/ai_agency/data/agent_context/{project_id}/{task_id}.json` (в `.gitignore`).
+
+Тесты: `tests/test_agent_context.py`.
+
 ### Direction AE+AF — 1 workflow / task + Direction K autofix (NEW)
 
 **Замечания с прогона (developer `dev_001_2`, 6/6):**
@@ -1220,8 +1242,9 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 | Task Graph rules | `task_graph_rules.py` | sales обязателен после client_hunter/lead_hunter |
 | Outreach export | `outreach_export.py` + `/api/agency/outreach/export` | контакты ЛПР + выгрузка писем |
 | Status WebSocket | `agency_ws.py` + `/api/agency/ws` | Фаза 2.1 push (poll = fallback) |
+| Agent Context | `agent_context.py` + `agency_agent_context_mcp.py` | Direction AG память итераций |
 | n8n-validator | `n8n_validator.py` + `validate-n8n.js` + official engine | A heuristic+K → B local → C official + smoke (Direction Z) |
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Hotfix: `Orchestrator.add_tokens` (AttributeError в handle_architect).
+**Последнее обновление:** Jul 30, 2026. Direction AG: Agent Context MCP + память итераций developer.

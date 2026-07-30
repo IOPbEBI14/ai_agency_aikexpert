@@ -37,6 +37,11 @@
   sibling_workflows_do_not_implement НЕ трогай.
 - Запрещено писать в summary «два workflow» / «несколько сценариев».
 
+ПАМЯТЬ ИТЕРАЦИЙ (если iteration > 0):
+Во входе могут быть agent_context / previous_attempt и блок «ПАМЯТЬ ИТЕРАЦИЙ».
+Это твой прошлый артефакт. НЕ генерируй workflow с нуля — патчь previous_attempt
+под open_issues / qa_feedback. Повторять ту же структуру без исправлений — ошибка.
+
 Если artifact_mode != full_workflow — пропусти блок сериализации blueprint ниже
 и не пытайся «на всякий случай» приложить целый workflow.
 

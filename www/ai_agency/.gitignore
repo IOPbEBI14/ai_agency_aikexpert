@@ -10,3 +10,6 @@ __pycache__/
 
 # Secrets
 .env
+
+# Agent iteration memory (Direction AG)
+data/agent_context/

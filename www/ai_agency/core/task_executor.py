@@ -7,6 +7,12 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .config import Config
+from .agent_context import (
+    build_retry_prompt_block,
+    inject_retry_into_input_data,
+    load_task_context,
+    record_attempt,
+)
 from .dev_decomposition import MODE_FULL, strip_n8n_from_spec_response
 from .n8n_validator import (
     apply_direction_k_autofix,
@@ -77,6 +83,24 @@ class TaskExecutor:
             all_tasks = self.orch.tasks_db.get_tasks_by_project(project_id) if project_id else []
         input_data = self.orch._build_enriched_input_data(task, all_tasks)
 
+        # Память итераций (Direction AG): previous_attempt + open_issues
+        agent_ctx = load_task_context(project_id, task_name)
+        if not (agent_ctx.get("attempts")) and task.get("output_data") and iteration_count > 0:
+            # Fallback: артефакт уже в NocoDB, но store пуст (после деплоя / сбоя)
+            record_attempt(
+                project_id=project_id,
+                task_id=task_name,
+                agent_name=agent_name,
+                iteration=iteration_count,
+                status="rejected",
+                feedback=str(qa_feedback or ""),
+                artifact=task.get("output_data"),
+                notes="hydrated_from_task_output_data",
+            )
+            agent_ctx = load_task_context(project_id, task_name)
+        if iteration_count > 0:
+            input_data = inject_retry_into_input_data(input_data, agent_ctx)
+
         # Перед LLM подмешиваем РЕАЛЬНЫЙ OpenSERP (анти-галлюцинации)
         if agent_name == "client_hunter":
             input_data = self._inject_google_search(task, input_data)
@@ -128,7 +152,18 @@ class TaskExecutor:
             input_data["n8n_version"] = Config.N8N_VERSION
 
         # Формируем задачу для агента
-        agent_task = build_agent_task(task_description, input_data, qa_feedback, iteration_count)
+        iteration_memory = ""
+        if iteration_count > 0:
+            iteration_memory = build_retry_prompt_block(
+                agent_ctx, qa_feedback=str(qa_feedback or "")
+            )
+        agent_task = build_agent_task(
+            task_description,
+            input_data,
+            qa_feedback,
+            iteration_count,
+            iteration_memory=iteration_memory,
+        )
 
         try:
             # Вызываем агента с Pydantic-валидацией
@@ -150,13 +185,18 @@ class TaskExecutor:
             json_ok, response_json, json_feedback = validate_output_json(response_json, agent_name)
             if not json_ok:
                 logger.error(f"❌ JSON от {agent_name} невалиден и не восстановлен: {json_feedback}")
-                self.orch.tasks_db.update_task(
-                    task_db_id,
-                    {
-                        "status": "pending" if iteration_count + 1 < max_iter else "failed",
-                        "qa_feedback": json_feedback,
-                        "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
-                    },
+                self._reject_attempt(
+                    project_id=project_id,
+                    task_db_id=task_db_id,
+                    task_name=task_name,
+                    agent_name=agent_name,
+                    iteration=iteration_count + 1,
+                    max_iter=max_iter,
+                    agent_tokens=agent_tokens,
+                    task=task,
+                    feedback=json_feedback,
+                    issues=[json_feedback],
+                    artifact=response_json,
                 )
                 if iteration_count + 1 >= max_iter:
                     send_telegram_alert(
@@ -206,13 +246,18 @@ class TaskExecutor:
                                 "❌ %s: нарушено правило 1 workflow / task (%s)",
                                 task_name, len(one_issues),
                             )
-                            self.orch.tasks_db.update_task(
-                                task_db_id,
-                                {
-                                    "status": "pending" if iteration_count + 1 < max_iter else "failed",
-                                    "qa_feedback": n8n_feedback,
-                                    "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
-                                },
+                            self._reject_attempt(
+                                project_id=project_id,
+                                task_db_id=task_db_id,
+                                task_name=task_name,
+                                agent_name=agent_name,
+                                iteration=iteration_count + 1,
+                                max_iter=max_iter,
+                                agent_tokens=agent_tokens,
+                                task=task,
+                                feedback=n8n_feedback,
+                                issues=one_issues,
+                                artifact=validated_response.model_dump(),
                             )
                             if iteration_count + 1 >= max_iter:
                                 send_telegram_alert(
@@ -237,7 +282,6 @@ class TaskExecutor:
                         n8n_ok, n8n_issues = validate_n8n_workflow(n8n_json)
                         if not n8n_ok:
                             n8n_feedback = build_n8n_feedback(n8n_issues)
-                            # Если те же Direction K снова — усиливаем reminder
                             prev_fb = str(task.get("qa_feedback") or "")
                             if "Direction K" in prev_fb and any(
                                 "Direction K" in i for i in n8n_issues
@@ -253,13 +297,18 @@ class TaskExecutor:
                                 f"❌ n8n workflow от developer не пройдёт импорт "
                                 f"({len(n8n_issues)} проблем): {task_name}"
                             )
-                            self.orch.tasks_db.update_task(
-                                task_db_id,
-                                {
-                                    "status": "pending" if iteration_count + 1 < max_iter else "failed",
-                                    "qa_feedback": n8n_feedback,
-                                    "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
-                                },
+                            self._reject_attempt(
+                                project_id=project_id,
+                                task_db_id=task_db_id,
+                                task_name=task_name,
+                                agent_name=agent_name,
+                                iteration=iteration_count + 1,
+                                max_iter=max_iter,
+                                agent_tokens=agent_tokens,
+                                task=task,
+                                feedback=n8n_feedback,
+                                issues=n8n_issues,
+                                artifact=validated_response.model_dump(),
                             )
                             if iteration_count + 1 >= max_iter:
                                 send_telegram_alert(
@@ -330,14 +379,64 @@ class TaskExecutor:
 
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения задачи {task_name}: {e}", exc_info=True)
-            self.orch.tasks_db.update_task(
-                task_db_id,
-                {
-                    "status": "pending" if iteration_count + 1 < max_iter else "failed",
-                    "qa_feedback": f"Ошибка: {str(e)[:500]}",
-                },
+            self._reject_attempt(
+                project_id=project_id,
+                task_db_id=task_db_id,
+                task_name=task_name,
+                agent_name=agent_name,
+                iteration=iteration_count + 1,
+                max_iter=max_iter,
+                agent_tokens=0,
+                task=task,
+                feedback=f"Ошибка: {str(e)[:500]}",
+                issues=[str(e)[:300]],
+                artifact=None,
             )
             return False
+
+    def _reject_attempt(
+        self,
+        *,
+        project_id: Any,
+        task_db_id: Any,
+        task_name: str,
+        agent_name: str,
+        iteration: int,
+        max_iter: int,
+        agent_tokens: int,
+        task: Dict[str, Any],
+        feedback: str,
+        issues: Optional[List[str]] = None,
+        artifact: Any = None,
+    ) -> None:
+        """Сохраняет failed-попытку в Agent Context + NocoDB (для следующего retry)."""
+        try:
+            record_attempt(
+                project_id=project_id,
+                task_id=task_name,
+                agent_name=agent_name,
+                iteration=iteration,
+                status="rejected" if iteration < max_iter else "failed",
+                feedback=feedback,
+                issues=issues,
+                artifact=artifact,
+            )
+        except Exception as e:
+            logger.warning("⚠️ AgentContext record failed: %s", e)
+
+        payload: Dict[str, Any] = {
+            "status": "pending" if iteration < max_iter else "failed",
+            "qa_feedback": feedback,
+            "tokens_used": (task.get("tokens_used", 0) or 0) + agent_tokens,
+        }
+        if artifact is not None:
+            if isinstance(artifact, str):
+                payload["output_data"] = artifact
+            else:
+                payload["output_data"] = json.dumps(
+                    artifact, ensure_ascii=False, default=str
+                )
+        self.orch.tasks_db.update_task(task_db_id, payload)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Вспомогательные методы

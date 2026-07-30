@@ -214,6 +214,19 @@ class QAGate:
                 return qa_approved
 
             if qa_approved:
+                try:
+                    from .agent_context import record_attempt
+                    record_attempt(
+                        project_id=project_id,
+                        task_id=task_name,
+                        agent_name=agent_name,
+                        iteration=iteration_count + 1,
+                        status="approved",
+                        feedback=qa_feedback_text,
+                        artifact=agent_response if not isinstance(agent_response, str) else None,
+                    )
+                except Exception as e:
+                    logger.debug("AgentContext approved skip: %s", e)
                 self.orch.tasks_db.update_task(
                     task_db_id,
                     {
@@ -227,6 +240,26 @@ class QAGate:
                 return True
 
             logger.warning(f"⚠️ QA не прошёл для {task_name}: {qa_feedback_text[:500]}")
+            try:
+                from .agent_context import record_attempt
+                issues = []
+                if hasattr(qa_response, "issues"):
+                    issues = [
+                        f"[{getattr(i, 'severity', '?')}] {getattr(i, 'description', i)}"
+                        for i in (qa_response.issues or [])
+                    ][:30]
+                record_attempt(
+                    project_id=project_id,
+                    task_id=task_name,
+                    agent_name=agent_name,
+                    iteration=iteration_count + 1,
+                    status="rejected",
+                    feedback=qa_feedback_text,
+                    issues=issues,
+                    artifact=agent_response if not isinstance(agent_response, str) else agent_response,
+                )
+            except Exception as e:
+                logger.debug("AgentContext reject skip: %s", e)
             self.orch.tasks_db.update_task(
                 task_db_id,
                 {

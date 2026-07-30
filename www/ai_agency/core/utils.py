@@ -69,18 +69,29 @@ def call_llm(agent_name: str, system_prompt: str, user_task: str, max_retries: i
     return invoke(agent_name, system_prompt, user_task, max_retries=max_retries)
 
 
-def build_agent_task(task_description: str, input_data: dict, qa_feedback: str, iteration_count: int) -> str:
-    """Формирует задачу для агента с учётом QA-фидбека."""
+def build_agent_task(
+    task_description: str,
+    input_data: dict,
+    qa_feedback: str,
+    iteration_count: int,
+    *,
+    iteration_memory: str = "",
+) -> str:
+    """Формирует задачу для агента с учётом QA-фидбека и памяти итераций."""
     task = f"""
 ЗАДАЧА: {task_description}
 ВХОДНЫЕ ДАННЫЕ (handoff от предыдущих задач):
 {json.dumps(input_data, ensure_ascii=False, indent=2)}
 """
-    if qa_feedback and iteration_count > 0:
+    if iteration_memory:
+        task += f"\n{iteration_memory}\n"
+    elif qa_feedback and iteration_count > 0:
         task += f"""
 ⚠️ ПРЕДЫДУЩАЯ ПРОВЕРКА QA НЕ ПРОШЛА. ИСПРАВЬ СЛЕДУЮЩЕЕ:
 {qa_feedback}
 ВАЖНО: Учти все замечания QA и верни ИСПРАВЛЕННЫЙ результат.
+Не генерируй артефакт с нуля, если во входных данных есть previous_attempt /
+agent_context — патчь его.
 """
     task += """
 ИНСТРУКЦИЯ:
