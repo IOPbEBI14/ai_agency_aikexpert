@@ -41,7 +41,16 @@ from .schemas import (
     get_model_schema,
 )
 from .task_executor import TaskExecutor
-from .task_ids import is_developer_placeholder_task, is_developer_subtask_id
+from .task_ids import (
+    is_developer_placeholder_task,
+    is_developer_subtask_id,
+    is_tech_writer_placeholder_task,
+    is_tech_writer_subtask_id,
+)
+from .tech_writer_decomposition import (
+    merge_tech_writer_slices,
+    parse_subtask_output,
+)
 from .utils import call_llm, load_prompt, log_to_agent_logs, update_last_agent_log
 
 logger = logging.getLogger("Orchestrator")
@@ -1017,13 +1026,22 @@ max_iterations по умолчанию: 3 для большинства аген
                 return t
         return None
 
-    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
-        """Если все developer-сабтаски completed — родительский placeholder → completed.
+    @staticmethod
+    def _find_tech_writer_placeholder(
+        tasks: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        for t in tasks:
+            if is_tech_writer_placeholder_task(t):
+                return t
+        return None
 
-        Учитывает id вида ``dev_001`` и ``iter3_dev_001`` (после refine).
-        Placeholder мог быть временно в ``failed`` (чтобы не исполнялся) — всё равно
-        переводим в completed.
-        """
+    def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
+        """Завершает placeholder-родителей после всех сабтасков (developer + tech_writer)."""
+        self._complete_developer_parent(tasks)
+        self._complete_tech_writer_parent(tasks)
+
+    def _complete_developer_parent(self, tasks: List[Dict[str, Any]]) -> None:
+        """Если все developer-сабтаски completed — placeholder → completed."""
         dev_subtasks = [
             t for t in tasks if is_developer_subtask_id(str(t.get("task_id") or ""))
         ]
@@ -1051,10 +1069,79 @@ max_iterations по умолчанию: 3 для большинства аген
                 },
             )
 
+    def _complete_tech_writer_parent(self, tasks: List[Dict[str, Any]]) -> None:
+        """Все tw_* completed → merge отчёта в placeholder tech_writer → completed."""
+        tw_subtasks = [
+            t for t in tasks if is_tech_writer_subtask_id(str(t.get("task_id") or ""))
+        ]
+        if not tw_subtasks:
+            return
+        if not all(t.get("status") == "completed" for t in tw_subtasks):
+            return
+
+        parent_task = self._find_tech_writer_placeholder(tasks)
+        if not parent_task or parent_task.get("status") == "completed":
+            return
+
+        parent_id = parent_task.get("task_id")
+        # Стабильный порядок: tw_001, tw_002, tw_003
+        ordered = sorted(
+            tw_subtasks,
+            key=lambda t: str(t.get("task_id") or ""),
+        )
+        outputs = [parse_subtask_output(t) for t in ordered]
+        try:
+            merged = merge_tech_writer_slices(outputs)
+            merged_json = json.dumps(merged, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(
+                "❌ Merge tech_writer «%s» не удался: %s", parent_id, e, exc_info=True
+            )
+            self.tasks_db.update_task(
+                parent_task.get("Id"),
+                {
+                    "status": "failed",
+                    "qa_approved": "false",
+                    "qa_feedback": (
+                        f"Сабтаски tw_* завершены, но сборка отчёта не прошла валидацию: {e}"
+                    ),
+                },
+            )
+            return
+
+        logger.info(
+            "✅ Все %s tech_writer-сабтасков готовы — отчёт собран в «%s»",
+            len(tw_subtasks),
+            parent_id,
+        )
+        self.tasks_db.update_task(
+            parent_task.get("Id"),
+            {
+                "status": "completed",
+                "qa_approved": "true",
+                "qa_feedback": (
+                    f"Отчёт собран из {len(tw_subtasks)} сабтасков: "
+                    + ", ".join(str(t.get("task_id")) for t in ordered)
+                ),
+                "output_data": merged_json,
+            },
+        )
+        project_id = None
+        if self.current_project:
+            project_id = self.current_project.get("Id")
+        log_to_agent_logs(
+            project_id=project_id,
+            agent_name="tech_writer",
+            status="completed",
+            task_description=f"[{parent_id}] Merged documentation report",
+            full_response=merged_json,
+            tokens_used=0,
+        )
+
     def _expand_completed_with_parents(
         self, tasks: List[Dict[str, Any]], completed_ids: List[str]
     ) -> List[str]:
-        """Добавляет placeholder developer в completed_ids, если все сабтаски готовы."""
+        """Добавляет placeholder-родителей в completed_ids, если все сабтаски готовы."""
         expanded = set(completed_ids)
         dev_statuses = [
             t.get("status", "")
@@ -1065,6 +1152,16 @@ max_iterations по умолчанию: 3 для большинства аген
             placeholder = self._find_developer_placeholder(tasks)
             if placeholder:
                 expanded.add(placeholder.get("task_id"))
+
+        tw_statuses = [
+            t.get("status", "")
+            for t in tasks
+            if is_tech_writer_subtask_id(str(t.get("task_id") or ""))
+        ]
+        if tw_statuses and all(s == "completed" for s in tw_statuses):
+            tw_parent = self._find_tech_writer_placeholder(tasks)
+            if tw_parent:
+                expanded.add(tw_parent.get("task_id"))
         return list(expanded)
 
     def _find_ready_tasks(

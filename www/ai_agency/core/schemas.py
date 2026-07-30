@@ -520,6 +520,21 @@ class TechWriterResponse(BaseModel):
         return self
 
 
+class TechWriterSliceResponse(BaseModel):
+    """Частичный ответ tech_writer для сабтаска (doc_slice).
+
+    Полный TechWriterResponse (Direction W) применяется только к merged-отчёту
+    родительской задачи после завершения всех tw_*.
+    """
+
+    summary: str = Field(description="Что создано в этом срезе", min_length=10)
+    documents: List[Document] = Field(default_factory=list, description="Документы среза")
+    video_scripts: List[VideoScript] = Field(default_factory=list)
+    faq: List[FAQItem] = Field(default_factory=list)
+    checklist: List[str] = Field(default_factory=list)
+    notes: Optional[str] = Field(default=None)
+
+
 # ==================== CLIENT HUNTER (МОНЕТИЗАЦИЯ) ====================
 
 class ClientUSP(BaseModel):
@@ -757,6 +772,7 @@ AGENT_MODELS: dict = {
     "developer": DeveloperResponse,
     "qa": QAResponse,
     "tech_writer": TechWriterResponse,
+    "tech_writer_slice": TechWriterSliceResponse,
     "client_hunter": ClientHunterResponse,
     "lead_hunter": LeadHunterResponse,
     "sales": SalesResponse,

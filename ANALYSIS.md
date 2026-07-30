@@ -640,6 +640,24 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AL — tech_writer: сабтаски + сборка отчёта в родителе (NEW)
+
+**Проблема:** `tech_writer_prompt` перегружен (12 тем интеграции + FAQ + КП + схема).
+Одна LLM-задача даёт слабые/«странные» JSON и плохое покрытие.
+
+**Решение:** placeholder tech_writer (как у developer) → фиксированные сабтаски → merge.
+
+| Слой | Поведение |
+|------|-----------|
+| PM task graph | по-прежнему **одна** задача `tech_writer` |
+| `TaskExecutor` | placeholder → создаёт `tw_001…tw_003` (`iterN_tw_*`), parent → `failed` |
+| Срезы | `overview` / `contract` / `ops` — узкий промпт + `TechWriterSliceResponse` |
+| QA Gate | на сабтасках **нет**; полная схема Direction W — на merge |
+| `check_and_complete_parent_tasks` | все `tw_*` completed → `merge_tech_writer_slices` → `output_data` родителя → `completed` |
+
+Файлы: `tech_writer_decomposition.py`, `task_ids.py`, slim `tech_writer_prompt.txt`,
+`task_executor.py`, `orchestrator.py`. Тесты: `test_tech_writer_decomposition.py`.
+
 ### Direction AK — tech_writer: логирование и валидация «странного» JSON (FIX)
 
 **Проблема:** при сбое парсинга/Pydantic-валидации raw-ответ tech_writer
@@ -1301,4 +1319,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 31, 2026. Direction AK: tech_writer raw JSON log + validation.
+**Последнее обновление:** Jul 31, 2026. Direction AL: tech_writer сабтаски tw_* + merge отчёта.

@@ -4,6 +4,7 @@ TaskExecutor — выполнение одной задачи с Pydantic-вал
 """
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .config import Config
@@ -27,6 +28,15 @@ from .schemas import (
     LLMParseError,
     call_and_parse_llm,
     get_model_schema,
+)
+from .task_ids import (
+    is_tech_writer_placeholder_task,
+    is_tech_writer_subtask_id,
+)
+from .tech_writer_decomposition import (
+    build_slice_system_prompt,
+    build_tech_writer_subtasks,
+    validate_tech_writer_slice,
 )
 from .utils import (
     build_agent_task,
@@ -138,6 +148,17 @@ class TaskExecutor:
             )
             return False
 
+        # Direction AL: placeholder tech_writer → сабтаски tw_*; отчёт соберёт parent
+        if agent_name == "tech_writer" and is_tech_writer_placeholder_task(task):
+            return self._decompose_tech_writer(
+                task=task,
+                task_db_id=task_db_id,
+                task_name=str(task_name or ""),
+                project_id=project_id,
+                input_data=input_data,
+                all_tasks=all_tasks or [],
+            )
+
         self.orch.tasks_db.update_task(
             task_db_id,
             {"status": "in_progress", "iteration_count": iteration_count + 1},
@@ -148,13 +169,24 @@ class TaskExecutor:
             f"итерация {iteration_count + 1}/{max_iter}"
         )
 
+        doc_slice = ""
+        if agent_name == "tech_writer":
+            doc_slice = str(input_data.get("doc_slice") or "").strip()
+
         # Загружаем промпт агента (с кэшем)
         if agent_name not in self.agent_prompts_cache:
             self.agent_prompts_cache[agent_name] = load_prompt(agent_name)
         agent_prompt = self.agent_prompts_cache[agent_name]
+        if agent_name == "tech_writer" and doc_slice:
+            agent_prompt = build_slice_system_prompt(agent_prompt, doc_slice)
 
         # Добавляем JSON Schema к промпту
-        schema_prompt = self._build_schema_prompt(agent_prompt, agent_name)
+        schema_model_key = (
+            "tech_writer_slice"
+            if agent_name == "tech_writer" and doc_slice
+            else agent_name
+        )
+        schema_prompt = self._build_schema_prompt(agent_prompt, schema_model_key)
         # Память итераций — system-hint для ЛЮБОГО агента (не только developer)
         if iteration_count > 0:
             schema_prompt = schema_prompt + "\n" + build_system_memory_hint(agent_name or "")
@@ -182,7 +214,10 @@ class TaskExecutor:
         try:
             # Вызываем агента с Pydantic-валидацией
             validated_response, agent_tokens = self._call_with_validation(
-                agent_name, schema_prompt, agent_task
+                agent_name,
+                schema_prompt,
+                agent_task,
+                response_model_key=schema_model_key,
             )
 
             # Обновляем бюджет токенов
@@ -221,6 +256,32 @@ class TaskExecutor:
                         f"Требуется ручное вмешательство или декомпозиция задачи."
                     )
                 return False
+
+            # Срез tech_writer: доп. проверка тем среза (полная схема — после merge)
+            if agent_name == "tech_writer" and doc_slice:
+                slice_ok, slice_issues = validate_tech_writer_slice(
+                    validated_response.model_dump(), doc_slice
+                )
+                if not slice_ok:
+                    feedback = (
+                        f"Срез doc_slice={doc_slice} не прошёл проверку:\n"
+                        + "\n".join(f"- {i}" for i in slice_issues)
+                    )
+                    logger.error("❌ %s: %s", task_name, feedback)
+                    self._reject_attempt(
+                        project_id=project_id,
+                        task_db_id=task_db_id,
+                        task_name=task_name,
+                        agent_name=agent_name,
+                        iteration=iteration_count + 1,
+                        max_iter=max_iter,
+                        agent_tokens=agent_tokens,
+                        task=task,
+                        feedback=feedback,
+                        issues=slice_issues,
+                        artifact=validated_response.model_dump(),
+                    )
+                    return False
 
             # Структурная валидация n8n — только для full_workflow.
             # prep/spec не должны порождать отдельный n8n_json (Direction V).
@@ -375,6 +436,20 @@ class TaskExecutor:
                 return self.orch._handle_analyst(
                     task, task_db_id, task_name, validated_response, pm_prompt
                 )
+
+            # Сабтаски tech_writer: без QA Gate — QA/полная схема на merged parent
+            if agent_name == "tech_writer" and is_tech_writer_subtask_id(str(task_name or "")):
+                self.orch.tasks_db.update_task(
+                    task_db_id,
+                    {
+                        "status": "completed",
+                        "qa_approved": "true",
+                        "qa_feedback": f"Срез doc_slice={doc_slice} принят (ожидает merge)",
+                    },
+                )
+                update_last_agent_log(project_id, agent_name, "completed")
+                logger.info("✅ Сабтаск tech_writer %s (slice=%s) завершён", task_name, doc_slice)
+                return True
 
             # Стандартный путь: QA Gate для рабочих агентов
             if agent_name != "qa":
@@ -564,11 +639,107 @@ class TaskExecutor:
             )
         return input_data
 
-    def _call_with_validation(self, agent_name: str, system_prompt: str, user_task: str):
+    def _decompose_tech_writer(
+        self,
+        *,
+        task: Dict[str, Any],
+        task_db_id: Any,
+        task_name: str,
+        project_id: Any,
+        input_data: Dict[str, Any],
+        all_tasks: List[Dict[str, Any]],
+    ) -> bool:
+        """Создаёт tw_* сабтаски и помечает parent как placeholder (failed)."""
+        existing = [
+            t for t in all_tasks
+            if is_tech_writer_subtask_id(str(t.get("task_id") or ""))
+        ]
+        if existing:
+            ids = [t.get("task_id") for t in existing]
+            logger.info(
+                "⏭️ tech_writer «%s»: сабтаски уже есть (%s) — placeholder → failed",
+                task_name,
+                ", ".join(str(i) for i in ids),
+            )
+            self.orch.tasks_db.update_task(
+                task_db_id,
+                {
+                    "status": "failed",
+                    "qa_feedback": (
+                        f"Placeholder: сабтаски уже созданы ({', '.join(map(str, ids))}). "
+                        "Completed после merge всех tw_*."
+                    ),
+                },
+            )
+            return True
+
+        subtasks = build_tech_writer_subtasks(task, parent_input=input_data)
+        created_ids: List[str] = []
+        for sd in subtasks:
+            self.orch.tasks_db.create_task({
+                "task_id": sd["task_id"],
+                "project_id": project_id,
+                "agent_name": "tech_writer",
+                "task_description": sd["task_description"],
+                "input_data": json.dumps(sd["input_data"], ensure_ascii=False),
+                "status": "pending",
+                "depends_on": json.dumps(sd.get("depends_on") or [], ensure_ascii=False),
+                "iteration_count": 0,
+                "qa_approved": "pending",
+                "created_at": datetime.now().isoformat(),
+            })
+            created_ids.append(sd["task_id"])
+            logger.info(
+                "  → tech_writer сабтаск %s [%s]",
+                sd["task_id"],
+                sd.get("doc_slice"),
+            )
+
+        self.orch.tasks_db.update_task(
+            task_db_id,
+            {
+                "status": "failed",
+                "qa_feedback": (
+                    f"Placeholder: заменена сабтасками {', '.join(created_ids)}. "
+                    "После их завершения оркестратор соберёт единый отчёт в эту задачу."
+                ),
+            },
+        )
+        log_to_agent_logs(
+            project_id=project_id,
+            agent_name="tech_writer",
+            status="completed",
+            task_description=(
+                f"[{task_name}] Декомпозиция на {len(created_ids)} сабтасков документации"
+            ),
+            full_response=json.dumps(
+                {"subtasks": created_ids, "slices": list(
+                    {s.get("doc_slice") for s in subtasks}
+                )},
+                ensure_ascii=False,
+            ),
+            tokens_used=0,
+        )
+        logger.info(
+            "✅ tech_writer «%s» декомпозирован на %s сабтасков",
+            task_name,
+            len(created_ids),
+        )
+        return True
+
+    def _call_with_validation(
+        self,
+        agent_name: str,
+        system_prompt: str,
+        user_task: str,
+        response_model_key: Optional[str] = None,
+    ):
         """Вызывает агента через call_and_parse_llm, выбирая модель по имени."""
-        model_class = AGENT_MODELS.get(agent_name)
+        key = response_model_key or agent_name
+        model_class = AGENT_MODELS.get(key)
         if not model_class:
-            raise ValueError(f"Нет Pydantic-модели для агента: {agent_name}")
+            raise ValueError(f"Нет Pydantic-модели для агента: {key}")
+        # В логах/LLM оставляем реальное имя агента (tech_writer), не tech_writer_slice
         return call_and_parse_llm(
             call_llm_func=call_llm,
             agent_name=agent_name,
