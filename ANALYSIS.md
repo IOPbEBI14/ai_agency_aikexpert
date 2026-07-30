@@ -640,6 +640,19 @@ npx n8n-workflow-validator --json workflow.json
 
 ---
 
+### Direction AJ — Parent developer → completed после всех сабтасков (FIX)
+
+**Регрессия:** `startswith("dev_")` не ловил `iterN_dev_*` после refine →
+placeholder (`task_003` / `iterN_task_*`) оставался в `failed`, qa/tech_writer
+ждали «completed» родителя.
+
+**Исправление:** `core/task_ids.py` — `is_developer_subtask_id` /
+`is_developer_placeholder_task`; `check_and_complete_parent_tasks` и
+`handle_architect` используют их. После всех completed-сабтасков родитель →
+`completed`.
+
+Тесты: `tests/test_parent_task_complete.py`.
+
 ### Direction AI — Agent Context MCP для любого агента (NEW)
 
 Расширение Direction AG: память и MCP не только для developer.
@@ -1269,4 +1282,4 @@ Direction K в heuristic + smoke schemaDelta + CI Layer C (`N8N_VALIDATOR_OFFICI
 
 ---
 
-**Последнее обновление:** Jul 30, 2026. Direction AI: Agent Context MCP для любого агента.
+**Последнее обновление:** Jul 30, 2026. Direction AJ: parent developer completed после сабтасков (iterN_dev_*).

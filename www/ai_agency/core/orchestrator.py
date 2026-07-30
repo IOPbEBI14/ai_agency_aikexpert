@@ -41,6 +41,7 @@ from .schemas import (
     get_model_schema,
 )
 from .task_executor import TaskExecutor
+from .task_ids import is_developer_placeholder_task, is_developer_subtask_id
 from .utils import call_llm, load_prompt, log_to_agent_logs, update_last_agent_log
 
 logger = logging.getLogger("Orchestrator")
@@ -1010,25 +1011,22 @@ max_iterations по умолчанию: 3 для большинства аген
 
     @staticmethod
     def _find_developer_placeholder(tasks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Возвращает placeholder developer-задачу из initial task graph.
-
-        Placeholder — это задача с agent_name=developer, task_id НЕ начинающимся с "dev_".
-        Создаётся PM в initial task graph (например task_003) и позже заменяется dev_* подзадачами.
-        """
+        """Placeholder developer из initial/iteration task graph (не (iterN_)dev_*)."""
         for t in tasks:
-            tid = t.get("task_id", "")
-            if t.get("agent_name") == "developer" and not tid.startswith("dev_"):
+            if is_developer_placeholder_task(t):
                 return t
         return None
 
     def check_and_complete_parent_tasks(self, tasks: List[Dict[str, Any]]) -> None:
-        """Если все dev_* подзадачи завершены — помечает placeholder developer-задачу как completed.
+        """Если все developer-сабтаски completed — родительский placeholder → completed.
 
-        Ранее метод был жёстко привязан к "task_003". Теперь placeholder ищется динамически:
-        agent_name=developer, task_id не начинается с "dev_".
-        Каждая dev_* уже проходит QA Gate в TaskExecutor перед статусом completed.
+        Учитывает id вида ``dev_001`` и ``iter3_dev_001`` (после refine).
+        Placeholder мог быть временно в ``failed`` (чтобы не исполнялся) — всё равно
+        переводим в completed.
         """
-        dev_subtasks = [t for t in tasks if t.get("task_id", "").startswith("dev_")]
+        dev_subtasks = [
+            t for t in tasks if is_developer_subtask_id(str(t.get("task_id") or ""))
+        ]
         if not dev_subtasks:
             return
         if not all(t.get("status") == "completed" for t in dev_subtasks):
@@ -1037,30 +1035,31 @@ max_iterations по умолчанию: 3 для большинства аген
         parent_task = self._find_developer_placeholder(tasks)
         if parent_task and parent_task.get("status") != "completed":
             parent_id = parent_task.get("task_id")
-            logger.info(f"✅ Все {len(dev_subtasks)} dev_* подзадач завершены. Помечаем '{parent_id}' как completed.")
+            logger.info(
+                "✅ Все %s developer-сабтасков завершены. Помечаем «%s» как completed "
+                "(было: %s).",
+                len(dev_subtasks), parent_id, parent_task.get("status"),
+            )
             self.tasks_db.update_task(
                 parent_task.get("Id"),
                 {
                     "status": "completed",
                     "qa_approved": "true",
-                    "qa_feedback": f"Все {len(dev_subtasks)} подзадач завершены успешно",
+                    "qa_feedback": (
+                        f"Все {len(dev_subtasks)} подзадач developer завершены успешно"
+                    ),
                 },
             )
 
     def _expand_completed_with_parents(
         self, tasks: List[Dict[str, Any]], completed_ids: List[str]
     ) -> List[str]:
-        """Добавляет placeholder developer-задачу в completed_ids, если все dev_* завершены.
-
-        Используется в _find_ready_tasks для разблокировки qa/tech_writer ДО того, как
-        check_and_complete_parent_tasks успеет записать completed в БД (оба вызова в одном цикле).
-        Ранее было жёстко задано "task_003" — теперь ищется динамически.
-        """
+        """Добавляет placeholder developer в completed_ids, если все сабтаски готовы."""
         expanded = set(completed_ids)
         dev_statuses = [
             t.get("status", "")
             for t in tasks
-            if t.get("task_id", "").startswith("dev_")
+            if is_developer_subtask_id(str(t.get("task_id") or ""))
         ]
         if dev_statuses and all(s == "completed" for s in dev_statuses):
             placeholder = self._find_developer_placeholder(tasks)

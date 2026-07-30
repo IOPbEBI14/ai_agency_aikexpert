@@ -52,6 +52,7 @@ from .dev_decomposition import (
     extract_workflow_units,
     normalize_developer_subtasks,
 )
+from .task_ids import is_developer_placeholder_task
 from .schemas import (
     AnalystResponse,
     ClientHunterResponse,
@@ -271,22 +272,17 @@ class AgentHandlers:
                     sd.get("workflow_id") or "-",
                 )
 
-            # Помечаем placeholder developer-задачу из initial task graph как "пропущена".
-            # Проблема: после завершения architect в pending остаётся задача с agent_name=developer
-            # (например task_003) с depends_on=[task_architect]. Оркестратор выбирал её ПЕРВОЙ,
-            # developer выполнял весь workflow сразу, а dev_001/dev_002 запускались ПОСЛЕ qa/tech_writer.
-            # Решение: находим placeholder-задачу и сразу помечаем её failed (не pending → не выполняется).
-            # check_and_complete_parent_tasks позже переведёт её в completed, когда все dev_* готовы.
-            # Каждая dev_* проходит QA Gate в TaskExecutor (отдельные qa_dev_* не создаём).
+            # Placeholder developer (task_003 / iterN_task_*) → failed, чтобы не
+            # исполнялся вместо сабтасков. check_and_complete_parent_tasks вернёт
+            # completed, когда все (iterN_)dev_* завершатся.
             try:
                 all_project_tasks = self.orch.tasks_db.get_tasks_by_project(project_id)
                 for pt in all_project_tasks:
-                    pt_task_id = pt.get("task_id", "")
                     if (
-                        pt.get("agent_name") == "developer"
+                        is_developer_placeholder_task(pt)
                         and pt.get("status") == "pending"
-                        and not pt_task_id.startswith("dev_")
                     ):
+                        pt_task_id = pt.get("task_id", "")
                         self.orch.tasks_db.update_task(pt.get("Id"), {
                             "status": "failed",
                             "qa_feedback": (
