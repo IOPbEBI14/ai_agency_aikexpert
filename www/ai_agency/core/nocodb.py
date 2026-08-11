@@ -82,7 +82,7 @@ def _delay_for_attempt(
     base = float(delays[min(attempt - 1, len(delays) - 1)])
     if sqlite_busy:
         # Небольшой jitter, чтобы параллельные клиенты не били в одну фазу
-        return max(10, base + random.uniform(0.0, min(0.5, base * 0.25)))
+        return max(10, base + random.uniform(1.0, min(5, base * 25.0)))
     return base
 
 
