@@ -82,7 +82,7 @@ def _delay_for_attempt(
     base = float(delays[min(attempt - 1, len(delays) - 1)])
     if sqlite_busy:
         # Небольшой jitter, чтобы параллельные клиенты не били в одну фазу
-        return max(0.05, base + random.uniform(0.0, min(0.5, base * 0.25)))
+        return max(10, base + random.uniform(0.0, min(0.5, base * 0.25)))
     return base
 
 
@@ -111,7 +111,7 @@ def nocodb_request(
     ) or (10.0, 30.0, 60.0)
     busy_delays: Tuple[float, ...] = tuple(
         Config.NOCODB_BUSY_RETRY_DELAYS_SEC
-    ) or (0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0)
+    ) or (10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0)
     serialize = bool(Config.NOCODB_SERIALIZE_REQUESTS)
 
     # max_attempts может вырасти после первой SQLITE_BUSY
