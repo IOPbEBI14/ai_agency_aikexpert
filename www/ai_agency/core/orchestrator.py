@@ -162,10 +162,11 @@ class Orchestrator:
             self.current_project = self.projects_db.find_project_by_status("in_progress")
 
             if not self.current_project:
-                self.current_project = (
-                    self.projects_db.find_project_by_status("stopped")
-                    or self.projects_db.find_project_by_status("needs_human_review")
-                )
+                self.current_project = self.projects_db.find_project_by_status("stopped")
+                if not self.current_project:
+                    time.sleep(1.5)
+                    self.projects_db.find_project_by_status("needs_human_review")    
+                time.sleep(1.5)
                 if self.current_project and self.current_project.get("Id"):
                     logger.info(f"▶ Возобновляем проект: {self.current_project.get('project_name')}")
                     self.current_project["status"] = "in_progress"
@@ -659,6 +660,7 @@ max_iterations по умолчанию: 3 для большинства аген
 
         # Освобождаем другой in_progress
         try:
+            time.sleep(5)
             active = self.projects_db.find_project_by_status("in_progress")
             if active and active.get("Id") and active.get("Id") != project_id:
                 self.projects_db.update_project(active["Id"], {"status": "stopped"})
